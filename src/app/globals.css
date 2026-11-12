@@ -1,0 +1,279 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root {
+  color-scheme: light;
+  --paper: #f4f1ea;
+  --ink: #292d25;
+  --accent: #374b38;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+header,
+main,
+footer {
+  max-width: 1440px;
+  margin: auto;
+  padding: 28px 48px;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.brand {
+  font:
+    36px Georgia,
+    serif;
+  text-decoration: none;
+}
+.brand span {
+  display: block;
+  font:
+    12px Arial,
+    sans-serif;
+  letter-spacing: 0.08em;
+  margin-top: 5px;
+}
+a {
+  color: inherit;
+}
+nav {
+  display: flex;
+  gap: 28px;
+}
+nav a {
+  text-underline-offset: 6px;
+}
+h1,
+h2,
+h3 {
+  font-family: Georgia, serif;
+  font-weight: 400;
+  line-height: 1.1;
+}
+h1 {
+  font-size: clamp(40px, 5vw, 72px);
+  margin: 20px 0;
+}
+h2 {
+  font-size: 32px;
+}
+h3 {
+  font-size: 23px;
+  margin: 12px 0;
+}
+small {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+p {
+  margin: 12px 0;
+}
+.intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 32px;
+  padding: 40px 0 64px;
+}
+.intro aside {
+  padding-bottom: 10px;
+}
+.button,
+button {
+  display: inline-block;
+  background: var(--accent);
+  color: white;
+  padding: 12px 18px;
+  border: 1px solid var(--accent);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.button:hover,
+button:hover {
+  background: #253727;
+}
+button:disabled {
+  background: #ddd8cc;
+  color: #555;
+  cursor: default;
+  border-color: #ddd8cc;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px 24px;
+}
+.product {
+  min-width: 0;
+}
+.product img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: #e8e3d9;
+}
+.product-info {
+  padding: 15px 0;
+}
+.product p {
+  color: #53564f;
+  font-size: 14px;
+  min-height: 44px;
+}
+.product-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.product button {
+  font-size: 14px;
+  padding: 9px 12px;
+}
+.notice {
+  display: block;
+  min-height: 24px;
+  font-size: 12px;
+  margin-top: 6px;
+}
+footer {
+  font-size: 13px;
+  color: #53564f;
+  padding-top: 60px;
+}
+.chat-shell {
+  max-width: 960px;
+  margin: auto;
+}
+.chat-heading {
+  margin: 24px 0 36px;
+}
+.chat-heading h1 {
+  font-size: 48px;
+}
+.messages {
+  min-height: 240px;
+}
+.message {
+  padding: 20px 24px;
+  background: #fffdf7;
+  margin: 16px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.message.user {
+  background: #e4e8df;
+  margin-left: 12%;
+}
+.message strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.message .grid {
+  margin-top: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  white-space: normal;
+}
+.composer {
+  padding: 20px;
+  background: #e8e3d9;
+  margin-top: 24px;
+}
+.composer label {
+  display: block;
+  margin-bottom: 8px;
+}
+.input-row {
+  display: flex;
+  gap: 12px;
+}
+textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 12px;
+  font: inherit;
+  border: 1px solid #777;
+  background: #fffdf7;
+  resize: vertical;
+}
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0;
+}
+.suggestions button {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid #777;
+}
+.error {
+  color: #8b2424;
+}
+a:focus-visible,
+button:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #9b5a16;
+  outline-offset: 4px;
+}
+@media (max-width: 700px) {
+  header,
+  main,
+  footer {
+    padding: 20px;
+  }
+  header,
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  nav {
+    gap: 20px;
+    font-size: 14px;
+  }
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px 14px;
+  }
+  .product-bottom {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro {
+    padding: 24px 0 40px;
+  }
+  .message {
+    padding: 16px;
+  }
+  .message .grid {
+    grid-template-columns: 1fr;
+  }
+  .input-row {
+    flex-direction: column;
+  }
+  .chat-heading h1 {
+    font-size: 36px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
