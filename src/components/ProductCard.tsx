@@ -20,23 +20,23 @@ export function ProductCard({ product }: { product: Product }) {
         <p>{product.description}</p>
         <div className="product-bottom">
           <strong>
-            {new Intl.NumberFormat("pl-PL", {
+            {new Intl.NumberFormat("en-IE", {
               style: "currency",
-              currency: "PLN",
+              currency: product.currency,
             }).format(product.price)}
           </strong>
           <button
             disabled={!product.inStock}
             onClick={() => {
-              console.log("[CART] dodano produkt:", product.id);
+              console.log("[CART] added product:", product.id);
               setAdded(true);
             }}
           >
-            {product.inStock ? "Dodaj do koszyka" : "Niedostępny"}
+            {product.inStock ? "Add to cart" : "Out of stock"}
           </button>
         </div>
         <span className="notice" role="status">
-          {added ? "Dodano w demo — bez zamówienia." : ""}
+          {added ? "Added in demo - no order placed." : ""}
         </span>
       </div>
     </article>

@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // output: "standalone",
+  serverExternalPackages: ["@lancedb/lancedb", "@huggingface/transformers", "onnxruntime-node"],
   images: {
     formats: ["image/avif", "image/webp"],
   },

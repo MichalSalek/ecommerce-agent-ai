@@ -1,64 +1,84 @@
-# Aurelle — demo sklepu z agentem AI
+# Aurelle: local shopping assistant
 
-Next.js 16, React 19, TypeScript strict, Tailwind i AI SDK 7. Źródło szablonu: https://github.com/dilums/kimi-k3-ecommerce-storefront (zachowane zdjęcia produktów i historia Git).
+An English storefront with EUR prices, a Bielik shopping assistant, and persistent semantic product search in LanceDB. Built with Next.js 16 App Router, React 19, TypeScript strict and Vercel AI SDK 7. Based on [dilums/kimi-k3-ecommerce-storefront](https://github.com/dilums/kimi-k3-ecommerce-storefront); product photography is retained from the template.
 
-## Uruchomienie
+## Run
+
+Requires Node.js 22 or later and an OpenAI-compatible llama.cpp or llama-swap server for chat.
 
 ```bash
-cd /home/ms/ecommerce-agent-ai/storefront
 npm install
-# W drugim terminalu, z własnym plikiem modelu:
-llama-server -m /ścieżka/model.gguf --host 127.0.0.1 --port 8080 --jinja
-curl http://127.0.0.1:8080/v1/models
+npm run catalog:prepare
 npm run dev
 ```
 
-Otwórz http://localhost:3000 i http://localhost:3000/chat (jeśli port jest zajęty, Next wypisze wybrany port). Model jest wykrywany przez `/v1/models`; bez kluczy API. Model i szablon czatu llama.cpp muszą obsługiwać narzędzia (np. odpowiednia wersja Qwen). Port 8080 musi należeć do llama-server.
+Open http://localhost:3000 and http://localhost:3000/chat. `catalog:prepare` downloads the embedding model on first use and indexes all 48 products. First preparation needs internet access; subsequent retrieval uses the local cache. No embedding API key, separate database process or GPU is required. Preparation is also lazy on the first search, but running it explicitly avoids a download during a conversation.
 
-Opcjonalne zmienne w `.env.local`:
+Configure chat in `.env.local`:
 
 ```dotenv
 LLAMA_BASE_URL=http://127.0.0.1:8080/v1
-# LLAMA_MODEL=nazwa-z-v1-models
-# LLAMA_TOOL_MODE=json
-```
-
-`LLAMA_TOOL_MODE=json` uruchamia uproszczoną, walidowaną pętlę JSON, maksymalnie 5 kroków, bez natywnego function callingu. Model musi umieć przestrzegać formatu JSON. Domyślnie działa ToolLoopAgent. Oba tryby mają limit 60 sekund i nie ponawiają automatycznie zapytań. Kontrola modelu ma limit 4 sekund. Przerwanie w czacie anuluje żądanie. Błędy są pokazywane obok formularza.
-
-## Sprawdzenie
-
-```bash
-npm run typecheck
-npm run build
-```
-
-W czacie: „Szukam czegoś do kawy” powinno wywołać `searchProducts` i pokazać karty. „Napisz pętlę w Pythonie” powinno spowodować odmowę. Są to zachowania wymagające sprawdzenia z rzeczywistym uruchomionym modelem; instrukcja systemowa nie gwarantuje posłuszeństwa każdego modelu.
-
-Wszystkie dane i polityki są demonstracyjne. Przycisk koszyka zapisuje `[CART]` w konsoli i pokazuje potwierdzenie, bez zamówienia. Serwer loguje `[AGENT]`, `[LLM]`, `[TOOL]`. W AI SDK 7 wiadomości używają `parts` i stanów `output-available`, a `useChat` używa `sendMessage` i `status` zamiast dawnego `toolInvocations`/`handleSubmit`.
-
-## Pliki aplikacji
-
-- `src/data/products.ts` — 18 produktów, lokalne zdjęcia.
-- `src/types/shop.ts` — Product, ChatMessage, ToolInvocation.
-- `src/lib/agent.ts` — model, instrukcje i trzy narzędzia.
-- `src/app/api/chat/route.ts` — walidacja, streaming, JSON fallback i błędy.
-- `src/components/ProductCard.tsx` — wspólne karty i koszyk demo.
-- `src/app/page.tsx` — pełny katalog.
-- `src/app/chat/page.tsx` — czat.
-- `src/app/layout.tsx`, `src/app/globals.css` — wspólny układ i style.
-
-Usunięto pozostałe trasy i komponenty szablonu wymagające rozbudowanych przepływów. Brak bazy danych, płatności i usług chmurowych.
-
-## Podłączony Bielik (WSL → Windows)
-
-W tej instalacji `.env.local` wskazuje llama-swap działający w Windows:
-
-```dotenv
-LLAMA_BASE_URL=http://172.20.0.1:8090/v1
 LLAMA_MODEL=bielik-pl
 LLAMA_TOOL_MODE=json
+# Optional, relative to the project working directory:
+EMBEDDING_CACHE_DIR=.data/models
+LANCEDB_DIR=.data/lancedb
 ```
 
-Adres `172.20.0.1` jest bieżącą bramą WSL (`ip route show default`); po zmianie sieci WSL może wymagać aktualizacji. Windowsowy panel modeli: http://localhost:8090/ui/#/models. Plik `.env.local` jest lokalny i nie trafia do Git. Po zmianie konfiguracji ponownie uruchom `npm run dev`.
+This installation already uses `http://172.20.0.1:8090/v1` to reach Windows llama-swap from WSL. The model ID is `bielik-pl`; the Windows UI is http://localhost:8090/ui/#/models. If the WSL gateway changes, update the address using `ip route show default`. Local configuration and generated data are excluded from Git.
 
-Bielik korzysta z wymuszonego schematu JSON: najpierw wybiera narzędzie lub odmowę, następnie otrzymuje rzeczywiste dane i generuje odpowiedź. Tryb nie zmienia ustawień rozumowania serwera.
+The JSON compatibility adapter requests JSON object mode (without schema-constrained decoding, which conflicts with this Bielik reasoning template), validates the result with Zod, and asks Bielik to select a validated tool or refusal, runs the tool, and then requests an English answer using its output. It makes at most two model calls per turn. `LLAMA_TOOL_MODE=native` uses ToolLoopAgent with a maximum of five steps; it requires a model/server with native tool support. The request deadline is 90 seconds and model discovery has a four-second timeout. No automatic retries or cloud fallback are used. Server reasoning settings are preserved.
+
+## Retrieval and model choice
+
+Bielik generates answers; it does not generate the search vectors. [BGE small English v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) is a dedicated embedding encoder suited to this short English catalog. The adapter uses the [Xenova ONNX distribution](https://huggingface.co/Xenova/bge-small-en-v1.5), quantized to q8, on CPU (about 34 MB of cached weights), with CLS pooling, normalization and 384-dimensional vectors. Query text uses BGE's retrieval instruction prefix. The application removes explicit budget phrases from the semantic query and applies the amount as a structured price filter. This is a practical small baseline, not a claim that it is the best model for every catalog.
+
+LanceDB stores product records and vectors on disk. Searches use cosine distance, return at most two records and apply an optional EUR price filter before selecting neighbors. A demo cutoff of 0.45 removes distant results; it is calibrated on the included examples, not a universal relevance guarantee. Small catalogs use exact vector search, without an approximate index. This is real vector retrieval, not keyword matching.
+
+The table name fingerprints the catalog and embedding configuration. Catalog, price or model changes create a new table, preventing stale vectors or mixed embedding spaces. Old versions remain on disk; removing `.data/lancedb` while the app is stopped rebuilds the derived database without changing the source catalog. The embedding cache can be retained.
+
+Prices are deliberately chosen demo EUR prices, not a live currency conversion. Shipping is EUR 4, returns are within 14 days; these are mock policies. The cart button logs an event and shows feedback without placing orders.
+
+## Structure
+
+```text
+src/domain/catalog/          Product contract, repository port, store policies
+src/application/catalog/     Catalog use cases and embedding port
+src/application/chat/        Tool contracts and assistant instructions
+src/infrastructure/catalog/  LanceDB repository adapter
+src/infrastructure/embeddings/ BGE CPU embedding adapter
+src/infrastructure/chat/     llama.cpp model and JSON/UI-stream adapters
+src/composition/shop.ts      Adapter wiring and environment configuration
+src/data/products.ts         Canonical English demo catalog
+src/app/                     Next.js pages and thin HTTP route
+src/components/              Shared product presentation
+scripts/prepare-catalog.ts   Model download and catalog preparation
+```
+
+The domain has no imports from Next.js, LanceDB or the AI SDK. Adapters implement application/domain ports; only the composition root selects concrete infrastructure. Product validation is shared by stored results and UI rendering. Tool input schemas are reused for native and JSON execution.
+
+## Verify
+
+```bash
+npm test
+npm run typecheck
+npm run build
+npm audit
+```
+
+Tests use real BGE vectors and a temporary LanceDB database, covering semantic ranking without shared keywords, budget limits, unrelated results, persistence, catalog refresh and JSON protocol validation. They use the local model cache and may download BGE if missing. They do not require Bielik.
+
+Manual chat examples:
+
+- `I need something for my morning coffee under EUR 25`
+- `Something to keep me warm on the sofa`
+- `How much is delivery?`
+- `Write a Python loop` (should be refused)
+
+See [verification notes](docs/VERIFICATION.md) for the scope of live checks. Logs use `[AGENT]`, `[LLM]`, `[TOOL]`, `[VECTOR]`, `[EMBEDDING]` and `[CART]`. The demo has no authentication, payments or production commerce backend.
+
+## Demo catalog and images
+
+The catalog contains 48 mock products across kitchen, home, furniture, storage, bathroom, garden, wellness, electronics, lighting and accessories. Of these, 30 were added beyond the initial catalog. Products with no template photograph use local SVG illustrations explicitly marked as illustrations; all images work without external image services. EUR amounts are demo prices, not conversions from another currency. The product count on the home page is derived from the catalog.
+
+Model weights, LanceDB files, environment overrides and dependency folders are not committed. The repository includes `.env.example`; never commit personal API keys or local database/model caches when publishing a fork.

@@ -6,3 +6,7 @@ dist
 
 *.tsbuildinfo
 .env*
+
+.data/
+
+!.env.example

@@ -3,30 +3,9 @@ import { useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { ProductCard } from "@/components/ProductCard";
-import type { ChatMessage, Product } from "@/types/shop";
+import type { ChatMessage } from "@/types/shop";
+import { productSchema } from "@/domain/catalog/product";
 const transport = new DefaultChatTransport({ api: "/api/chat" });
-function isProduct(value: unknown): value is Product {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    "price" in value &&
-    typeof value.price === "number" &&
-    "name" in value &&
-    typeof value.name === "string" &&
-    "imageUrl" in value &&
-    typeof value.imageUrl === "string" &&
-    "productUrl" in value &&
-    typeof value.productUrl === "string" &&
-    "description" in value &&
-    typeof value.description === "string" &&
-    "category" in value &&
-    typeof value.category === "string" &&
-    "inStock" in value &&
-    typeof value.inStock === "boolean"
-  );
-}
 function errorText(message: string) {
   try {
     const body: unknown = JSON.parse(message);
@@ -56,16 +35,16 @@ export default function Chat() {
   return (
     <div className="chat-shell">
       <div className="chat-heading">
-        <small>ASYSTENT AURELLE</small>
-        <h1>Znajdź coś dla siebie.</h1>
-        <p>Zapytaj o produkty, dostępność, dostawę lub zwroty.</p>
+        <small>AURELLE ASSISTANT</small>
+        <h1>Find your everyday favorite.</h1>
+        <p>Ask about products, availability, delivery or returns.</p>
       </div>
       {!messages.length && (
         <div className="suggestions">
           {[
-            "Szukam czegoś do kawy",
-            "Co kupię do 100 zł?",
-            "Ile kosztuje dostawa?",
+            "I need something for my morning coffee",
+            "What can I buy under EUR 25?",
+            "How much is delivery?",
           ].map((text) => (
             <button key={text} onClick={() => send(text)}>
               {text}
@@ -76,7 +55,7 @@ export default function Chat() {
       <div className="messages" aria-live="polite">
         {messages.map((message) => (
           <section className={`message ${message.role}`} key={message.id}>
-            <strong>{message.role === "user" ? "Ty" : "Asystent"}</strong>
+            <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
             {message.parts.map((part, i) => {
               if (part.type === "text") return <p key={i}>{part.text}</p>;
               if (
@@ -87,12 +66,14 @@ export default function Chat() {
                 return (
                   <div key={i}>
                     {part.output.length === 0 ? (
-                      <p>Brak pasujących produktów.</p>
+                      <p>No matching products found.</p>
                     ) : (
                       <div className="grid">
-                        {part.output.filter(isProduct).map((product) => (
-                          <ProductCard key={product.id} product={product} />
-                        ))}
+                        {part.output
+                          .map((value) => productSchema.parse(value))
+                          .map((product) => (
+                            <ProductCard key={product.id} product={product} />
+                          ))}
                       </div>
                     )}
                   </div>
@@ -102,7 +83,7 @@ export default function Chat() {
           </section>
         ))}
       </div>
-      {busy && <p role="status">Asystent sprawdza ofertę…</p>}
+      {busy && <p role="status">Checking the catalog...</p>}
       {error && (
         <p role="alert" className="error">
           {errorText(error.message)}
@@ -115,23 +96,23 @@ export default function Chat() {
           send(input);
         }}
       >
-        <label htmlFor="question">Twoja wiadomość</label>
+        <label htmlFor="question">Your message</label>
         <div className="input-row">
           <textarea
             id="question"
             maxLength={2000}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Czego szukasz?"
+            placeholder="What are you looking for?"
             rows={2}
           />
           {busy ? (
             <button type="button" onClick={() => void stop()}>
-              Zatrzymaj
+              Stop
             </button>
           ) : (
             <button disabled={!input.trim()} type="submit">
-              Wyślij ↗
+              Send
             </button>
           )}
         </div>

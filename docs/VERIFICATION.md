@@ -1,14 +1,23 @@
-# Weryfikacja 2026-11-12
+# Verification
 
-- `npm run typecheck` i `npm run build`: powodzenie, tylko /, /chat, /api/chat.
-- `npm audit fix`: 0 podatności po usunięciu zbędnych zależności szablonu.
-- Przeglądarka: katalog 18 kart, przejście do czatu, błąd usługi pod 8080 bez zawieszenia.
-- Bezpośrednie wykonanie searchProducts: „Szukam czegoś do kawy”, limit 100 zł → 2 produkty.
-- Kontrolowana atrapa OpenAI-compatible na porcie 18080, produkcyjny Next na 3001: wywołanie narzędzia przez SDK, 2 karty, potwierdzenie koszyka, wyświetlenie odmowy. Sprawdzono układ mobilny 390 px. Atrapa steruje odpowiedzią; test sprawdza transport i UI, nie rozumowanie modelu.
-- Rzeczywisty llama-server niedostępny: pod 8080 odpowiada Adminer HTML. Zachowanie i odmowa rzeczywistego modelu oraz tryb JSON wymagają sprawdzenia po uruchomieniu modelu.
+## Current scope
 
-## Integracja z rzeczywistym Bielikiem
+The project now uses an English catalog, EUR demo prices, a CPU BGE embedding adapter and persistent LanceDB search. Previous Polish/PLN checks describe the earlier implementation and have been superseded.
 
-2026-11-12: wykryto llama-swap na hoście Windows `172.20.0.1:8090`, model `bielik-pl` (Bielik PL 11B v3.0 Q8). Ustawiono lokalny `.env.local` oraz tryb JSON z wymuszonym schematem odpowiedzi. Pierwsza próba bez wymuszonego wyboru narzędzia wymyślała ofertę; poprawiono protokół na wybór narzędzia przed odpowiedzią.
+Automated integration tests use real downloaded BGE weights and temporary LanceDB tables. They cover semantic ranking, price filtering, unrelated queries, opening persisted tables in a new repository instance, catalog price refresh and malformed JSON actions.
 
-Test endpointu na rzeczywistym modelu: „Szukam czegoś do kawy” → searchProducts, 2 produkty, odpowiedź z cenami 89 i 79 PLN. Test przeglądarkowy w tej samej rozmowie: 2 karty produktów, a następnie „Napisz pętlę w Pythonie” → odmowa i powrót do zakupów. Nie zmieniano konfiguracji llama-swap ani ustawienia rozumowania.
+The local chat backend is Windows llama-swap reached from WSL, model ID `bielik-pl`. Native tool support is not assumed; the JSON adapter validates the chosen tool before execution. The embedding encoder is independent of Bielik and does not use its GPU.
+
+## Final acceptance (2026-11-12)
+
+- Prepared a real local LanceDB table using BGE q8 CPU vectors (384 dimensions). Model weights are pinned to revision `ea104dacec62c0de699686887e3f920caeb4f3e3`.
+- Expanded the catalog from 18 to 48 products. The home page rendered all 48 cards; the 390 px mobile viewport had no horizontal overflow.
+- Checked live Bielik search in the browser, budget filtering and EUR product cards, plus refusal of a Python programming request.
+- Checked the live getPolicy endpoint: delivery costs EUR 4 and takes 2-3 business days.
+- Corrected the provider namespace so JSON mode reaches llama.cpp. Schema-constrained decoding conflicts with the installed reasoning template, so the adapter requests JSON objects and validates tool-specific shapes with Zod. The model's reasoning remains enabled.
+- Added a transport test that inspects the actual request body and verifies tool execution and streamed output. Integration tests use real embeddings and a temporary persistent database, covering persistence and catalog refresh as well as retrieval.
+- Product prose containing invented dollar prices or external URLs falls back to a short grounded message; cards remain authoritative.
+
+Semantic results depend on wording and are capped at two candidates with a cosine-distance cutoff of 0.45. This is a compact demonstration, not a relevance benchmark or a guarantee that every model output is grounded. Native tool mode is optional and was not accepted against this Bielik configuration.
+
+After expanding to 48 products, the browser test with the real Bielik model and persisted LanceDB returned the new Portable Bluetooth speaker for `I want to listen to music without cables, under EUR 50`. All four automated tests, strict type checking and the production build passed; npm audit reported zero vulnerabilities.

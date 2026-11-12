@@ -6,22 +6,22 @@ export default function Home() {
     <>
       <section className="intro">
         <div>
-          <small>KOLEKCJA AURELLE / 18 PRODUKTÓW</small>
+          <small>THE AURELLE COLLECTION / {products.length} PRODUCTS</small>
           <h1>
-            Dobre rzeczy.
+            Considered goods.
             <br />
-            Na każdy dzień.
+            For every day.
           </h1>
-          <p>Do domu, do pracy i do małych codziennych rytuałów.</p>
+          <p>For your home, your desk and your daily rituals.</p>
         </div>
         <aside>
-          <p>Nie wiesz, co wybrać?</p>
+          <p>Need a little inspiration?</p>
           <Link className="button" href="/chat">
-            Porozmawiaj z asystentem ↗
+            Ask the assistant
           </Link>
         </aside>
       </section>
-      <section aria-label="Wszystkie produkty" className="grid">
+      <section aria-label="All products" className="grid">
         {products.map((product) => (
           <ProductCard key={product.id} product={product} />
         ))}

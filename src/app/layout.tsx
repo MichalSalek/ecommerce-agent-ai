@@ -2,27 +2,25 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Aurelle — sklep i asystent",
-  description: "Demo zakupów z lokalnym asystentem AI",
+  title: "Aurelle - shop and assistant",
+  description: "Shopping demo with a local AI assistant",
   robots: { index: false, follow: false },
 };
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pl">
+    <html lang="en">
       <body>
         <header>
           <Link className="brand" href="/">
-            Aurelle<span>Przedmioty na co dzień</span>
+            Aurelle<span>Considered everyday goods</span>
           </Link>
-          <nav aria-label="Nawigacja główna">
-            <Link href="/">Produkty</Link>
-            <Link href="/chat">Asystent zakupowy ↗</Link>
+          <nav aria-label="Main navigation">
+            <Link href="/">Products</Link>
+            <Link href="/chat">Shopping assistant</Link>
           </nav>
         </header>
         <main>{children}</main>
-        <footer>
-          Sklep demonstracyjny · Ceny w PLN · Bez prawdziwych zamówień
-        </footer>
+        <footer>Demo store / Prices in EUR / No real orders</footer>
       </body>
     </html>
   );
