@@ -66,3 +66,55 @@ test("the JSON agent sends JSON mode to the HTTP server and executes the validat
     ),
   );
 });
+
+test("a malformed optional summary preserves successful product results", async () => {
+  let calls = 0;
+  const tools = createShopTools(
+    new CatalogService({
+      search: async () => [],
+      findById: async () => undefined,
+    }),
+  );
+  const fakeFetch: typeof fetch = async () => {
+    const content =
+      ++calls === 1
+        ? JSON.stringify({ tool: "searchProducts", input: { query: "coffee" } })
+        : "Malformed summary";
+    return Response.json({
+      id: "test",
+      object: "chat.completion",
+      created: 0,
+      model: "test",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+  };
+  const stream = createJsonAgentStream(
+    createLlamaModel("http://fixture/v1", "bielik-test", fakeFetch),
+    [{ role: "user", content: "coffee" }],
+    tools,
+    new AbortController().signal,
+  );
+  const parts = [];
+  const reader = stream.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+  }
+  assert.ok(parts.some((part) => part.type === "tool-output-available"));
+  assert.ok(
+    parts.some(
+      (part) =>
+        part.type === "text-delta" &&
+        part.delta.startsWith("No matching products"),
+    ),
+  );
+  assert.ok(!parts.some((part) => part.type === "error"));
+});

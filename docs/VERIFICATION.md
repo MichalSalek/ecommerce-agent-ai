@@ -20,4 +20,6 @@ The local chat backend is Windows llama-swap reached from WSL, model ID `bielik-
 
 Semantic results depend on wording and are capped at two candidates with a cosine-distance cutoff of 0.45. This is a compact demonstration, not a relevance benchmark or a guarantee that every model output is grounded. Native tool mode is optional and was not accepted against this Bielik configuration.
 
-After expanding to 48 products, the browser test with the real Bielik model and persisted LanceDB returned the new Portable Bluetooth speaker for `I want to listen to music without cables, under EUR 50`. All four automated tests, strict type checking and the production build passed; npm audit reported zero vulnerabilities.
+After expanding to 48 products, the browser test with the real Bielik model and persisted LanceDB returned the new Portable Bluetooth speaker for `I want to listen to music without cables, under EUR 50`. All five automated tests, strict type checking and the production build passed; npm audit reported zero vulnerabilities.
+
+A final visual check caught a malformed optional model summary after successful retrieval. The adapter now retains verified tool results and supplies a factual fallback message when summary generation fails, while logging the model error. Cancellation still propagates. A regression test covers this behavior; the final browser run completed with product cards and no error alert.
