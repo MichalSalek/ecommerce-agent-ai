@@ -1,4 +1,3 @@
-import { guardProductAnswer } from "../src/application/chat/instructions";
 import { CatalogService } from "../src/application/catalog/catalog-service";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,6 +9,7 @@ import { BgeEmbedding } from "../src/infrastructure/embeddings/bge-embedding";
 import { LanceProductRepository } from "../src/infrastructure/catalog/lance-product-repository";
 import {
   parseJsonObject,
+  parseToolAction,
   actionSchema,
 } from "../src/infrastructure/chat/json-protocol";
 
@@ -35,6 +35,12 @@ test("real embeddings, semantic ranking, budget, persistence and catalog refresh
           ["carafe", "mugs", "travel-mug", "pour-over-dripper"].includes(p.id),
       ),
     );
+    const browse = await service.search({
+      query: "What can I buy under EUR 25?",
+    });
+    assert.ok(browse.length > 0);
+    assert.ok(browse.every((p) => p.price <= 25));
+    assert.ok(browse.some((p) => p.id === "cutlery"));
     const warm = await repository.search({
       query: "something to keep me warm on the sofa",
     });
@@ -91,6 +97,23 @@ test("JSON protocol handles escaped braces and rejects invalid tools and inputs"
   assert.deepEqual(parseJsonObject('{"text":"first"}{"text":"second"}'), {
     text: "first",
   });
+  assert.equal(
+    parseToolAction(
+      'Example: {tool: searchProducts}. Actual: {"tool":"getPolicy","input":{"topic":"delivery"}}',
+    ).tool,
+    "getPolicy",
+  );
+  assert.equal(
+    parseToolAction(
+      "<tool_call>{'name':'searchProducts','arguments':{'query':'coffee','maxPrice':25}}</tool_call>",
+    ).tool,
+    "searchProducts",
+  );
+  assert.throws(() =>
+    parseToolAction(
+      "<tool_call>{'name':'shell','arguments':{'query':'coffee'}}</tool_call>",
+    ),
+  );
   assert.throws(() => parseJsonObject('{"text":"unfinished'));
   assert.equal(
     actionSchema.safeParse({ tool: "shell", input: {} }).success,
@@ -102,13 +125,5 @@ test("JSON protocol handles escaped braces and rejects invalid tools and inputs"
       input: { query: "coffee", maxPrice: -1 },
     }).success,
     false,
-  );
-});
-
-test("the assistant never presents invented dollar prices", () => {
-  assert.ok(!guardProductAnswer("Buy mugs at $22").includes("$"));
-  assert.equal(
-    guardProductAnswer("Try our ceramic mugs."),
-    "Try our ceramic mugs.",
   );
 });

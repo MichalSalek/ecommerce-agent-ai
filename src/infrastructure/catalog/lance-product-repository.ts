@@ -74,6 +74,18 @@ export class LanceProductRepository implements ProductRepository {
     console.log(`[VECTOR] search returned ${products.length} products`);
     return products;
   }
+  async browse(maxPrice?: number): Promise<Product[]> {
+    if (maxPrice !== undefined && (!Number.isFinite(maxPrice) || maxPrice < 0))
+      throw new RangeError("Invalid maximum price.");
+    const table = await this.prepare();
+    let query = table.query();
+    if (maxPrice !== undefined) query = query.where(`price <= ${maxPrice}`);
+    const rows = await query.toArray();
+    return rows
+      .map((row) => productSchema.parse(row))
+      .sort((a, b) => a.price - b.price || a.id.localeCompare(b.id))
+      .slice(0, 12);
+  }
   async findById(id: string) {
     return this.catalog.find((product) => product.id === id);
   }

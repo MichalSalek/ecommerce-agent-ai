@@ -21,8 +21,15 @@ export function getShop() {
 }
 export function chatConfig() {
   return {
+    provider: process.env.CHAT_PROVIDER ?? "llama",
     baseURL: process.env.LLAMA_BASE_URL ?? "http://127.0.0.1:8080/v1",
     modelId: process.env.LLAMA_MODEL,
-    mode: process.env.LLAMA_TOOL_MODE ?? "json",
+    groq: {
+      baseURL: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
+      modelId: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
+      apiKey: process.env.GROQ_API_KEY,
+      balancer: process.env.GROQ_BALANCER === "true",
+      windowsTransport: process.env.GROQ_TRANSPORT === "windows",
+    },
   };
 }

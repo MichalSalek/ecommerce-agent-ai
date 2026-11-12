@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { CatalogService } from "@/application/catalog/catalog-service";
 import { getStorePolicy } from "@/domain/catalog/policies";
 export const searchInput = z.object({
-  query: z.string().trim().min(1).max(300),
+  query: z.string().trim().max(300),
   maxPrice: z.number().finite().nonnegative().optional(),
 });
 export const detailsInput = z.object({ productId: z.string().min(1).max(100) });
@@ -12,7 +12,7 @@ export function createShopTools(catalog: CatalogService) {
   return {
     searchProducts: tool({
       description:
-        "Search the store by meaning. Use an English query and an optional maximum price in EUR.",
+        "Search the store by meaning. Use an English query and an optional maximum price in EUR. For budget-only browsing use an empty query.",
       inputSchema: searchInput,
       execute: async (input) => {
         console.log("[TOOL] searchProducts", input);

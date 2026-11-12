@@ -1,31 +1,43 @@
 import Link from "next/link";
-import { products } from "@/data/products";
-import { ProductCard } from "@/components/ProductCard";
+import Image from "next/image";
+import { Catalog } from "@/components/Catalog";
 export default function Home() {
   return (
     <>
       <section className="intro">
-        <div>
-          <small>THE AURELLE COLLECTION / {products.length} PRODUCTS</small>
+        <div className="intro-copy">
+          <small>THE AURELLE EDIT</small>
           <h1>
-            Considered goods.
+            Less searching.
             <br />
-            For every day.
+            More finding.
           </h1>
-          <p>For your home, your desk and your daily rituals.</p>
+          <p>
+            Good things for your home, your desk
+            <br className="desktop-break" /> and the rituals in between.
+          </p>
+          <div className="hero-actions">
+            <Link className="button" href="#collection">
+              Explore the collection
+            </Link>
+            <Link href="/chat">Find it with the assistant ↗</Link>
+          </div>
         </div>
-        <aside>
-          <p>Need a little inspiration?</p>
-          <Link className="button" href="/chat">
-            Ask the assistant
-          </Link>
-        </aside>
+        <Link className="hero-image" href="/products/mugs">
+          <Image
+            src="/images/products/mugs.webp"
+            alt="Ceramic mugs for slow mornings"
+            width={720}
+            height={640}
+            priority
+            sizes="(max-width:700px) 100vw, 50vw"
+          />
+          <span>
+            Made for a slower morning <span>Shop ceramic mugs ↗</span>
+          </span>
+        </Link>
       </section>
-      <section aria-label="All products" className="grid">
-        {products.map((product) => (
-          <ProductCard key={product.id} product={product} />
-        ))}
-      </section>
+      <Catalog />
     </>
   );
 }

@@ -1,14 +1,11 @@
 import {
-  ToolLoopAgent,
-  stepCountIs,
   convertToModelMessages,
   validateUIMessages,
   createUIMessageStreamResponse,
 } from "ai";
 import { z } from "zod";
-import { getShop, chatConfig } from "@/composition/shop";
-import { instructions } from "@/application/chat/instructions";
-import { resolveLlamaModel } from "@/infrastructure/chat/llama-model";
+import { getShop } from "@/composition/shop";
+import { resolveChatRuntime } from "@/composition/chat";
 import { createJsonAgentStream } from "@/infrastructure/chat/json-agent-stream";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
@@ -33,29 +30,15 @@ export async function POST(request: Request) {
       request.signal,
       AbortSignal.timeout(90000),
     ]);
-    const config = chatConfig();
-    const model = await resolveLlamaModel(config, signal);
-    if (config.mode === "json")
-      return createUIMessageStreamResponse({
-        stream: createJsonAgentStream(model, modelMessages, tools, signal),
-      });
-    const agent = new ToolLoopAgent({
-      model,
-      instructions,
-      tools,
-      stopWhen: stepCountIs(5),
-      maxRetries: 0,
-    });
-    const result = await agent.stream({
-      messages: modelMessages,
-      abortSignal: signal,
-    });
-    return result.toUIMessageStreamResponse({
-      onFinish: () => console.log("[AGENT] finished"),
-      onError: () => {
-        console.error("[LLM] generation failed");
-        return "The model could not answer. Check the server console.";
-      },
+    const runtime = await resolveChatRuntime(signal);
+    return createUIMessageStreamResponse({
+      stream: createJsonAgentStream(
+        runtime.model,
+        modelMessages,
+        tools,
+        signal,
+        runtime,
+      ),
     });
   } catch (error) {
     console.error(

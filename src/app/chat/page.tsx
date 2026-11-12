@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { ProductCard } from "@/components/ProductCard";
@@ -26,6 +26,10 @@ export default function Chat() {
   const { messages, sendMessage, status, error, stop } = useChat<ChatMessage>({
     transport,
   });
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("product");
+    if (id) setInput(`Tell me about product ${id}`);
+  }, []);
   const busy = status === "submitted" || status === "streaming";
   function send(text: string) {
     if (!text.trim() || busy) return;
@@ -36,7 +40,7 @@ export default function Chat() {
     <div className="chat-shell">
       <div className="chat-heading">
         <small>AURELLE ASSISTANT</small>
-        <h1>Find your everyday favorite.</h1>
+        <h1>A little help finding your thing.</h1>
         <p>Ask about products, availability, delivery or returns.</p>
       </div>
       {!messages.length && (
@@ -46,7 +50,7 @@ export default function Chat() {
             "What can I buy under EUR 25?",
             "How much is delivery?",
           ].map((text) => (
-            <button key={text} onClick={() => send(text)}>
+            <button key={text} disabled={busy} onClick={() => send(text)}>
               {text}
             </button>
           ))}
@@ -59,17 +63,22 @@ export default function Chat() {
             {message.parts.map((part, i) => {
               if (part.type === "text") return <p key={i}>{part.text}</p>;
               if (
-                part.type === "tool-searchProducts" &&
+                (part.type === "tool-searchProducts" ||
+                  part.type === "tool-getProductDetails") &&
                 part.state === "output-available" &&
-                Array.isArray(part.output)
+                (Array.isArray(part.output) ||
+                  productSchema.safeParse(part.output).success)
               )
                 return (
                   <div key={i}>
-                    {part.output.length === 0 ? (
+                    {Array.isArray(part.output) && part.output.length === 0 ? (
                       <p>No matching products found.</p>
                     ) : (
                       <div className="grid">
-                        {part.output
+                        {(Array.isArray(part.output)
+                          ? part.output
+                          : [part.output]
+                        )
                           .map((value) => productSchema.parse(value))
                           .map((product) => (
                             <ProductCard key={product.id} product={product} />

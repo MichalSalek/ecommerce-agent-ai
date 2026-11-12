@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CartProvider } from "@/components/CartProvider";
+import { CartLink } from "@/components/CartLink";
 import "./globals.css";
 export const metadata: Metadata = {
   title: "Aurelle - shop and assistant",
@@ -10,17 +12,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <header>
-          <Link className="brand" href="/">
-            Aurelle<span>Considered everyday goods</span>
-          </Link>
-          <nav aria-label="Main navigation">
-            <Link href="/">Products</Link>
-            <Link href="/chat">Shopping assistant</Link>
-          </nav>
-        </header>
-        <main>{children}</main>
-        <footer>Demo store / Prices in EUR / No real orders</footer>
+        <CartProvider>
+          <div className="demo-bar">
+            A small collection. A thoughtful way to shop.
+          </div>
+          <header>
+            <Link className="brand" href="/">
+              Aurelle<span>Considered everyday goods</span>
+            </Link>
+            <nav aria-label="Main navigation">
+              <Link href="/">Products</Link>
+              <Link href="/chat">Shopping assistant ↗</Link>
+              <CartLink />
+            </nav>
+          </header>
+          <main>{children}</main>
+          <footer>Demo store / Prices in EUR / No real orders</footer>
+        </CartProvider>
       </body>
     </html>
   );

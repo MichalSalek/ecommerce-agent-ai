@@ -1,43 +1,34 @@
-"use client";
-import { useState } from "react";
+import Link from "next/link";
 import Image from "next/image";
-import type { Product } from "@/types/shop";
+import type { Product } from "@/domain/catalog/product";
+import { AddToCart } from "./AddToCart";
+import { formatPrice } from "@/lib/money";
 export function ProductCard({ product }: { product: Product }) {
-  const [added, setAdded] = useState(false);
   return (
     <article className="product" id={product.id}>
-      <a href={product.productUrl} aria-label={product.name}>
+      <Link
+        className="product-image"
+        aria-label={`View ${product.name}`}
+        href={product.productUrl}
+      >
         <Image
           src={product.imageUrl}
           alt={product.name}
           width={480}
           height={480}
+          sizes="(max-width: 700px) 50vw, 30vw"
         />
-      </a>
+      </Link>
       <div className="product-info">
         <small>{product.category}</small>
-        <h3>{product.name}</h3>
+        <h3>
+          <Link href={product.productUrl}>{product.name}</Link>
+        </h3>
         <p>{product.description}</p>
         <div className="product-bottom">
-          <strong>
-            {new Intl.NumberFormat("en-IE", {
-              style: "currency",
-              currency: product.currency,
-            }).format(product.price)}
-          </strong>
-          <button
-            disabled={!product.inStock}
-            onClick={() => {
-              console.log("[CART] added product:", product.id);
-              setAdded(true);
-            }}
-          >
-            {product.inStock ? "Add to cart" : "Out of stock"}
-          </button>
+          <strong>{formatPrice(product.price)}</strong>
+          <AddToCart product={product} />
         </div>
-        <span className="notice" role="status">
-          {added ? "Added in demo - no order placed." : ""}
-        </span>
       </div>
     </article>
   );

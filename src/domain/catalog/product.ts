@@ -17,5 +17,6 @@ export interface ProductSearch {
 }
 export interface ProductRepository {
   search(criteria: ProductSearch): Promise<Product[]>;
+  browse(maxPrice?: number): Promise<Product[]>;
   findById(id: string): Promise<Product | undefined>;
 }

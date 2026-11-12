@@ -1,3 +1,4 @@
+import JSON5 from "json5";
 import { z } from "zod";
 import {
   searchInput,
@@ -10,31 +11,76 @@ export const actionSchema = z.discriminatedUnion("tool", [
   z.object({ tool: z.literal("getPolicy"), input: policyInput }),
   z.object({ tool: z.literal("refuse"), input: z.object({}) }),
 ]);
-export const answerSchema = z.object({ text: z.string().min(1) });
+export type ShopAction = z.infer<typeof actionSchema>;
 export const selectionInstruction = `Select one tool for the LAST customer question. Return only one JSON object using exactly one of these shapes:
 - Products: {"tool":"searchProducts","input":{"query":"customer product request","maxPrice":25}}. Query is in English without invented intent. maxPrice is optional, in EUR.
 - Known product ID: {"tool":"getProductDetails","input":{"productId":"mugs"}}.
 - Delivery/returns/payments: {"tool":"getPolicy","input":{"topic":"delivery"}}. The topic field is REQUIRED, not query.
 - Anything unrelated to this store, including programming: {"tool":"refuse","input":{}}.
 Do not answer yet or invent products. Do not reuse an earlier question when the customer has changed the topic.`;
-export const answerInstruction =
-  "Answer the customer question in ENGLISH using only the tool result above. Use ONLY the supplied products and EUR prices, never invent products. If there are no results, say so and ask the customer to refine their request. Return JSON with a text field. Keep it brief and plain text, with no markdown, URLs or price list; the product cards already show prices.";
-// Local models may append another object or prose after a valid action.
-export function parseJsonObject(text: string): unknown {
-  const start = text.indexOf("{");
-  let depth = 0,
-    quoted = false,
-    escaped = false;
-  for (let i = start; start >= 0 && i < text.length; i++) {
-    const char = text[i];
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quoted = false;
-    } else if (char === '"') quoted = true;
-    else if (char === "{") depth++;
-    else if (char === "}" && --depth === 0)
-      return JSON.parse(text.slice(start, i + 1));
+// Reasoning-capable servers may leave examples or prose in the content channel.
+// Only complete, valid JSON is considered; tool-specific validation remains mandatory.
+function jsonObjects(text: string): unknown[] {
+  const objects: unknown[] = [];
+  for (
+    let start = text.indexOf("{");
+    start >= 0;
+    start = text.indexOf("{", start + 1)
+  ) {
+    let depth = 0,
+      quoted = false,
+      escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') quoted = false;
+      } else if (char === '"') quoted = true;
+      else if (char === "{") depth++;
+      else if (char === "}" && --depth === 0) {
+        try {
+          objects.push(JSON.parse(text.slice(start, i + 1)));
+        } catch {
+          /* Skip malformed examples. */
+        }
+        break;
+      }
+    }
   }
-  throw new Error("The model did not return a complete JSON object.");
+  return objects;
+}
+export function parseJsonObject(text: string): unknown {
+  const objects = jsonObjects(text);
+  if (!objects.length)
+    throw new Error("The model did not return a complete JSON object.");
+  return objects[0];
+}
+export function parseToolAction(text: string): ShopAction {
+  for (const object of jsonObjects(text)) {
+    const result = actionSchema.safeParse(object);
+    if (result.success) return result.data;
+  }
+  // Bielik's configured template can emit legacy tool_call dictionaries with single quotes.
+  // JSON5 is a data parser, never eval; map only known tool names and validate arguments again.
+  for (const match of text.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)) {
+    try {
+      const legacy: unknown = JSON5.parse(match[1]);
+      if (
+        typeof legacy !== "object" ||
+        legacy === null ||
+        !("name" in legacy) ||
+        !("arguments" in legacy)
+      )
+        continue;
+      const result = actionSchema.safeParse({
+        tool: legacy.name,
+        input: legacy.arguments,
+      });
+      if (result.success) return result.data;
+    } catch {
+      /* Not a supported tool envelope. */
+    }
+  }
+  throw new Error("The model did not return a valid shopping action.");
 }
