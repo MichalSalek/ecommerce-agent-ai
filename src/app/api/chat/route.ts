@@ -11,6 +11,25 @@ export const runtime = "nodejs";
 const requestSchema = z.object({
   messages: z.array(z.unknown()).min(1).max(60),
 });
+// Some local models append a second object or prose after their JSON action.
+function parseJsonAction(text: string): unknown {
+  const start = text.indexOf("{");
+  let depth = 0,
+    quoted = false,
+    escaped = false;
+  for (let i = start; start >= 0 && i < text.length; i++) {
+    const char = text[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0)
+      return JSON.parse(text.slice(start, i + 1));
+  }
+  throw new Error("Model nie zwrócił kompletnego obiektu JSON.");
+}
 export async function POST(request: Request) {
   console.log("[AGENT] start");
   try {
@@ -42,13 +61,79 @@ export async function POST(request: Request) {
               system:
                 instructions +
                 '\nZwróć WYŁĄCZNIE JSON: {"text":"odpowiedź"} albo {"tool":"searchProducts","input":{"query":"kawa"}}. Narzędzia: searchProducts(query,maxPrice?), getProductDetails(productId), getPolicy(topic). Po wyniku narzędzia odpowiedz tekstem w JSON.',
-              messages: history,
+              messages: [
+                ...history,
+                {
+                  role: "user",
+                  content:
+                    step === 0
+                      ? "Wybierz narzędzie dla ostatniego pytania klienta. Produkty: searchProducts (query po polsku, np. kawa). Szczegóły znanego id: getProductDetails. Dostawa i zwroty: getPolicy. Pytania spoza sklepu (w tym programowanie): refuse. Nie odpowiadaj jeszcze na pytanie, nie wymyślaj produktów. Zwróć JSON tool i input."
+                      : "Odpowiedz na pytanie klienta na podstawie wyniku narzędzia powyżej. Używaj WYŁĄCZNIE podanych produktów i cen, nie dodawaj innych. Zwróć JSON z polem text.",
+                },
+              ],
               abortSignal: signal,
               maxRetries: 0,
+              temperature: 0.1,
+              maxOutputTokens: 1800,
+              providerOptions: {
+                "llama.cpp": {
+                  response_format: {
+                    type: "json_object",
+                    schema:
+                      step === 0
+                        ? {
+                            type: "object",
+                            properties: {
+                              tool: {
+                                type: "string",
+                                enum: [
+                                  "searchProducts",
+                                  "getProductDetails",
+                                  "getPolicy",
+                                  "refuse",
+                                ],
+                              },
+                              input: {
+                                type: "object",
+                                properties: {
+                                  query: { type: "string" },
+                                  maxPrice: { type: "number" },
+                                  productId: { type: "string" },
+                                  topic: { type: "string" },
+                                },
+                                additionalProperties: false,
+                              },
+                            },
+                            required: ["tool", "input"],
+                            additionalProperties: false,
+                          }
+                        : {
+                            type: "object",
+                            properties: { text: { type: "string" } },
+                            required: ["text"],
+                            additionalProperties: false,
+                          },
+                  },
+                },
+              },
             });
-            const parsed: unknown = JSON.parse(
-              result.text.replace(/^```(?:json)?\s*|\s*```$/g, ""),
-            );
+            const parsed: unknown = parseJsonAction(result.text);
+            if (
+              typeof parsed === "object" &&
+              parsed !== null &&
+              "tool" in parsed &&
+              parsed.tool === "refuse"
+            ) {
+              writer.write({ type: "text-start", id: "answer" });
+              writer.write({
+                type: "text-delta",
+                id: "answer",
+                delta:
+                  "Pomagam wyłącznie w zakupach w sklepie Aurelle. Mogę znaleźć produkt lub odpowiedzieć na pytania o dostawę i zwroty.",
+              });
+              writer.write({ type: "text-end", id: "answer" });
+              return;
+            }
             const action = z
               .union([
                 z.object({ text: z.string() }),
@@ -132,8 +217,11 @@ export async function POST(request: Request) {
             "Osiągnięto limit 5 kroków. Spróbuj zawęzić pytanie.",
           );
         },
-        onError: () => {
-          console.error("[LLM] błąd trybu JSON");
+        onError: (error) => {
+          console.error(
+            "[LLM] błąd trybu JSON:",
+            error instanceof Error ? error.message : "nieznany błąd",
+          );
           return "Model nie zwrócił poprawnej odpowiedzi. Sprawdź konsolę serwera.";
         },
         onFinish: () => {

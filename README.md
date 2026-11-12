@@ -48,3 +48,17 @@ Wszystkie dane i polityki są demonstracyjne. Przycisk koszyka zapisuje `[CART]`
 - `src/app/layout.tsx`, `src/app/globals.css` — wspólny układ i style.
 
 Usunięto pozostałe trasy i komponenty szablonu wymagające rozbudowanych przepływów. Brak bazy danych, płatności i usług chmurowych.
+
+## Podłączony Bielik (WSL → Windows)
+
+W tej instalacji `.env.local` wskazuje llama-swap działający w Windows:
+
+```dotenv
+LLAMA_BASE_URL=http://172.20.0.1:8090/v1
+LLAMA_MODEL=bielik-pl
+LLAMA_TOOL_MODE=json
+```
+
+Adres `172.20.0.1` jest bieżącą bramą WSL (`ip route show default`); po zmianie sieci WSL może wymagać aktualizacji. Windowsowy panel modeli: http://localhost:8090/ui/#/models. Plik `.env.local` jest lokalny i nie trafia do Git. Po zmianie konfiguracji ponownie uruchom `npm run dev`.
+
+Bielik korzysta z wymuszonego schematu JSON: najpierw wybiera narzędzie lub odmowę, następnie otrzymuje rzeczywiste dane i generuje odpowiedź. Tryb nie zmienia ustawień rozumowania serwera.
