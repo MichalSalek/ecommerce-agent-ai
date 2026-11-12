@@ -5,6 +5,10 @@ import { getStorePolicy } from "@/domain/catalog/policies";
 export const searchInput = z.object({
   query: z.string().trim().max(300),
   maxPrice: z.number().finite().nonnegative().optional(),
+  targetPrice: z.number().finite().nonnegative().optional(),
+  category: z.string().max(80).optional(),
+  excludeIds: z.array(z.string().max(100)).max(100).optional(),
+  limit: z.number().int().min(1).max(12).optional(),
 });
 export const detailsInput = z.object({ productId: z.string().min(1).max(100) });
 export const policyInput = z.object({ topic: z.string().min(1).max(200) });
@@ -12,7 +16,7 @@ export function createShopTools(catalog: CatalogService) {
   return {
     searchProducts: tool({
       description:
-        "Search the store by meaning. Use an English query and an optional maximum price in EUR. For budget-only browsing use an empty query.",
+        "Search the store by meaning. Use an English query and an optional maximum price in EUR. For browsing use an empty query. maxPrice is a hard ceiling; targetPrice ranks within 20% or EUR 5 around an approximate budget. Never turn around into a hard ceiling. Categories and exclusions are structured filters.",
       inputSchema: searchInput,
       execute: async (input) => {
         console.log("[TOOL] searchProducts", input);
@@ -30,6 +34,14 @@ export function createShopTools(catalog: CatalogService) {
         return (
           (await catalog.details(productId)) ?? { error: "Product not found." }
         );
+      },
+    }),
+    getCategories: tool({
+      description: "List actual catalog categories.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        console.log("[TOOL] getCategories");
+        return catalog.categories();
       },
     }),
     getPolicy: tool({

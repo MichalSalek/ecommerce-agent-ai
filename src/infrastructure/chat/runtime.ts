@@ -4,4 +4,5 @@ export interface ChatRuntime {
   label: string;
   providerOptions: Record<string, Record<string, JSONValue>>;
   maxOutputTokens: number;
+  narrate?: boolean;
 }

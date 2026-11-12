@@ -3,7 +3,7 @@
 @tailwind utilities;
 :root {
   color-scheme: light;
-  --paper: #f6f3ec;
+  --paper: #f3f0f4;
   --surface: #fffcf6;
   --ink: #28352c;
   --muted: #62685e;
@@ -807,4 +807,23 @@ footer {
   * {
     transition: none !important;
   }
+}
+
+nav .assistant-link {
+  font-weight: 700;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.assistant-link svg {
+  flex: none;
+}
+.hero-actions .button {
+  font-weight: 600;
+}
+
+.retry-button {
+  display: block;
+  margin-top: 12px;
 }

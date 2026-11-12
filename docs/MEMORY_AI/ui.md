@@ -1,7 +1,7 @@
 # UI evidence
 
 ## Last Session
-English commerce refinement: catalog, product, persistent cart and compact chat results. Independent screenshot reader: SHIP with minor search-placeholder and dev-overlay issues, both addressed.
+2026-11-13: owner-selected #f3f0f4 background, primary AI CTA, secondary catalog CTA and bold robot navigation. Fresh screenshot review: SHIP. Actual background RGB verified in browser; replayed reported conversation without error at desktop/mobile widths.
 
 ## Key Findings
 - Budget-only requests are structured catalog browsing, not semantic retrieval.

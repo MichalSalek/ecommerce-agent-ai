@@ -9,7 +9,10 @@ export class CatalogService {
     const intent = parseSearchIntent(criteria);
     return intent.query
       ? this.repository.search(intent)
-      : this.repository.browse(intent.maxPrice);
+      : this.repository.browse(intent.maxPrice, intent);
+  }
+  categories() {
+    return this.repository.categories();
   }
   details(id: string) {
     return this.repository.findById(id);

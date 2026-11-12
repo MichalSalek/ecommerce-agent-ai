@@ -1,8 +1,8 @@
 # Aurelle - an AI shopping assistant with real vector retrieval
 
-A small, deliberately complete shopping demo: browse 48 products, inspect a product, ask an assistant for recommendations, and keep a cart across page reloads. The UI, catalog, prompts and documentation are in English; all prices are in EUR.
+A small, deliberately complete shopping demo: browse 48 products, inspect a product, ask an assistant for recommendations, and keep a cart across page reloads. The UI, catalog, code and documentation are in English; the assistant follows the customer language. Polish and English have grounded fallback replies, and live Spanish search narration is also verified. All catalog prices remain in EUR.
 
-The interesting part is the boundary between probabilistic reasoning and reliable commerce behavior. A language model selects a validated tool. Product identity, prices, stock, policies and totals come from application code and the catalog. A model cannot create an imaginary offer or turn a successful search into an empty-catalog answer.
+The interesting part is the boundary between probabilistic reasoning and reliable commerce behavior. A language model selects validated tools and can supply conversational transitions. Product identity, prices, stock, policies, currency handling and ranking remain in application code and the catalog. Optional generated wording is validated and never supplies a numeric price; contextual fallback replies keep retrieved facts available if narration fails.
 
 Built with Next.js 16 App Router, React 19, TypeScript strict, Vercel AI SDK 7, Zod, embedded LanceDB and local CPU embeddings. The visual starting point and product photographs come from [dilums/kimi-k3-ecommerce-storefront](https://github.com/dilums/kimi-k3-ecommerce-storefront). Additional mock products use explicitly marked local SVG illustrations. This is a portfolio demo, without payment processing or order fulfillment.
 
@@ -97,6 +97,8 @@ flowchart LR
   Embeddings --> DB
   Tools --> Facts[Deterministic fact presentation]
   Facts --> Browser
+  Facts --> Wording[Optional validated wording]
+  Wording --> Browser
   Browser --> Storage[Versioned localStorage cart]
 ```
 
@@ -116,9 +118,9 @@ The domain imports neither Next.js nor the AI SDK, LanceDB or ONNX. The reposito
 
 1. The API validates the UI-message structure and converts it to model messages. Invalid requests return an HTTP error; the request has a 90-second deadline.
 2. A pure budget question such as `What can I buy under EUR 25?` is recognized deterministically. It uses a structured database filter, not vector similarity to generic words such as “what can I buy.”
-3. Requests naming an explicit product ID use the detail tool directly. Other requests go to the selected LLM once. Its JSON action must match one of `searchProducts`, `getProductDetails`, `getPolicy` or `refuse` and the tool-specific Zod schema. Unknown tools and invalid arguments are rejected before execution.
+3. Explicit product IDs, language changes, greetings, category requests, broad home requests and continuation of earlier searches have structured handling. Other requests use a validated LLM action: `searchProducts`, `getProductDetails`, `getCategories`, `getPolicy`, conversational `respond` or `refuse`. Unsupported actions produce a clarifying question instead of an unexplained blank turn.
 4. The selected application tool executes. Semantic queries embed the product intent and query LanceDB; price-only browsing filters and sorts the stored catalog directly.
-5. Results are streamed as typed AI SDK tool parts. The client renders actual product cards and detail links. A deterministic response reports the successful result or the actual empty state. There is no second LLM summary that could contradict the data or invent prices and URLs.
+5. Results are streamed as typed AI SDK tool parts. The client renders actual product cards and detail links. An optional narration call writes only a brief opening and a relevant next question in the customer language, using the conversation and returned product names/categories. Digits, currencies, URLs, empty-inventory claims after successful retrieval and payment offers are rejected. Narration has an eight-second deadline and falls back to contextual replies; it never creates catalog facts. A free-form successful search can therefore use two model calls; structured requests need no model decision.
 
 This is intentionally a bounded shopping agent, not an unrestricted autonomous agent. Provider errors remain visible, are not disguised as “no products,” and do not trigger unannounced cloud fallback. Tool execution is server-side. Model compliance on arbitrary adversarial requests is not guaranteed; the validated tool boundary limits what a model can execute.
 
@@ -129,6 +131,16 @@ Bielik/Groq selects actions; it does not produce embeddings. [BGE small English 
 LanceDB is embedded and persistent under `.data/lancedb`; no database daemon or vector service is required. For 48 products, exact cosine search is appropriate. Semantic search applies the budget filter, selects at most two nearest candidates and drops distances above 0.45. This cutoff is a demo calibration, not a relevance guarantee. Structured browsing returns up to 12 products ordered by price and ID, without a similarity cutoff. Category and text filters on the home page are deterministic UI controls, distinct from semantic recommendations.
 
 The table name fingerprints the complete catalog and embedding identity. Price, stock, URL, description or encoder changes produce a new table, avoiding stale records and mixed embedding spaces. Old derived tables are retained; stop the app before removing `.data/lancedb` to rebuild. Cache paths are configurable through `LANCEDB_DIR` and `EMBEDDING_CACHE_DIR`.
+
+### Conversation and price meaning
+
+The conversation adapter derives language preference, previous search constraints and already shown product IDs from validated message history. `Something else?` reuses the earlier intent and excludes displayed products; `continue` can recover a preceding unanswered user question. Broad home requests return two examples and ask about a category. Actual categories come from a repository operation rather than model recall. Reply wording is action-specific and can be generated in the customer language; the static fallback is not prepended to every answer.
+
+`maxPrice` is a hard ceiling. `targetPrice` is an approximate price target: candidates within 20% or EUR 5 are ranked by absolute distance from the target, after semantic/category constraints. For home items around EUR 30, the EUR 32 vase ranks ahead of the EUR 14 candle. Approximate ranking is a documented demo policy, not an exchange rate or a universal recommendation metric.
+
+Foreign currency amounts (USD, PLN, GBP and CHF) are not silently interpreted as EUR. The assistant may show explicitly labeled EUR price-level examples and asks the shopper to confirm a euro budget. It does not claim those examples are a currency conversion. No live FX feed is integrated.
+
+The failed question remains in chat and the UI offers `Try again`; a failed model request is not an empty-catalog result. The source language remains English while localized assistant replies are intentional application content.
 
 ### Cart and product pages
 

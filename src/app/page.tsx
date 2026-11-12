@@ -17,10 +17,10 @@ export default function Home() {
             <br className="desktop-break" /> and the rituals in between.
           </p>
           <div className="hero-actions">
-            <Link className="button" href="#collection">
-              Explore the collection
+            <Link className="button" href="/chat">
+              Ask AI Assistant ↗
             </Link>
-            <Link href="/chat">Find it with the assistant ↗</Link>
+            <Link href="#collection">Explore the collection</Link>
           </div>
         </div>
         <Link className="hero-image" href="/products/mugs">

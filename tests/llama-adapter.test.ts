@@ -10,6 +10,7 @@ test("the JSON agent sends JSON mode to the HTTP server and executes the validat
   let searched = false;
   const tools = createShopTools(
     new CatalogService({
+      categories: async () => ["Home", "Kitchen"],
       browse: async () => [],
       search: async (input) => {
         assert.equal(input.query, "coffee");
@@ -64,7 +65,7 @@ test("the JSON agent sends JSON mode to the HTTP server and executes the validat
     parts.some(
       (part) =>
         part.type === "text-delta" &&
-        part.delta.startsWith("No matching products"),
+        /no (?:matching|further)/i.test(part.delta),
     ),
   );
 });
@@ -73,6 +74,7 @@ test("budget-only browsing does not ask the LLM to invent a product intent", asy
   let browsed = false;
   const tools = createShopTools(
     new CatalogService({
+      categories: async () => [],
       search: async () => {
         throw Error("Semantic search should not run");
       },

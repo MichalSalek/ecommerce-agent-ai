@@ -16,6 +16,7 @@ export class BgeEmbedding implements TextEmbedding {
       cache_dir: resolve(this.cacheDirectory),
       revision: REVISION,
       device: "cpu",
+      session_options: { intraOpNumThreads: 1, interOpNumThreads: 1 },
     });
   }
   private async embed(texts: string[]): Promise<number[][]> {

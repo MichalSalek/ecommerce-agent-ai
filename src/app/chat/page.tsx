@@ -23,9 +23,10 @@ function errorText(message: string) {
 }
 export default function Chat() {
   const [input, setInput] = useState("");
-  const { messages, sendMessage, status, error, stop } = useChat<ChatMessage>({
-    transport,
-  });
+  const { messages, sendMessage, status, error, stop, regenerate } =
+    useChat<ChatMessage>({
+      transport,
+    });
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("product");
     if (id) setInput(`Tell me about product ${id}`);
@@ -96,6 +97,9 @@ export default function Chat() {
       {error && (
         <p role="alert" className="error">
           {errorText(error.message)}
+          <button className="retry-button" onClick={() => void regenerate()}>
+            Try again
+          </button>
         </p>
       )}
       <form

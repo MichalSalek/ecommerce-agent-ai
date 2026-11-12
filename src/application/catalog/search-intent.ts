@@ -12,7 +12,7 @@ export function parseSearchIntent(criteria: ProductSearch): ProductSearch {
     .trim();
   const generic =
     /^(?:(?:what|can|i|buy|could|do|you|have|show|me|some|any|all|the|your|products?|items?|things?|options?|available|please|find|something|for|a|are|there)\s*)*$/i;
-  return { query: generic.test(query) ? "" : query, maxPrice };
+  return { ...criteria, query: generic.test(query) ? "" : query, maxPrice };
 }
 export function budgetBrowseRequest(text: string): ProductSearch | undefined {
   const intent = parseSearchIntent({ query: text });

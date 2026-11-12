@@ -23,5 +23,6 @@ export async function resolveChatRuntime(
       [LLAMA_PROVIDER]: { response_format: { type: "json_object" } },
     },
     maxOutputTokens: 3000,
+    narrate: true,
   };
 }

@@ -26,3 +26,7 @@ No demo process was started on the existing account.
 ## Before going public
 
 Choose an actual target and persistent data path, decide whether chat uses a direct Groq account or an externally reachable owner-managed model service, and set server-only credentials. The Windows loopback balancer is a local integration, not an internet deployment dependency. Define public access/cost limits before exposing `/api/chat`; current local tests do not establish production concurrency, abuse resistance or uptime. Do not publish or expose the private balancer itself.
+
+## Update: rebuildable Render Free demo
+
+The owner accepts recreating this mock database after restarts. A permanent disk is therefore no longer a prerequisite for this demo, though it would be needed for future durable user/order data. The current preferred experiment is Render Free with Groq chat and local q8 BGE CPU inference, preparing weights/index during the build. Local production probes observed 314.9 MiB for warm-index retrieval and 349.1 MiB when rebuilding the index; these do not establish concurrency or actual Render performance. See [Render Free plan](RENDER_FREE_PLAN.md) for the full proposal and remaining gates. Nothing was deployed.

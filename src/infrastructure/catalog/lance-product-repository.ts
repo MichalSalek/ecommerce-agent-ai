@@ -58,33 +58,82 @@ export class LanceProductRepository implements ProductRepository {
     });
     return this.table;
   }
-  async search({ query, maxPrice }: ProductSearch): Promise<Product[]> {
-    if (maxPrice !== undefined && (!Number.isFinite(maxPrice) || maxPrice < 0))
-      throw new RangeError(
-        "Maximum price must be a non-negative finite number.",
+  private filters(criteria: ProductSearch): string[] {
+    const filters: string[] = [];
+    for (const amount of [criteria.maxPrice, criteria.targetPrice])
+      if (amount !== undefined && (!Number.isFinite(amount) || amount < 0))
+        throw new RangeError("Price must be a non-negative finite number.");
+    if (criteria.maxPrice !== undefined)
+      filters.push(`price <= ${criteria.maxPrice}`);
+    if (criteria.targetPrice !== undefined) {
+      const tolerance = Math.max(5, criteria.targetPrice * 0.2);
+      filters.push(
+        `price >= ${Math.max(0, criteria.targetPrice - tolerance)} AND price <= ${criteria.targetPrice + tolerance}`,
       );
+    }
+    // Resolve filter strings against canonical IDs/categories before interpolation.
+    if (criteria.category) {
+      const category = this.catalog.find(
+        (p) => p.category.toLowerCase() === criteria.category!.toLowerCase(),
+      )?.category;
+      if (!category) return ["price < 0"];
+      filters.push(`category = '${category.replaceAll("'", "''")}'`);
+    }
+    const excluded = this.catalog
+      .filter((p) => criteria.excludeIds?.includes(p.id))
+      .map((p) => `'${p.id.replaceAll("'", "''")}'`);
+    if (excluded.length) filters.push(`id NOT IN (${excluded.join(",")})`);
+    return filters;
+  }
+  async search(criteria: ProductSearch): Promise<Product[]> {
+    const filters = this.filters(criteria);
     const table = await this.prepare();
-    const vector = await this.embedding.embedQuery(query);
+    const vector = await this.embedding.embedQuery(criteria.query);
     let search = table.vectorSearch(vector).distanceType("cosine");
-    if (maxPrice !== undefined) search = search.where(`price <= ${maxPrice}`);
-    const rows = await search.limit(2).toArray();
-    const products = rows
+    if (filters.length) search = search.where(filters.join(" AND "));
+    const rows = await search
+      .limit(
+        criteria.targetPrice !== undefined
+          ? this.catalog.length
+          : Math.min(criteria.limit ?? 2, 12),
+      )
+      .toArray();
+    const matches = rows
       .filter((row) => Number(row._distance) <= 0.45)
       .map((row) => productSchema.parse(row));
-    console.log(`[VECTOR] search returned ${products.length} products`);
-    return products;
+    if (criteria.targetPrice !== undefined)
+      matches.sort(
+        (a, b) =>
+          Math.abs(a.price - criteria.targetPrice!) -
+          Math.abs(b.price - criteria.targetPrice!),
+      );
+    const result = matches.slice(0, Math.min(criteria.limit ?? 2, 12));
+    console.log(`[VECTOR] search returned ${result.length} products`);
+    return result;
   }
-  async browse(maxPrice?: number): Promise<Product[]> {
-    if (maxPrice !== undefined && (!Number.isFinite(maxPrice) || maxPrice < 0))
-      throw new RangeError("Invalid maximum price.");
+  async browse(
+    maxPrice?: number,
+    options: Omit<ProductSearch, "query" | "maxPrice"> = {},
+  ): Promise<Product[]> {
+    const criteria = { query: "", ...options, maxPrice };
+    const filters = this.filters(criteria);
     const table = await this.prepare();
     let query = table.query();
-    if (maxPrice !== undefined) query = query.where(`price <= ${maxPrice}`);
+    if (filters.length) query = query.where(filters.join(" AND "));
     const rows = await query.toArray();
+    const target = options.targetPrice;
     return rows
       .map((row) => productSchema.parse(row))
-      .sort((a, b) => a.price - b.price || a.id.localeCompare(b.id))
-      .slice(0, 12);
+      .sort((a, b) =>
+        target !== undefined
+          ? Math.abs(a.price - target) - Math.abs(b.price - target) ||
+            a.id.localeCompare(b.id)
+          : a.price - b.price || a.id.localeCompare(b.id),
+      )
+      .slice(0, Math.min(options.limit ?? 12, 12));
+  }
+  async categories() {
+    return [...new Set(this.catalog.map((p) => p.category))].sort();
   }
   async findById(id: string) {
     return this.catalog.find((product) => product.id === id);
