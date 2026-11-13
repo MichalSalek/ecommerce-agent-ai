@@ -134,8 +134,8 @@ export default function ChatView() {
         <span className="eyebrow">AURELLE / SHOPPING COMPANION</span>
         <h1>Your next good find starts here.</h1>
         <p>
-          Tell us what you have in mind. Your assistant turns an idea into
-          things you can actually shop.
+          An engineering demo with 48 mocked products, prices and stock. Explore
+          real search and comparison tools; no orders or payments are processed.
         </p>
         <div className="assistant-guide">
           <span>Made for the everyday</span>
@@ -238,10 +238,23 @@ export default function ChatView() {
                   if (part.type === "text") return <p key={i}>{part.text}</p>;
                   if (
                     (part.type === "tool-searchProducts" ||
-                      part.type === "tool-getProductDetails") &&
+                      part.type === "tool-getProductDetails" ||
+                      part.type === "tool-compareProducts") &&
                     part.state === "output-available"
                   )
-                    return <ProductResults key={i} output={part.output} />;
+                    return (
+                      <ProductResults
+                        key={i}
+                        output={
+                          part.type === "tool-compareProducts" &&
+                          typeof part.output === "object" &&
+                          part.output !== null &&
+                          "products" in part.output
+                            ? part.output.products
+                            : part.output
+                        }
+                      />
+                    );
                   return null;
                 })}
               </article>
@@ -390,6 +403,93 @@ export default function ChatView() {
             <span>{draft.length}/2000</span>
           </div>
         </form>
+      </section>
+      <section
+        className="demo-capabilities"
+        aria-labelledby="demo-capabilities-title"
+      >
+        <span className="eyebrow">TRY THE IMPLEMENTED FEATURES</span>
+        <h2 id="demo-capabilities-title">
+          A demo store. A real agent workflow.
+        </h2>
+        <p>
+          All 48 products, prices, stock and policies are mock data.
+          Recommendations use actual catalog tools; the assistant does not place
+          orders. Click a scenario to start testing it in this conversation.
+        </p>
+        <div className="capability-grid">
+          {[
+            [
+              "Semantic discovery",
+              "I need something for my morning coffee",
+              "Find two actual products before a follow-up question.",
+            ],
+            [
+              "Compare products",
+              "Compare mugs and carafe",
+              "Compare real descriptions, EUR prices and stock. No invented quality scores.",
+            ],
+            [
+              "Gift with a budget",
+              "Find a gift under EUR 25",
+              "Browse affordable, available examples; refine the recipient next.",
+            ],
+            [
+              "Stock-aware follow-up",
+              "Show only in-stock products",
+              "Keep the last search criteria and exclude unavailable items.",
+            ],
+            [
+              "Approximate price",
+              "Something for home around EUR 30",
+              "Rank near a target rather than silently treating it as a maximum.",
+            ],
+            [
+              "Language and categories",
+              "Możesz pisać po polsku?",
+              "Switch language, ask for categories, or request different suggestions.",
+            ],
+            [
+              "Grounded policies",
+              "How much is delivery?",
+              "Use the actual demo policy rather than a model-invented promise.",
+            ],
+            [
+              "Scope boundary",
+              "Write a Python loop",
+              "See a shopping-only refusal and a path back to the store.",
+            ],
+          ].map(([title, prompt, description]) => (
+            <article key={title}>
+              <h3>{title}</h3>
+              <p>{description}</p>
+              <button
+                disabled={!ready || busy || conversationClosed}
+                onClick={() => {
+                  send(prompt);
+                  thread.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                  });
+                }}
+              >
+                {prompt} ↗
+              </button>
+            </article>
+          ))}
+        </div>
+        <p className="muted">
+          Your chat and cart are saved on this device. Try opening a product and
+          going Back, Shift+Enter for a new line, or New conversation to reset
+          only the chat. Conversations close after 20 customer messages or
+          24,000 text characters; the final reply can finish and the cart stays
+          saved. Retry repeats the failed question without adding a duplicate. A
+          structured request may run without an LLM call; free-form planning and
+          optional wording use the configured model.{" "}
+          <Link href="https://github.com/MichalSalek/ecommerce-agent-ai">
+            Read the architecture and tests ↗
+          </Link>
+        </p>
       </section>
     </div>
   );

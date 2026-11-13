@@ -2,7 +2,12 @@ import { z } from "zod";
 import type { ChatMessage } from "@/types/shop";
 import { getStorePolicy } from "@/domain/catalog/policies";
 import { products } from "@/data/products";
-import { searchInput, detailsInput, policyInput } from "./tool-inputs";
+import {
+  searchInput,
+  detailsInput,
+  policyInput,
+  compareInput,
+} from "./tool-inputs";
 export const CHAT_STORAGE_KEY = "aurelle.conversation.v1";
 export const WELCOME_ID = "aurelle-welcome";
 export function welcomeMessage(): ChatMessage {
@@ -79,12 +84,33 @@ const categoriesPart = z
     ...part,
     output: [...new Set(products.map((p) => p.category))].sort(),
   }));
+const comparisonPart = z
+  .object({
+    type: z.literal("tool-compareProducts"),
+    ...callFields,
+    input: compareInput,
+    output: z.object({
+      products: z.array(z.object({ id: z.string() })).max(3),
+      missingIds: z.array(z.string()).max(3),
+    }),
+  })
+  .transform((part) => ({
+    ...part,
+    output: {
+      products: part.output.products.flatMap((value) => {
+        const product = products.find((p) => p.id === value.id);
+        return product ? [product] : [];
+      }),
+      missingIds: part.output.missingIds,
+    },
+  }));
 const partSchema = z.union([
   textPart,
   searchPart,
   detailPart,
   policyPart,
   categoriesPart,
+  comparisonPart,
 ]);
 const baseMessage = z.object({
   id: z.string().min(1).max(150),

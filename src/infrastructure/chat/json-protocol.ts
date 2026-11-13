@@ -4,11 +4,13 @@ import {
   searchInput,
   detailsInput,
   policyInput,
+  compareInput,
 } from "@/application/chat/tools";
 export const actionSchema = z.discriminatedUnion("tool", [
   z.object({ tool: z.literal("searchProducts"), input: searchInput }),
   z.object({ tool: z.literal("getProductDetails"), input: detailsInput }),
   z.object({ tool: z.literal("getPolicy"), input: policyInput }),
+  z.object({ tool: z.literal("compareProducts"), input: compareInput }),
   z.object({ tool: z.literal("getCategories"), input: z.object({}) }),
   z.object({
     tool: z.literal("respond"),
@@ -20,6 +22,7 @@ export type ShopAction = z.infer<typeof actionSchema>;
 export const selectionInstruction = `Select one tool for the LAST customer question. Return only one JSON object using exactly one of these shapes:
 - Products: {"tool":"searchProducts","input":{"query":"customer product request","maxPrice":25}}. Query is in English without invented intent. maxPrice is optional, in EUR. For approximate budgets use targetPrice instead. Preserve category and exclude already shown IDs for alternatives. Translate semantic query into English for the English encoder. Do not refuse language requests or greetings.
 - Greetings, language changes or a clarification (never product facts): {"tool":"respond","input":{"message":"A helpful short reply in the customer language, with a relevant next question"}}.
+- Comparison: {"tool":"compareProducts","input":{"productIds":["mugs","carafe"]}}. Use only known product IDs.
 - Categories: {"tool":"getCategories","input":{}}.
 - Known product ID: {"tool":"getProductDetails","input":{"productId":"mugs"}}.
 - Delivery/returns/payments: {"tool":"getPolicy","input":{"topic":"delivery"}}. The topic field is REQUIRED, not query.

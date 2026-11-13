@@ -18,6 +18,7 @@ export interface ProductSearch {
   category?: string;
   excludeIds?: string[];
   limit?: number;
+  inStockOnly?: boolean;
 }
 export interface ProductRepository {
   search(criteria: ProductSearch): Promise<Product[]>;

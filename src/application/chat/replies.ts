@@ -18,6 +18,7 @@ export function searchReply(
   context: ConversationContext,
   options: {
     broad?: boolean;
+    gift?: boolean;
     more?: boolean;
     budget?: BudgetRequest;
     narration?: { opening: string; followUp: string };
@@ -41,7 +42,11 @@ export function searchReply(
       .filter(Boolean)
       .join("\n\n");
   let intro: string;
-  if (options.broad)
+  if (options.gift)
+    intro = pl
+      ? "Na początek dwa dostępne przykłady na prezent w podanym budżecie. Dla kogo szukasz prezentu i co ta osoba lubi?"
+      : "Here are two available starting points for a gift within your budget. Who is it for, and what do they enjoy?";
+  else if (options.broad)
     intro = pl
       ? "Do domu można wybrać coś praktycznego albo dekoracyjnego. Na początek dwa przykłady poniżej."
       : "For your home, we can look at something practical or decorative. Here are two starting points.";
@@ -66,13 +71,13 @@ export function searchReply(
       : context.turn % 2
         ? "These options match what you're looking for."
         : "These are worth a closer look.";
-  if (options.narration && budget?.mode !== "around")
+  if (options.narration && budget?.mode !== "around" && !options.gift)
     intro = options.narration.opening;
   return [
     intro,
     currencyNote ||
-      options.narration?.followUp ||
-      nextQuestion(context, options.broad),
+      (options.gift ? "" : options.narration?.followUp) ||
+      (options.gift ? "" : nextQuestion(context, options.broad)),
   ]
     .filter(Boolean)
     .join("\n\n");

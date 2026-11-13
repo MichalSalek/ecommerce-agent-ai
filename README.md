@@ -214,3 +214,15 @@ See [AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md) for execution-path table
 A conversation now closes after 20 customer messages or 24000 textual characters, warns for its last three turns, disables the composer and invites a new topic while keeping the cart. The server independently enforces excessive-history rejection; it is a simple application lifetime policy, not exact tokenizer accounting or a secure identity boundary. Existing model-context compaction and request deadlines remain separate safeguards. Dev runs Webpack in `.next-development` so production builds do not overwrite its output.
 
 [Next project proposals](docs/NEXT_PROJECTS.md) cover a Python document workflow, a Spring Boot support copilot and a static-site service assistant with a small server-side Groq proxy; these are proposals, not implemented products.
+
+## Try the full demo without reading the source first
+
+The chat page explicitly identifies the catalog, prices, availability and policies as mock data. Its **Try the implemented features** guide contains clickable scenarios and the boundaries of the demo, including persistence, language, conversation lifetime and retry.
+
+New discovery capabilities:
+
+- `Compare mugs and carafe` invokes the validated `compareProducts` tool, reads both canonical records, shows their cards and computes the EUR price difference in application code. Comparisons accept two or three distinct known IDs and report unknown IDs; they do not invent quality scores. After recommendations, `Compare these products` resolves the latest shown search results rather than guessing another pair.
+- `Find a gift under EUR 25` returns two available catalog starting points within the hard budget and asks about the recipient. This is a deliberately broad discovery starting point, not an assertion that every item suits every recipient.
+- `Show only in-stock products` reuses the preceding search constraints when present and adds a true database availability filter. If there is no earlier search, it browses available products. Availability filtering is independent of semantic similarity and prices.
+
+The comparison tool participates in native action schemas, model instructions, UI tool rendering and versioned history restoration. Restored comparison cards again take their prices/stock from the canonical catalog. New tools use the existing repository/service boundary instead of creating a parallel data source.

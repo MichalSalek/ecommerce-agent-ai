@@ -89,3 +89,11 @@ The reported `trwałość materiału` exchange was reproduced with real Groq and
 ## Concrete measured fast-path example
 
 On the repaired development server, replaying `szukam czegoś do domu za około 29$ mniej więcej` returned the ceramic vase at EUR 32 and amber glass vase at EUR 25. The execution trace reported `route: structured`, `operation: searchProducts`, `llmCalls: 0`, `elapsedMs: 96`, `responseCache: false`. The complete development HTTP log was about 579 ms in that run, including compilation/request handling. Do not confuse the execution span with full browser-perceived latency or claim every request is 96 ms.
+
+## Discovery extensions: comparison, availability and gifts
+
+Comparison is an explicit application capability rather than free-form model prose. The action schema requires two or three distinct IDs. The tool resolves canonical records through the catalog service, returns known products and missing IDs, and the presentation computes a price difference only for a pair of actual products. It compares only recorded attributes; it cannot substantiate a durability claim absent from the data. The known-ID and latest-search-result paths can bypass the model; other formulations may be interpreted by the planner through the same schema.
+
+Availability is a structured `inStockOnly` query parameter, applied inside LanceDB alongside price/category/exclusion constraints. A follow-up inherits the last validated search criteria. It is not a keyword search for “in stock,” and a model cannot mark an unavailable item available through its prose.
+
+Gift discovery is a bounded starting workflow: two real in-stock items within the supplied price constraint, followed by a recipient/preferences question. It reuses searchProducts and the same numeric budget logic, rather than introducing a second recommendation database. It does not infer an unknown recipient's taste. These features are explicitly listed with clickable acceptance examples on the public chat demo page.

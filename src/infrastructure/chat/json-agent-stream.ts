@@ -7,6 +7,13 @@ import {
 import { narrateResults } from "./narration";
 import { instructions } from "@/application/chat/instructions";
 import type { ShopTools } from "@/application/chat/tools";
+import {
+  comparisonIds,
+  latestResultIds,
+  wantsAvailableOnly,
+  giftRequest,
+} from "@/application/chat/discovery";
+import { products as catalogProducts } from "@/data/products";
 import { compactModelHistory } from "@/application/chat/model-history";
 import { clearShoppingRequest } from "@/application/chat/shopping-intent";
 import { requestedProductId } from "@/application/chat/requests";
@@ -78,6 +85,20 @@ export function createJsonAgentStream(
         const broad = isHomeRequest(text);
         const productId = requestedProductId(text);
         const shoppingRequest = clearShoppingRequest(text);
+        const compareIds = comparisonIds(
+          text,
+          latestResultIds(messages),
+          catalogProducts,
+        );
+        if (compareIds && compareIds.length < 2) {
+          write(
+            context.language === "pl"
+              ? "Które dwa produkty chcesz porównać? Podaj ich nazwy lub najpierw poproś o propozycje."
+              : "Which two products would you like to compare? Name them or ask for suggestions first.",
+          );
+          return;
+        }
+
         let action: ShopAction;
         if (isGreeting(text)) {
           write(simpleReply("greeting", context));
@@ -95,7 +116,26 @@ export function createJsonAgentStream(
           write(simpleReply("refuse", context));
           return;
         }
-        if (isCategoriesRequest(text))
+        if (compareIds)
+          action = {
+            tool: "compareProducts",
+            input: { productIds: compareIds },
+          };
+        else if (giftRequest(text))
+          action = {
+            tool: "searchProducts",
+            input: { query: "", limit: 2, inStockOnly: true },
+          };
+        else if (wantsAvailableOnly(text))
+          action = {
+            tool: "searchProducts",
+            input: {
+              ...(context.previousSearch ?? { query: "" }),
+              inStockOnly: true,
+              limit: 2,
+            },
+          };
+        else if (isCategoriesRequest(text))
           action = { tool: "getCategories", input: {} };
         else if (productId)
           action = { tool: "getProductDetails", input: { productId } };
@@ -178,6 +218,8 @@ export function createJsonAgentStream(
             },
           };
         }
+        if (action.tool === "searchProducts" && wantsAvailableOnly(text))
+          action = { ...action, input: { ...action.input, inStockOnly: true } };
         operation = action.tool;
         const id = crypto.randomUUID();
         const execution = { toolCallId: id, messages, context: {} };
@@ -198,6 +240,12 @@ export function createJsonAgentStream(
           case "getPolicy":
             output = await tools.getPolicy.execute!(action.input, execution);
             break;
+          case "compareProducts":
+            output = await tools.compareProducts.execute!(
+              action.input,
+              execution,
+            );
+            break;
           case "getCategories":
             output = await tools.getCategories.execute!(
               action.input,
@@ -212,16 +260,61 @@ export function createJsonAgentStream(
           input: action.input,
         });
         writer.write({ type: "tool-output-available", toolCallId: id, output });
+        if (action.tool === "compareProducts") {
+          const comparison = output as {
+            products: import("@/domain/catalog/product").Product[];
+            missingIds: string[];
+          };
+          if (
+            comparison &&
+            typeof comparison === "object" &&
+            "products" in comparison &&
+            Array.isArray(comparison.products)
+          ) {
+            const rows = comparison.products.map(
+              (p) =>
+                `${p.name}: ${p.price.toFixed(2)} EUR · ${context.language === "pl" ? (p.inStock ? "dostępny" : "niedostępny") : p.inStock ? "in stock" : "out of stock"} · ${p.description}`,
+            );
+            const difference =
+              comparison.products.length === 2
+                ? Math.abs(
+                    comparison.products[0].price - comparison.products[1].price,
+                  ).toFixed(2)
+                : undefined;
+            write(
+              [
+                context.language === "pl"
+                  ? "Porównanie na podstawie danych katalogu:"
+                  : "Comparison based on catalog facts:",
+                ...rows,
+                difference
+                  ? `${context.language === "pl" ? "Różnica ceny" : "Price difference"}: ${difference} EUR.`
+                  : "",
+                comparison.missingIds.length
+                  ? `Missing product IDs: ${comparison.missingIds.join(", ")}`
+                  : "",
+                context.language === "pl"
+                  ? "Wolisz niższą cenę czy konkretny sposób użycia? Nie oceniam trwałości bez danych."
+                  : "Would you prioritize price or a particular use? Durability cannot be inferred from these records.",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            );
+            return;
+          }
+        }
         if (action.tool === "searchProducts" && Array.isArray(output)) {
           const products = output.map((p) => productSchema.parse(p));
           const willNarrate = !!(
             options?.narrate &&
+            !giftRequest(text) &&
             products.length &&
             (!budget || budget.currency === "EUR")
           );
           if (willNarrate) llmCalls++;
           const narration =
             options?.narrate &&
+            !giftRequest(text) &&
             products.length &&
             (!budget || budget.currency === "EUR")
               ? await narrateResults(
@@ -240,6 +333,7 @@ export function createJsonAgentStream(
               more,
               budget,
               narration: narration || undefined,
+              gift: giftRequest(text),
             }),
           );
         } else if (action.tool === "getCategories" && Array.isArray(output))

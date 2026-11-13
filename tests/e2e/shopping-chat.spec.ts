@@ -122,7 +122,9 @@ test("390px mobile keeps the composer reachable and the page free of horizontal 
   await page.setViewportSize({ width: 390, height: 844 });
   await fixture(page);
   await page.goto("/chat");
-  await page.getByRole("button", { name: "My morning coffee" }).click();
+  await page
+    .getByRole("button", { name: "My morning coffee", exact: true })
+    .click();
   await expect(page.locator(".product.compact")).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Send message" }),
@@ -197,7 +199,9 @@ test("failed product photos have a visible fallback without breaking recommendat
   await fixture(page);
   await page.route("**/_next/image?*", (route) => route.abort());
   await page.goto("/chat");
-  await page.getByRole("button", { name: "My morning coffee" }).click();
+  await page
+    .getByRole("button", { name: "My morning coffee", exact: true })
+    .click();
   await expect(page.locator(".product.compact")).toHaveCount(2);
   await expect(
     page.getByText("Image unavailable", { exact: true }),
@@ -276,4 +280,62 @@ test("manual retry reuses the failed user message and context without duplicatin
   await expect(page.locator(".product.compact")).toHaveCount(2);
   await expect(page.locator(".chat-message.user")).toHaveCount(1);
   expect(bodies[1]).toEqual(bodies[0]);
+});
+
+test("capability guide is explicit about mock data and sends the advertised comparison scenario", async ({
+  page,
+}) => {
+  let sent = "";
+  await page.route("**/api/chat", async (route) => {
+    const body = route.request().postDataJSON();
+    sent = body.messages.at(-1).parts[0].text;
+    const parts = [
+      { type: "start", messageId: "comparison" },
+      {
+        type: "tool-input-available",
+        toolCallId: "comparison",
+        toolName: "compareProducts",
+        input: { productIds: ["mugs", "carafe"] },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "comparison",
+        output: {
+          products: products.filter((p) => ["mugs", "carafe"].includes(p.id)),
+          missingIds: [],
+        },
+      },
+      { type: "text-start", id: "answer" },
+      {
+        type: "text-delta",
+        id: "answer",
+        delta: "Price difference: 3.00 EUR. Which use matters most?",
+      },
+      { type: "text-end", id: "answer" },
+      { type: "finish" },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers: { "x-vercel-ai-ui-message-stream": "v1" },
+      body:
+        parts.map((p) => `data: ${JSON.stringify(p)}\n\n`).join("") +
+        "data: [DONE]\n\n",
+    });
+  });
+  await page.goto("/chat");
+  await expect(
+    page.getByRole("heading", { name: "A demo store. A real agent workflow." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "All 48 products, prices, stock and policies are mock data.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Compare mugs and carafe" }).click();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  expect(sent).toBe("Compare mugs and carafe");
+  await page.reload();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
 });

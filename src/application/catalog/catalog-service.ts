@@ -14,6 +14,17 @@ export class CatalogService {
   categories() {
     return this.repository.categories();
   }
+  async compare(ids: string[]) {
+    const found = await Promise.all(
+      ids.map((id) => this.repository.findById(id)),
+    );
+    return {
+      products: found.filter(
+        (p): p is NonNullable<typeof p> => p !== undefined,
+      ),
+      missingIds: ids.filter((_, i) => !found[i]),
+    };
+  }
   details(id: string) {
     return this.repository.findById(id);
   }

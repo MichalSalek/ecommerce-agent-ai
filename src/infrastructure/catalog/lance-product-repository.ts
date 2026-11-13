@@ -61,6 +61,7 @@ export class LanceProductRepository implements ProductRepository {
   }
   private filters(criteria: ProductSearch): string[] {
     const filters: string[] = [];
+    if (criteria.inStockOnly) filters.push("inStock = true");
     for (const amount of [criteria.maxPrice, criteria.targetPrice])
       if (amount !== undefined && (!Number.isFinite(amount) || amount < 0))
         throw new RangeError("Price must be a non-negative finite number.");
