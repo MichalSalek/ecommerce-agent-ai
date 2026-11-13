@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { conversationUsage } from "@/application/chat/conversation-limit";
 import type { ChatMessage } from "@/types/shop";
 import {
   CHAT_STORAGE_KEY,
@@ -36,6 +37,8 @@ interface ConversationValue extends UseChatHelpers<ChatMessage> {
   setDraft: (text: string) => void;
   ready: boolean;
   storageNotice: string;
+  conversationClosed: boolean;
+  remainingTurns: number;
   newConversation: () => Promise<void>;
   threadPosition: RefObject<{ top: number; follow: boolean }>;
 }
@@ -134,6 +137,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setDraft,
         ready,
         storageNotice,
+        conversationClosed: conversationUsage(helpers.messages).closed,
+        remainingTurns: conversationUsage(helpers.messages).remaining,
         newConversation,
         threadPosition,
       }}

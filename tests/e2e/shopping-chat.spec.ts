@@ -209,3 +209,71 @@ test("failed product photos have a visible fallback without breaking recommendat
       .getByRole("button", { name: "Add to cart" }),
   ).toBeEnabled();
 });
+
+test("a full saved conversation locks input, survives reload and resets only through a new topic", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const messages = Array.from({ length: 20 }, (_, i) => [
+      { id: `u${i}`, role: "user", parts: [{ type: "text", text: "Hello" }] },
+      {
+        id: `a${i}`,
+        role: "assistant",
+        parts: [{ type: "text", text: "How can I help?" }],
+      },
+    ]).flat();
+    localStorage.setItem(
+      "aurelle.conversation.v1",
+      JSON.stringify({ version: 1, id: "full", draft: "", messages }),
+    );
+  });
+  await page.goto("/chat");
+  await expect(page.getByText("This conversation is complete.")).toBeVisible();
+  await expect(page.getByRole("textbox")).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "New conversation", exact: true })
+    .click();
+  await expect(page.getByRole("textbox")).toBeEnabled();
+  await expect(
+    page.getByText("Welcome to Aurelle.", { exact: false }),
+  ).toBeVisible();
+});
+
+test("manual retry reuses the failed user message and context without duplicating it", async ({
+  page,
+}) => {
+  let calls = 0;
+  const bodies: unknown[] = [];
+  await page.route("**/api/chat", async (route) => {
+    calls++;
+    bodies.push(route.request().postDataJSON());
+    if (calls === 1)
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Temporary provider connection problem.",
+        }),
+      });
+    else
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        headers: { "x-vercel-ai-ui-message-stream": "v1" },
+        body: response("retry"),
+      });
+  });
+  await page.goto("/chat");
+  await page.getByRole("textbox").fill("trwałość materiału");
+  await page.getByRole("textbox").press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Retry last message" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry last message" }).click();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await expect(page.locator(".chat-message.user")).toHaveCount(1);
+  expect(bodies[1]).toEqual(bodies[0]);
+});

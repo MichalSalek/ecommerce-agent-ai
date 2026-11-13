@@ -42,6 +42,8 @@ export default function ChatView() {
     setDraft,
     ready,
     storageNotice,
+    conversationClosed,
+    remainingTurns,
     newConversation,
     threadPosition,
   } = useConversation();
@@ -99,7 +101,7 @@ export default function ChatView() {
     setShowLatest(false);
   }
   function send(text: string) {
-    if (!ready || busy || !text.trim()) return;
+    if (!ready || busy || conversationClosed || !text.trim()) return;
     nearBottom.current = true;
     threadPosition.current.follow = true;
     setDraft("");
@@ -251,7 +253,7 @@ export default function ChatView() {
                 <button
                   key={s.label}
                   onClick={() => send(s.text)}
-                  disabled={busy}
+                  disabled={busy || conversationClosed}
                 >
                   {s.label}
                   <span aria-hidden="true">↗</span>
@@ -274,7 +276,7 @@ export default function ChatView() {
               <strong>Let's try that again.</strong>
               <p>{errorText(error.message)}</p>
               <button
-                disabled={busy}
+                disabled={busy || conversationClosed}
                 onClick={() => {
                   nearBottom.current = true;
                   threadPosition.current.follow = true;
@@ -285,7 +287,7 @@ export default function ChatView() {
               </button>
             </div>
           )}
-          {unanswered && !error && ready && (
+          {unanswered && !error && ready && !conversationClosed && (
             <div className="chat-recovery">
               <p>Your last message has no saved response.</p>
               <button
@@ -308,6 +310,24 @@ export default function ChatView() {
         {storageNotice && (
           <p className="storage-notice" role="status">
             {storageNotice}
+          </p>
+        )}
+        {conversationClosed && !busy && (
+          <div className="chat-recovery" role="status">
+            <strong>This conversation is complete.</strong>
+            <p>
+              Thanks for exploring Aurelle. Start a new conversation if you
+              still need help; your cart stays saved.
+            </p>
+            <button onClick={() => void reset()}>
+              Start a new conversation
+            </button>
+          </div>
+        )}
+        {!conversationClosed && remainingTurns <= 3 && (
+          <p className="storage-notice">
+            {remainingTurns} messages left in this conversation. Start a new
+            topic when you are ready.
           </p>
         )}
         <form
@@ -339,7 +359,7 @@ export default function ChatView() {
               enterKeyHint="send"
               aria-describedby="composer-help"
               rows={2}
-              disabled={!ready}
+              disabled={!ready || conversationClosed}
             />
             {busy ? (
               <button
@@ -353,7 +373,7 @@ export default function ChatView() {
             ) : (
               <button
                 className="send-message"
-                disabled={!ready || !draft.trim()}
+                disabled={!ready || conversationClosed || !draft.trim()}
                 aria-label="Send message"
                 type="submit"
               >

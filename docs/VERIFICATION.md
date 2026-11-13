@@ -57,3 +57,15 @@ The container was not OOM-killed. These are sequential local working-memory samp
 Render CLI v2.20 returned `valid: true` for `render.yaml`; validation did not provision the planned service. No account, application, DNS record, monitor or status page was created. The executable handoff is [RENDER_FREE_PLAN.md](RENDER_FREE_PLAN.md).
 
 Read-only checks of an existing project previously confirmed Render Free, HTTP liveness, external health/database checks every 180 seconds and a separate scheduler clock every 1800 seconds. No existing project's monitoring or quota policy was changed. Liveness does not prove model availability; the deployment verifier includes a real LLM tool-call scenario for that reason.
+
+## 2026-11-13 stability, conversation lifetime and traceability
+
+The existing owned Turbopack dev process failed an HTTP `/chat` timeout and was observed near 3.8 GiB RSS. It was stopped and replaced with Webpack development, isolated under `.next-development`; production still builds under `.next`. Actual `/chat` and `/` requests then returned 200, and the browser replayed shopping successfully. This is evidence of the old process's failure and the new path's recovery, not a proven upstream memory-leak diagnosis.
+
+The real 29-dollar home request returned vase cards, explicit EUR confirmation, and a trace with zero LLM calls / 96 ms stream execution / responseCache false. The whole development POST logged about 579 ms. Existing table/weights/inference-session reuse is distinct from answer caching, which is not implemented.
+
+A 20-user-turn or 24000-text-character conversation policy closes the composer, warns near the turn boundary and requires a new topic while preserving the cart. The API independently rejects excessive input before runtime/model execution. Browser acceptance restores a full saved transcript, verifies the locked input/send state, and starts a new conversation successfully. This is a heuristic lifetime cap, not exact tokenizer accounting or secure identity tracking.
+
+The reported vase/material-durability scenario was inspected with real Groq: the earlier connection failure did not reproduce, so its historical cause remains unproven. Added a grounded handler stating the missing durability evidence rather than inventing resistance. A deterministic fixture verifies no LLM dependency for that specific evidence question. Manual retry is covered by an HTTP-503-then-success browser test: same request context, one user message, successful second response. No automatic provider switching/retry loop was introduced.
+
+Final source acceptance: 17 unit/native integration tests, 7 Playwright production-browser tests, strict type generation/check and production build passed. The model-context compaction limits remain independent from the new visible conversation lifetime. Technical interview guidance is in AGENT_ARCHITECTURE.md. Separate NEXT_PROJECTS.md contains proposals only; the home-site source was inspected read-only and was not changed.

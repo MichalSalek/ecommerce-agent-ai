@@ -3,6 +3,11 @@ import {
   validateUIMessages,
   createUIMessageStreamResponse,
 } from "ai";
+import {
+  conversationUsage,
+  MAX_CONVERSATION_TURNS,
+  MAX_CONVERSATION_CHARACTERS,
+} from "@/application/chat/conversation-limit";
 import { settledMessages } from "@/application/chat/history";
 import { chatAdmission } from "@/composition/admission";
 import { z } from "zod";
@@ -28,6 +33,19 @@ export async function POST(request: Request) {
       return Response.json(
         { error: "Unsupported conversation messages." },
         { status: 400 },
+      );
+    const usage = conversationUsage(normalized);
+    if (
+      usage.turns > MAX_CONVERSATION_TURNS ||
+      usage.characters > MAX_CONVERSATION_CHARACTERS
+    )
+      return Response.json(
+        {
+          error:
+            "This conversation has reached its safety limit. Start a new conversation; your cart will be kept.",
+          code: "CONVERSATION_LIMIT",
+        },
+        { status: 409 },
       );
     const { tools } = getShop();
     const messages = await validateUIMessages({

@@ -13,3 +13,5 @@ dist
 
 playwright-report/
 test-results/
+
+.next-development/

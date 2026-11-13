@@ -47,6 +47,10 @@ export function createJsonAgentStream(
     "providerOptions" | "maxOutputTokens" | "narrate"
   > & { onSettled?: () => void },
 ) {
+  const started = performance.now();
+  let llmCalls = 0;
+  let route = "structured";
+  let operation = "reply";
   const context = conversationContext(messages);
   return createUIMessageStream({
     execute: async ({ writer }) => {
@@ -57,6 +61,18 @@ export function createJsonAgentStream(
           writer.write({ type: "text-end", id: "answer" });
         };
         const { text } = context;
+        if (
+          /trwało[sś][cć]|durabil|odporność/i.test(text) &&
+          messages.some((m) => JSON.stringify(m.content).match(/wazon|vase/i))
+        ) {
+          operation = "material-evidence";
+          write(
+            context.language === "pl"
+              ? "Jeśli najważniejsza jest trwałość, nie chcę zgadywać: katalog potwierdza ceramikę lub szkło, ale nie zawiera testów odporności na uderzenia ani grubości ścianek. Oba materiały mogą się stłuc. Czy chodzi Ci o codzienne użytkowanie, czy ryzyko upadku? Mogę też poszukać mniej kruchej alternatywy."
+              : "For durability, I should not guess: the catalog identifies ceramic or glass, but has no impact-resistance tests or wall-thickness data. Both can break. Is your concern daily use or accidental drops? I can also help find a less fragile alternative.",
+          );
+          return;
+        }
         const budget = requestedBudget(text);
         const more = isMoreRequest(text);
         const broad = isHomeRequest(text);
@@ -109,6 +125,8 @@ export function createJsonAgentStream(
             },
           };
         else {
+          route = "llm-planner";
+          llmCalls++;
           const result = await generateText({
             model,
             system: instructions,
@@ -160,6 +178,7 @@ export function createJsonAgentStream(
             },
           };
         }
+        operation = action.tool;
         const id = crypto.randomUUID();
         const execution = { toolCallId: id, messages, context: {} };
         let output: unknown;
@@ -195,6 +214,12 @@ export function createJsonAgentStream(
         writer.write({ type: "tool-output-available", toolCallId: id, output });
         if (action.tool === "searchProducts" && Array.isArray(output)) {
           const products = output.map((p) => productSchema.parse(p));
+          const willNarrate = !!(
+            options?.narrate &&
+            products.length &&
+            (!budget || budget.currency === "EUR")
+          );
+          if (willNarrate) llmCalls++;
           const narration =
             options?.narrate &&
             products.length &&
@@ -235,6 +260,13 @@ export function createJsonAgentStream(
           );
         }
       } finally {
+        console.log("[AGENT] trace", {
+          route,
+          operation,
+          llmCalls,
+          elapsedMs: Math.round(performance.now() - started),
+          responseCache: false,
+        });
         options?.onSettled?.();
       }
     },
