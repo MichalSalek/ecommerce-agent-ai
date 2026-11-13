@@ -14,6 +14,7 @@ export class LanceProductRepository implements ProductRepository {
     private readonly directory: string,
     private readonly embedding: TextEmbedding,
     private readonly catalog: readonly Product[],
+    private readonly maxDistance = 0.45,
   ) {}
   private async open(): Promise<Table> {
     const database = await connect(resolve(this.directory));
@@ -99,7 +100,7 @@ export class LanceProductRepository implements ProductRepository {
       )
       .toArray();
     const matches = rows
-      .filter((row) => Number(row._distance) <= 0.45)
+      .filter((row) => Number(row._distance) <= this.maxDistance)
       .map((row) => productSchema.parse(row));
     if (criteria.targetPrice !== undefined)
       matches.sort(

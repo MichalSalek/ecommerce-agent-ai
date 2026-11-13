@@ -24,9 +24,14 @@ export function conversationContext(
 ): ConversationContext {
   const users = messages.filter((m) => m.role === "user").map(userText);
   let language: Language = "en";
+  let explicitLanguage: Language | undefined;
   for (const text of users) {
     if (/po angielsku|in english/i.test(text)) {
-      language = "en";
+      explicitLanguage = "en";
+      continue;
+    }
+    if (/po polsku|in polish|\bpolish\b/i.test(text)) {
+      explicitLanguage = "pl";
       continue;
     }
     if (
@@ -87,7 +92,7 @@ export function conversationContext(
   }
   return {
     text,
-    language,
+    language: explicitLanguage ?? language,
     turn: users.length,
     shownIds: [...shown],
     previousSearch,

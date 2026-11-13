@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Image from "next/image";
+import { StoreImage } from "@/components/StoreImage";
 import { Catalog } from "@/components/Catalog";
 export default function Home() {
   return (
@@ -24,7 +24,7 @@ export default function Home() {
           </div>
         </div>
         <Link className="hero-image" href="/products/mugs">
-          <Image
+          <StoreImage
             src="/images/products/mugs.webp"
             alt="Ceramic mugs for slow mornings"
             width={720}

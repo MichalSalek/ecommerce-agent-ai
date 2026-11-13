@@ -1,4 +1,4 @@
-import Image from "next/image";
+import { StoreImage } from "@/components/StoreImage";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { products } from "@/data/products";
@@ -35,7 +35,7 @@ export default async function ProductPage({
         ← All products
       </Link>
       <section className="product-detail">
-        <Image
+        <StoreImage
           className="detail-image"
           src={product.imageUrl}
           alt={product.name}

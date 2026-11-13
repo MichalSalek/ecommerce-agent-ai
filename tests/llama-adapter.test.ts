@@ -103,3 +103,63 @@ test("budget-only browsing does not ask the LLM to invent a product intent", asy
   }
   assert.ok(browsed);
 });
+
+test("the morning-coffee purchase intent shows two products even if a model would only clarify", async () => {
+  const { products } = await import("../src/data/products");
+  let calls = 0;
+  const tools = createShopTools(
+    new CatalogService({
+      search: async () =>
+        products.filter((p) => ["mugs", "carafe"].includes(p.id)),
+      browse: async () => [],
+      categories: async () => [],
+      findById: async () => undefined,
+    }),
+  );
+  const model = createLlamaModel(
+    "http://fixture/v1",
+    "would-clarify",
+    async () => {
+      calls++;
+      return Response.json({
+        id: "fixture",
+        object: "chat.completion",
+        created: 0,
+        model: "test",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: JSON.stringify({
+                tool: "respond",
+                input: {
+                  message: "Are you looking for a mug or a coffee maker?",
+                },
+              }),
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+    },
+  );
+  const stream = createJsonAgentStream(
+    model,
+    [{ role: "user", content: "I need something for my morning coffee" }],
+    tools,
+    new AbortController().signal,
+  );
+  const reader = stream.getReader();
+  let found = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value.type === "tool-output-available")
+      found = Array.isArray(value.output) && value.output.length === 2;
+    assert.notEqual(value.type, "error");
+  }
+  assert.ok(found);
+  assert.equal(calls, 0);
+});

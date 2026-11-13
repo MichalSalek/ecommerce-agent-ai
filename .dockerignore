@@ -1,5 +1,14 @@
+.git
+.github
 node_modules
 .next
-.git
-dist
+.data
+.env*
+!.env.example
 *.log
+*.tsbuildinfo
+.playwright-mcp
+docs/images
+
+playwright-report
+test-results

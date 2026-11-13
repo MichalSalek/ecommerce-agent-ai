@@ -3,6 +3,8 @@ import {
   validateUIMessages,
   createUIMessageStreamResponse,
 } from "ai";
+import { settledMessages } from "@/application/chat/history";
+import { chatAdmission } from "@/composition/admission";
 import { z } from "zod";
 import { getShop } from "@/composition/shop";
 import { resolveChatRuntime } from "@/composition/chat";
@@ -10,6 +12,7 @@ import { createJsonAgentStream } from "@/infrastructure/chat/json-agent-stream";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
   console.log("[AGENT] started");
+  let release: (() => void) | undefined;
   try {
     const raw = await request.text();
     if (raw.length > 100000)
@@ -20,12 +23,36 @@ export async function POST(request: Request) {
     const body = z
       .object({ messages: z.array(z.unknown()).min(1).max(60) })
       .parse(JSON.parse(raw));
+    const normalized = settledMessages(body.messages);
+    if (normalized.length !== body.messages.length)
+      return Response.json(
+        { error: "Unsupported conversation messages." },
+        { status: 400 },
+      );
     const { tools } = getShop();
     const messages = await validateUIMessages({
-      messages: body.messages,
+      messages: normalized,
       tools,
     });
     const modelMessages = await convertToModelMessages(messages);
+    const admission = chatAdmission()?.acquire();
+    if (admission && !admission.allowed)
+      return Response.json(
+        {
+          error:
+            admission.reason === "busy"
+              ? "The assistant is helping other visitors. Please retry in a few seconds."
+              : "The demo has reached its hourly conversation limit. Please return later.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(admission.retryAfter),
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    release = admission?.allowed ? admission.release : undefined;
     const signal = AbortSignal.any([
       request.signal,
       AbortSignal.timeout(90000),
@@ -37,10 +64,11 @@ export async function POST(request: Request) {
         modelMessages,
         tools,
         signal,
-        runtime,
+        { ...runtime, onSettled: release },
       ),
     });
   } catch (error) {
+    release?.();
     console.error(
       "[AGENT] failed:",
       error instanceof Error ? error.message : "Unknown error",
@@ -50,9 +78,7 @@ export async function POST(request: Request) {
         error:
           error instanceof z.ZodError || error instanceof SyntaxError
             ? "Invalid conversation format."
-            : error instanceof Error
-              ? error.message
-              : "Chat failed.",
+            : "The assistant is temporarily unavailable. Your message is saved — please try again.",
       },
       {
         status:

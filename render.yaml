@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: ecommerce-agent-ai
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: CHAT_PROVIDER
+        value: groq
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_BALANCER
+        value: "false"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: minilm
+      - key: CHAT_MAX_CONCURRENT
+        value: "2"
+      - key: CHAT_REQUESTS_PER_HOUR
+        value: "120"

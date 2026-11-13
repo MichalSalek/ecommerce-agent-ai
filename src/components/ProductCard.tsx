@@ -1,22 +1,32 @@
 import Link from "next/link";
-import Image from "next/image";
+import { StoreImage } from "@/components/StoreImage";
 import type { Product } from "@/domain/catalog/product";
 import { AddToCart } from "./AddToCart";
 import { formatPrice } from "@/lib/money";
-export function ProductCard({ product }: { product: Product }) {
+export function ProductCard({
+  product,
+  compact = false,
+}: {
+  product: Product;
+  compact?: boolean;
+}) {
   return (
-    <article className="product" id={product.id}>
+    <article
+      className={compact ? "product compact" : "product"}
+      id={compact ? undefined : product.id}
+    >
       <Link
         className="product-image"
         aria-label={`View ${product.name}`}
         href={product.productUrl}
       >
-        <Image
+        <StoreImage
           src={product.imageUrl}
           alt={product.name}
           width={480}
           height={480}
-          sizes="(max-width: 700px) 50vw, 30vw"
+          sizes={compact ? "112px" : "(max-width: 700px) 50vw, 30vw"}
+          loading={compact ? "eager" : undefined}
         />
       </Link>
       <div className="product-info">

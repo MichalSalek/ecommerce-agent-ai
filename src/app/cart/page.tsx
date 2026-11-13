@@ -1,5 +1,5 @@
 "use client";
-import Image from "next/image";
+import { StoreImage } from "@/components/StoreImage";
 import Link from "next/link";
 import { useCart } from "@/components/CartProvider";
 import { products } from "@/data/products";
@@ -40,7 +40,7 @@ export default function CartPage() {
               return (
                 <article className="cart-line" key={line.productId}>
                   <Link href={product.productUrl}>
-                    <Image
+                    <StoreImage
                       src={product.imageUrl}
                       alt={product.name}
                       width={140}

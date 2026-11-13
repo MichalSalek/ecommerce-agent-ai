@@ -10,3 +10,6 @@ dist
 .data/
 
 !.env.example
+
+playwright-report/
+test-results/

@@ -1,5 +1,7 @@
 name: Verify
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -14,3 +16,15 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: docker build --build-arg APP_REVISION=${{ github.sha }} -t aurelle-demo:render-ready .
+      - run: node scripts/container-smoke.mjs aurelle-demo:render-ready ${{ github.sha }}

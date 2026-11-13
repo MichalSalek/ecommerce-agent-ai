@@ -143,3 +143,21 @@ test("budgets preserve ceiling/target/currency and continuation resumes an unans
     "co polecasz za około 30 dolarów?",
   );
 });
+
+test("an explicit language preference survives generated English starters until explicitly changed", () => {
+  assert.equal(
+    conversationContext([
+      { role: "user", content: "możesz pisać po polsku" },
+      { role: "assistant", content: "Jasne." },
+      { role: "user", content: "I need something for my morning coffee" },
+    ]).language,
+    "pl",
+  );
+  assert.equal(
+    conversationContext([
+      { role: "user", content: "możesz pisać po polsku" },
+      { role: "user", content: "Now reply in English" },
+    ]).language,
+    "en",
+  );
+});

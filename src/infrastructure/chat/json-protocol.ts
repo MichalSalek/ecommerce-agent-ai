@@ -24,7 +24,7 @@ export const selectionInstruction = `Select one tool for the LAST customer quest
 - Known product ID: {"tool":"getProductDetails","input":{"productId":"mugs"}}.
 - Delivery/returns/payments: {"tool":"getPolicy","input":{"topic":"delivery"}}. The topic field is REQUIRED, not query.
 - Anything unrelated to this store, including programming: {"tool":"refuse","input":{}}.
-Do not answer yet or invent products. Do not reuse an earlier question when the customer has changed the topic.`;
+When the customer expresses a clear product need, searchProducts MUST run now and show two options before any clarifying question. Never use respond to suggest unverified products or merely ask mug vs coffee maker. Do not answer yet or invent products. Do not reuse an earlier question when the customer has changed the topic.`;
 // Reasoning-capable servers may leave examples or prose in the content channel.
 // Only complete, valid JSON is considered; tool-specific validation remains mandatory.
 function jsonObjects(text: string): unknown[] {

@@ -1,17 +1,26 @@
 import { products } from "@/data/products";
 import { CatalogService } from "@/application/catalog/catalog-service";
 import { createShopTools } from "@/application/chat/tools";
-import { BgeEmbedding } from "@/infrastructure/embeddings/bge-embedding";
+import {
+  TransformerEmbedding,
+  embeddingProfiles,
+} from "@/infrastructure/embeddings/transformer-embedding";
+import { z } from "zod";
 import { LanceProductRepository } from "@/infrastructure/catalog/lance-product-repository";
 // Only this composition root chooses concrete adapters and reads deployment settings.
 export function createShop() {
-  const embedding = new BgeEmbedding(
+  const profile = z
+    .enum(["bge", "minilm"])
+    .parse(process.env.EMBEDDING_MODEL ?? "bge");
+  const embedding = new TransformerEmbedding(
     process.env.EMBEDDING_CACHE_DIR ?? ".data/models",
+    profile,
   );
   const repository = new LanceProductRepository(
     process.env.LANCEDB_DIR ?? ".data/lancedb",
     embedding,
     products,
+    embeddingProfiles[profile].maxDistance,
   );
   return { repository, tools: createShopTools(new CatalogService(repository)) };
 }

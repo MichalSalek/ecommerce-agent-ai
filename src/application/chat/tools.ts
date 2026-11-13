@@ -2,16 +2,8 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { CatalogService } from "@/application/catalog/catalog-service";
 import { getStorePolicy } from "@/domain/catalog/policies";
-export const searchInput = z.object({
-  query: z.string().trim().max(300),
-  maxPrice: z.number().finite().nonnegative().optional(),
-  targetPrice: z.number().finite().nonnegative().optional(),
-  category: z.string().max(80).optional(),
-  excludeIds: z.array(z.string().max(100)).max(100).optional(),
-  limit: z.number().int().min(1).max(12).optional(),
-});
-export const detailsInput = z.object({ productId: z.string().min(1).max(100) });
-export const policyInput = z.object({ topic: z.string().min(1).max(200) });
+import { searchInput, detailsInput, policyInput } from "./tool-inputs";
+export { searchInput, detailsInput, policyInput } from "./tool-inputs";
 export function createShopTools(catalog: CatalogService) {
   return {
     searchProducts: tool({

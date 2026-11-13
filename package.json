@@ -6,16 +6,20 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "start": "node scripts/start.mjs",
+    "typecheck": "next typegen && tsc --noEmit",
     "catalog:prepare": "tsx scripts/prepare-catalog.ts",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "playwright test",
+    "container:smoke": "node scripts/container-smoke.mjs",
+    "verify:deployment": "node scripts/verify-deployment.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.91",
     "@ai-sdk/react": "^4.0.175",
     "@huggingface/transformers": "^4.3.2",
     "@lancedb/lancedb": "^0.41.0",
+    "@next/env": "^16.4.6",
     "ai": "^7.0.171",
     "json5": "^2.2.3",
     "next": "^16.3.1",
@@ -24,6 +28,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

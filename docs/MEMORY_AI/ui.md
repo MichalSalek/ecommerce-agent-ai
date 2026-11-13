@@ -1,7 +1,7 @@
 # UI evidence
 
 ## Last Session
-2026-11-13: owner-selected #f3f0f4 background, primary AI CTA, secondary catalog CTA and bold robot navigation. Fresh screenshot review: SHIP. Actual background RGB verified in browser; replayed reported conversation without error at desktop/mobile widths.
+2026-11-13: navy/coral palette, white conversation surface, compact cards, pinned composer and visible New conversation. Reader: SHIP, minor thumbnail issue resolved with correctly sized eager thumbnails and a tested fallback. Keyboard/history/reset/scroll/mobile paths have Playwright coverage. No external hosting created.
 
 ## Key Findings
 - Budget-only requests are structured catalog browsing, not semantic retrieval.
@@ -12,7 +12,7 @@
 - Product images link to real detail pages.
 
 ## Design ledger
-- Cream paper / forest green / serif display are systemic Aurelle brand elements.
+- Owner-selected #f3f0f4 paper / navy / coral / serif display are systemic Aurelle brand elements.
 - Home photographic split, product detail split, cart summary; no repeated decorative motifs.
 
 ## Health

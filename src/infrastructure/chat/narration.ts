@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Product } from "@/domain/catalog/product";
 import type { ConversationContext } from "@/application/chat/conversation";
 import type { ChatRuntime } from "./runtime";
+import { compactModelHistory } from "@/application/chat/model-history";
 import { parseJsonObject } from "./json-protocol";
 const schema = z.object({
   opening: z.string().min(1).max(240),
@@ -23,7 +24,7 @@ export async function narrateResults(
       system:
         "You write only conversational transitions for Aurelle. Product facts and prices are displayed separately by the application. Do not repeat earlier openings or use a generic sales script. Use the customer's language, honoring their most recent explicit language preference. Return JSON with opening and followUp. No digits, prices, currency amounts, URLs, availability claims, payment/order offers or invented product attributes. followUp must be one relevant question ending in a question mark.",
       messages: [
-        ...messages,
+        ...compactModelHistory(messages),
         {
           role: "user",
           content: `Write a short natural opening and a helpful next question after successful retrieval. Known product names and categories: ${JSON.stringify(products.map((p) => ({ name: p.name, category: p.category })))}. ${broad ? "The customer only said they want something for home. Ask which category interests them, for example decor, textiles, lighting or kitchen." : "Help refine the current shopping request without inventing facts."} Fallback language preference detected by the app: ${context.language}. If the customer is using a different language, use theirs.`,

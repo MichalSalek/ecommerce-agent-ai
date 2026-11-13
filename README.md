@@ -8,6 +8,8 @@ Built with Next.js 16 App Router, React 19, TypeScript strict, Vercel AI SDK 7, 
 
 ![Aurelle storefront](docs/images/storefront.png)
 
+![Persistent shopping conversation with real recommendations](docs/images/chat.png)
+
 ## Start with an agent
 
 Give your coding agent [STARTER_PROMPT.md](STARTER_PROMPT.md) after cloning. It instructs the agent to inspect the project, detect available providers, offer local llama.cpp or Groq setup, prepare the real vector database and verify the complete shopping flow. It never assumes the author's private endpoints or credentials exist on your machine.
@@ -126,9 +128,9 @@ This is intentionally a bounded shopping agent, not an unrestricted autonomous a
 
 ### Retrieval
 
-Bielik/Groq selects actions; it does not produce embeddings. [BGE small English v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), using [Xenova's ONNX distribution](https://huggingface.co/Xenova/bge-small-en-v1.5), runs independently on CPU. The encoder uses q8, CLS pooling, normalization, a retrieval query prefix and 384 dimensions. Weights are pinned to revision `ea104dacec62c0de699686887e3f920caeb4f3e3`.
+Bielik/Groq selects actions; it does not produce embeddings. [BGE small English v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), using [Xenova's ONNX distribution](https://huggingface.co/Xenova/bge-small-en-v1.5), runs independently on CPU. The local default BGE profile uses q8, CLS pooling, normalization, a retrieval query prefix and 384 dimensions, pinned to `ea104dacec62c0de699686887e3f920caeb4f3e3`. The Render/Docker profile selects the smaller `Xenova/all-MiniLM-L6-v2` q8 encoder (about 23 MiB), mean pooling, no query prefix, the same 384 dimensions and revision `751bff37182d3f1213fa05d7196b954e230abad9`. Set `EMBEDDING_MODEL=bge` or `minilm`. Each has its own vector fingerprint and calibrated distance cutoff (0.45 / 0.74); dimensions alone do not make embedding spaces interchangeable. Native tests exercise both profiles.
 
-LanceDB is embedded and persistent under `.data/lancedb`; no database daemon or vector service is required. For 48 products, exact cosine search is appropriate. Semantic search applies the budget filter, selects at most two nearest candidates and drops distances above 0.45. This cutoff is a demo calibration, not a relevance guarantee. Structured browsing returns up to 12 products ordered by price and ID, without a similarity cutoff. Category and text filters on the home page are deterministic UI controls, distinct from semantic recommendations.
+LanceDB is embedded and persistent under `.data/lancedb`; no database daemon or vector service is required. For 48 products, exact cosine search is appropriate. Semantic search applies the budget filter, selects at most two nearest candidates and drops distances above the selected profile cutoff. This cutoff is a demo calibration, not a relevance guarantee. Structured browsing returns up to 12 products ordered by price and ID, without a similarity cutoff. Category and text filters on the home page are deterministic UI controls, distinct from semantic recommendations.
 
 The table name fingerprints the complete catalog and embedding identity. Price, stock, URL, description or encoder changes produce a new table, avoiding stale records and mixed embedding spaces. Old derived tables are retained; stop the app before removing `.data/lancedb` to rebuild. Cache paths are configurable through `LANCEDB_DIR` and `EMBEDDING_CACHE_DIR`.
 
@@ -141,6 +143,18 @@ The conversation adapter derives language preference, previous search constraint
 Foreign currency amounts (USD, PLN, GBP and CHF) are not silently interpreted as EUR. The assistant may show explicitly labeled EUR price-level examples and asks the shopper to confirm a euro budget. It does not claim those examples are a currency conversion. No live FX feed is integrated.
 
 The failed question remains in chat and the UI offers `Try again`; a failed model request is not an empty-catalog result. The source language remains English while localized assistant replies are intentional application content.
+
+### Chat interaction and persistence
+
+The conversation is owned by a shared client provider above route navigation, not by the `/chat` page. Returning from a product preserves the same active conversation. A versioned localStorage snapshot also retains settled messages and the draft across reloads. Partial tool calls are discarded on restore; product cards are rehydrated from the canonical catalog, so browser storage cannot supply a price. The saved conversation is bounded to 60 messages, while transport/model context has its own smaller budget.
+
+Enter sends, Shift+Enter adds a line, and IME composition is not submitted as a message. The textarea grows with the draft. Incoming replies follow the bottom only while the reader is there; a jump-to-latest control appears when reading earlier content. Product recommendations are compact, and large result sets disclose the remaining matches on request. Missing pictures have a visible fallback.
+
+`New conversation` cancels the old request and creates a fresh chat instance with a welcome message. A late response cannot enter the new topic. It clears the saved chat/draft, not the cart. Saved incomplete requests offer a resume action, and transport errors preserve the question with a retry action. Storage failure leaves an in-memory conversation and a visible notice.
+
+The morning-coffee starter is a clear shopping intent: real retrieval runs before a clarifying question. An explicit regression fixture supplies the old question-only model response and verifies that two actual products still appear.
+
+Model context is compacted separately from UI history: recent text, search inputs and product IDs/names are retained, while full product records and image URLs are omitted. This avoids replaying the entire visible transcript into the free provider's token budget. It does not silently erase the displayed conversation.
 
 ### Cart and product pages
 
@@ -173,8 +187,22 @@ Acceptance examples:
 
 Logs use `[AGENT]`, `[LLM]`, `[TOOL]`, `[VECTOR]`, `[EMBEDDING]` and `[CART]`. Full model output, credentials and complete conversations are not logged in loops.
 
+## Browser and container checks
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+# Requires Docker; uses MiniLM by default.
+docker build -t aurelle-demo:render-ready .
+npm run container:smoke
+```
+
+The browser suite uses an intercepted model stream to isolate Enter/newline, route return/reload, draft persistence, reset during generation, scroll behavior, mobile geometry and image-failure handling. Real LLM checks are separate. The Docker test uses actual CPU embeddings/LanceDB with an intentionally offline model endpoint, under 512 MiB and 0.1 CPU, including deleting/rebuilding the derived index. It creates/removes only its own temporary container and does not deploy publicly.
+
+`npm start` launches the generated standalone build, copies public/static assets and loads the source project's local environment. Docker uses the generated server directly and supplies its environment at runtime. The lightweight `/api/health` reports liveness/revision/profile without calling the LLM or indexing.
+
 ## Hosting
 
-Nothing has been deployed. See [hosting options](docs/HOSTING.md) before choosing a target. This is a Next Node application with native CPU inference and persistent vector storage, not a static-only website. A Linux Node service with persistent storage is the natural target; Groq removes the need to host a chat model/GPU. Do not expose the private Windows balancer publicly.
+No external deployment exists yet. A validated `render.yaml`, non-root CPU Dockerfile and executable [Render Free launch plan](docs/RENDER_FREE_PLAN.md) are prepared. The remaining owner gates are the new account/workspace, the cloud Groq secret/quota decision and the monitoring account. See [hosting options](docs/HOSTING.md) for alternatives. This is a Next Node application with native CPU inference and persistent vector storage, not a static-only website. A Linux Node service with persistent storage is the natural target; Groq removes the need to host a chat model/GPU. Do not expose the private Windows balancer publicly.
 
-Before a public interactive deployment, define provider credentials and cost/access limits. The current demo has no authentication or durable distributed rate limiter. The repository includes `.env.example`, excludes credentials/models/database caches and keeps template attribution. Publishing source code does not require publishing private endpoints or credentials.
+Before a public interactive deployment, define provider credentials and cost/access limits. Production has per-instance admission controls (two concurrent chat requests and 120 valid chat POSTs per rolling hour by default, configurable with `CHAT_MAX_CONCURRENT` / `CHAT_REQUESTS_PER_HOUR`). Retries count as requests; liveness does not. These in-memory controls reset on restart and are not authentication, durable distributed rate limiting or a billing cap. The repository includes `.env.example`, excludes credentials/models/database caches and keeps template attribution. Publishing source code does not require publishing private endpoints or credentials.
