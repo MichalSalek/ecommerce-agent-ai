@@ -1,5 +1,7 @@
 # Aurelle - an AI shopping assistant with real vector retrieval
 
+[Open the live demo](https://ecommerce-agent-ai-bpah.onrender.com)
+
 A small, deliberately complete shopping demo: browse 48 products, inspect a product, ask an assistant for recommendations, and keep a cart across page reloads. The UI, catalog, code and documentation are in English; the assistant follows the customer language. Polish and English have grounded fallback replies, and live Spanish search narration is also verified. All catalog prices remain in EUR.
 
 The interesting part is the boundary between probabilistic reasoning and reliable commerce behavior. A language model selects validated tools and can supply conversational transitions. Product identity, prices, stock, policies, currency handling and ranking remain in application code and the catalog. Optional generated wording is validated and never supplies a numeric price; contextual fallback replies keep retrieved facts available if narration fails.
@@ -61,7 +63,7 @@ GROQ_MODEL=openai/gpt-oss-120b
 GROQ_API_KEY=your-existing-key
 ```
 
-Set a real key only in `.env.local` or a hosting secret store. No key is sent to the browser. The direct API path is covered by the same adapter contract; the live acceptance run used the balancer configuration below, not a separately verified direct key.
+Set a real key only in `.env.local` or a hosting secret store. No key is sent to the browser. The direct API path is covered by the same adapter contract; both the local balancer path and the deployed direct Groq key have passed live acceptance.
 
 ### Optional Groq balancer
 
@@ -203,9 +205,11 @@ The browser suite uses an intercepted model stream to isolate Enter/newline, rou
 
 ## Hosting
 
-No external deployment exists yet. A validated `render.yaml`, non-root CPU Dockerfile and executable [Render Free launch plan](docs/RENDER_FREE_PLAN.md) are prepared. The remaining owner gates are the new account/workspace, the cloud Groq secret/quota decision and the monitoring account. See [hosting options](docs/HOSTING.md) for alternatives. This is a Next Node application with native CPU inference and persistent vector storage, not a static-only website. A Linux Node service with persistent storage is the natural target; Groq removes the need to host a chat model/GPU. Do not expose the private Windows balancer publicly.
+The demo runs on [Render Free](https://ecommerce-agent-ai-bpah.onrender.com), using direct Groq `openai/gpt-oss-120b`, MiniLM CPU embeddings and embedded LanceDB. The image includes model weights and a rebuildable index. No persistent disk is required for the mock catalog; the cart and conversation stay in the browser. See [deployment evidence](docs/RENDER_FREE_PLAN.md).
 
-Before a public interactive deployment, define provider credentials and cost/access limits. Production has per-instance admission controls (two concurrent chat requests and 120 valid chat POSTs per rolling hour by default, configurable with `CHAT_MAX_CONCURRENT` / `CHAT_REQUESTS_PER_HOUR`). Retries count as requests; liveness does not. These in-memory controls reset on restart and are not authentication, durable distributed rate limiting or a billing cap. The repository includes `.env.example`, excludes credentials/models/database caches and keeps template attribution. Publishing source code does not require publishing private endpoints or credentials.
+A Better Stack monitor checks `/api/health` every three minutes, with email alerts and TLS validation. It measures the web service, not every model request or remaining Groq quota. There is no dedicated public status page. Render Free has resource and availability limits; first access after idle suspension can take longer. Native inference shares the instance's 512 MiB memory with Next.js. This is a portfolio deployment, not a production availability guarantee.
+
+The deployment uses a server-only credential from a separately allocated Groq organization. Production has per-instance admission controls (two concurrent chat requests and 120 valid chat POSTs per rolling hour by default, configurable with `CHAT_MAX_CONCURRENT` / `CHAT_REQUESTS_PER_HOUR`). Retries count as requests; liveness does not. These in-memory controls reset on restart and are not authentication, durable distributed rate limiting or a billing cap. The repository includes `.env.example`, excludes credentials/models/database caches and keeps template attribution. Publishing source code does not require publishing private endpoints or credentials.
 
 ## Explaining the agent and its guardrails
 

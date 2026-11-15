@@ -79,3 +79,11 @@ Added inStockOnly as a real LanceDB boolean filter, independent of vector releva
 Manual browser checks on the actual development server exercised comparison, gift budget and stock follow-up with no error alerts. The public chat page now states that all catalog records/prices/stock/policies are mock data, that no orders/payments occur, and provides eight clickable capability scenarios plus persistence/retry/context boundaries. The guide was inspected at desktop and 390 px mobile; there was no horizontal overflow. Source code and UI do not represent structured routing as an LLM call on every turn.
 
 Acceptance for the discovery extension: 18 unit/native integration tests passed, 8 Playwright tests passed, strict types and the production build passed, dependency audit reported zero vulnerabilities. The capability-guide screenshot reader returned SHIP; this was a visual/comprehension verdict only. Actual scenario buttons and tool results were exercised separately in manual and automated browser checks. The guide's stock example can run either after a search or on its own, and comparisons retain canonical product cards after reload.
+
+## Public Render acceptance - 2026-11-15
+
+Application SHA `b4d408ee9096ad6b7a1fb71a471014a7fb0e4922` is live at https://ecommerce-agent-ai-bpah.onrender.com. Render reported deploy `dep-dbsr8qnf3r2c73b5klhg` live. `verify:deployment` passed real retrieval, direct Groq policy-tool selection and category discovery. Headless Chromium against that origin passed navigation/Back, history/draft reload, cart quantity persistence, conversation reset preserving cart, Shift+Enter and 390px geometry; no page errors. A Polish request completed.
+
+A controlled restart returned HTTP 200 from the provider; deployment verification passed again afterwards. Initial provider memory samples were 393097200 and 441077760 bytes. These are samples, not a measured peak. Physical-device/IME and actual sleep/idle suspension have not been tested.
+
+Better Stack monitor `5239952` checks liveness every 180 seconds on the BV account; it does not spend model tokens. Source remained unchanged; later docs-only commits require no application rebuild.
