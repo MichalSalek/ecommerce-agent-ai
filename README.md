@@ -1,6 +1,6 @@
-# Aurelle - an AI shopping assistant with real vector retrieval
+**[Try the live demo](https://ecommerce-agent.michalsalek.com)**
 
-[Open the live demo](https://ecommerce-agent.michalsalek.com)
+# Aurelle - an AI shopping assistant with real vector retrieval
 
 A small, deliberately complete shopping demo: browse 48 products, inspect a product, ask an assistant for recommendations, and keep a cart across page reloads. The UI, catalog, code and documentation are in English; the assistant follows the customer language. Polish and English have grounded fallback replies, and live Spanish search narration is also verified. All catalog prices remain in EUR.
 
