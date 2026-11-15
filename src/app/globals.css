@@ -706,7 +706,7 @@ nav .assistant-link {
   display: grid;
   grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
   gap: 44px;
-  margin: 24px auto 10px;
+  margin: 0 auto 10px;
   max-width: 1320px;
   align-items: start;
 }
@@ -755,17 +755,18 @@ nav .assistant-link {
   max-width: 250px;
 }
 .chat-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   position: relative;
   border: 1px solid var(--line);
   border-radius: 16px;
   overflow: hidden;
   background: var(--surface);
-  height: min(800px, calc(100dvh - 180px));
-  min-height: 620px;
+  height: calc(100dvh - var(--chat-top, 180px) - 16px);
+  min-height: 0;
 }
 .chat-toolbar {
+  flex: none;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -820,6 +821,8 @@ nav .assistant-link {
   line-height: 1;
 }
 .chat-thread {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -909,7 +912,7 @@ nav .assistant-link {
 .chat-composer {
   padding: 18px 24px;
   background: var(--tint);
-  grid-row: 3;
+  flex: none;
 }
 .chat-composer label {
   display: block;
@@ -1170,7 +1173,7 @@ nav .assistant-link {
 @media (max-width: 800px) {
   .assistant-workspace {
     display: block;
-    margin: 8px 0 0;
+    margin: 0;
   }
   .assistant-intro {
     padding: 0;
@@ -1187,11 +1190,6 @@ nav .assistant-link {
     line-height: 1.08;
     max-width: 420px;
     margin: 0;
-  }
-  .chat-panel {
-    height: calc(100dvh - 260px);
-    min-height: 500px;
-    max-height: 760px;
   }
   .chat-toolbar {
     padding: 14px;
@@ -1316,10 +1314,6 @@ nav .assistant-link {
   font-size: 13px;
 }
 @media (max-width: 800px) {
-  .chat-panel {
-    height: calc(100dvh - 320px);
-    min-height: 460px;
-  }
   .new-conversation {
     min-height: 44px;
   }
@@ -1351,10 +1345,6 @@ nav .assistant-link {
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
-  }
-  .chat-panel {
-    height: calc(100dvh - 230px);
-    min-height: 460px;
   }
 }
 
@@ -1457,80 +1447,60 @@ nav a {
     font-size: 16px;
   }
 }
+.intro-catalog {
+  display: inline-block;
+  padding: 10px 0;
+  font-size: 14px;
+}
 .demo-capabilities {
-  grid-column: 1/-1;
-  margin-top: 32px;
-  padding: 32px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  grid-column: 1 / -1;
+  margin-top: 0;
+  font-size: 14px;
+  interpolate-size: allow-keywords;
 }
-.demo-capabilities h2 {
-  margin: 14px 0;
-  font-size: 36px;
+.demo-capabilities summary {
+  display: list-item;
+  width: fit-content;
+  min-height: 44px;
+  padding: 10px 0;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
 }
-.demo-capabilities > p {
-  max-width: 900px;
-  color: var(--muted);
-  line-height: 1.7;
+.demo-capabilities summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+.demo-capabilities::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition: block-size 180ms ease, content-visibility 180ms allow-discrete;
+}
+.demo-capabilities[open]::details-content {
+  block-size: auto;
 }
 .capability-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 28px;
-  margin: 28px 0;
-}
-.capability-grid article {
-  padding: 20px;
-  background: var(--paper);
-  border-radius: 10px;
-}
-.capability-grid h3 {
-  font-size: 24px;
-}
-.capability-grid p {
-  font-size: 14px;
-  color: var(--muted);
-  min-height: 44px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
 }
 .capability-grid button {
-  display: inline-flex;
   background: var(--surface);
-  border-color: var(--line);
   color: var(--ink);
+  border-color: var(--line);
   text-align: left;
-  font-size: 13px;
-  border-radius: 8px;
-  justify-content: flex-start;
-  min-height: 44px;
 }
 .capability-grid button:hover {
   background: var(--tint);
 }
+
 .capability-grid button:disabled {
   background: var(--tint);
   color: var(--muted);
 }
-@media (max-width: 700px) {
-  .demo-capabilities {
-    padding: 22px 18px;
-    margin-top: 24px;
-  }
-  .demo-capabilities h2 {
-    font-size: 30px;
-  }
-  .capability-grid {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-  .capability-grid article {
-    padding: 18px;
-  }
-  .capability-grid p {
-    min-height: 0;
-  }
-  .capability-grid button {
-    max-width: 100%;
-    overflow-wrap: anywhere;
+@media (max-width: 800px) {
+  .intro-catalog {
+    display: none;
   }
 }

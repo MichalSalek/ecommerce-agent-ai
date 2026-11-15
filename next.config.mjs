@@ -16,8 +16,19 @@ const nextConfig = {
     "@huggingface/transformers",
     "onnxruntime-node",
   ],
+  async headers() {
+    return [
+      ...["/", "/chat", "/cart", "/products/:id"].map(source => ({
+        source, headers: [{ key: "Cloudflare-CDN-Cache-Control", value: "public, s-maxage=3600, stale-while-revalidate=86400, stale-if-error=86400" }],
+      })),
+      { source: "/images/:path*", headers: [
+      { key: "Cache-Control", value: "public, max-age=86400, s-maxage=604800" },
+    ] }];
+  },
   images: {
-    formats: ["image/avif", "image/webp"],
+    // Catalog photos are already WebP. Runtime AVIF encoding on Render Free
+    // delayed uncached images and competed with CPU embeddings for memory.
+    unoptimized: true,
   },
 };
 

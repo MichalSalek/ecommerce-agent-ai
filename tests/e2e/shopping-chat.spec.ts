@@ -116,7 +116,7 @@ test("reset cancels a pending response without letting it enter the new conversa
   await expect(page.locator(".chat-message.user")).toHaveCount(0);
   await expect(page.locator(".product.compact")).toHaveCount(0);
 });
-test("390px mobile keeps the composer reachable and the page free of horizontal overflow", async ({
+test("chat fills the remaining viewport and serves product photos directly", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -126,14 +126,41 @@ test("390px mobile keeps the composer reachable and the page free of horizontal 
     .getByRole("button", { name: "My morning coffee", exact: true })
     .click();
   await expect(page.locator(".product.compact")).toHaveCount(2);
-  await expect(
-    page.getByRole("button", { name: "Send message" }),
-  ).toBeInViewport();
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1440, height: 900 },
+    { width: 1440, height: 1200 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await expect
+      .poll(async () => {
+        const panel = await page.locator(".chat-panel").boundingBox();
+        return Boolean(
+          panel &&
+            panel.y + panel.height <= viewport.height + 1 &&
+            panel.height >= viewport.height - panel.y - 32,
+        );
+      })
+      .toBe(true);
+    await expect(
+      page.getByRole("button", { name: "Send message" }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  }
+  const photos = page.locator(".product.compact img");
+  await expect(photos).toHaveCount(2);
+  for (const photo of await photos.all()) {
+    await expect
+      .poll(() => photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+      .toBe(true);
+    const source = await photo.evaluate((img: HTMLImageElement) => img.currentSrc);
+    expect(new URL(source).pathname).toMatch(/^\/images\/.+\.webp$/);
+  }
 });
 
 test("incoming replies do not pull a reader away from older messages", async ({
@@ -197,7 +224,7 @@ test("failed product photos have a visible fallback without breaking recommendat
   page,
 }) => {
   await fixture(page);
-  await page.route("**/_next/image?*", (route) => route.abort());
+  await page.route("**/images/products/*.webp", (route) => route.abort());
   await page.goto("/chat");
   await page
     .getByRole("button", { name: "My morning coffee", exact: true })
@@ -324,11 +351,7 @@ test("capability guide is explicit about mock data and sends the advertised comp
     });
   });
   await page.goto("/chat");
-  await expect(
-    page.getByRole("heading", {
-      name: "How the shopping assistant works in this demo",
-    }),
-  ).toBeVisible();
+  await page.getByText("Try examples", { exact: true }).click();
   await expect(
     page.getByText(
       "All 48 products, prices, stock and policies are mock data.",

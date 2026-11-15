@@ -49,6 +49,7 @@ export default function ChatView() {
   } = useConversation();
   const router = useRouter();
   const thread = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const nearBottom = useRef(threadPosition.current.follow);
   const initializedScroll = useRef(false);
@@ -56,6 +57,25 @@ export default function ChatView() {
   const [copied, setCopied] = useState<string>();
   const busy = status === "submitted" || status === "streaming";
   const started = messages.some((m) => m.role === "user");
+  useEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    function measure() {
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      el.style.setProperty("--chat-top", `${top}px`);
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    document
+      .querySelectorAll(".demo-bar, header")
+      .forEach((el) => observer.observe(el));
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
   useEffect(() => {
     if (!ready) return;
     const id = new URLSearchParams(window.location.search).get("product");
@@ -131,26 +151,18 @@ export default function ChatView() {
   return (
     <div className="assistant-workspace">
       <aside className="assistant-intro">
-        <span className="eyebrow">AURELLE / SHOPPING COMPANION</span>
-        <h1>Your next good find starts here.</h1>
-        <p>
-          An engineering demo with 48 mocked products, prices and stock. Explore
-          real search and comparison tools; no orders or payments are processed.
-        </p>
-        <div className="assistant-guide">
-          <span>Made for the everyday</span>
-          <p>
-            Morning rituals. A better workspace. A little something for home.
-          </p>
-          <Link href="/#collection">
-            Browse all {products.length} products ↗
-          </Link>
-        </div>
-        <p className="chat-privacy">
-          Saved on this device. Start a new conversation to clear your chat.
-        </p>
+        <span className="eyebrow">AURELLE</span>
+        <h1>Shopping assistant</h1>
+        <p>All 48 products, prices, stock and policies are mock data.</p>
+        <Link className="intro-catalog" href="/#collection">
+          Browse products ↗
+        </Link>
       </aside>
-      <section className="chat-panel" aria-label="Shopping conversation">
+      <section
+        className="chat-panel"
+        aria-label="Shopping conversation"
+        ref={panel}
+      >
         <div className="chat-toolbar">
           <div className="assistant-identity">
             <span className="assistant-avatar">
@@ -159,7 +171,7 @@ export default function ChatView() {
             <div>
               <strong>Aurelle assistant</strong>
               <span className="assistant-presence">
-                {busy ? "Finding your next favorite…" : "Here to help you shop"}
+                {busy ? "Working on your request…" : "Products, prices and delivery"}
               </span>
             </div>
           </div>
@@ -329,8 +341,7 @@ export default function ChatView() {
           <div className="chat-recovery" role="status">
             <strong>This conversation is complete.</strong>
             <p>
-              Thanks for exploring Aurelle. Start a new conversation if you
-              still need help; your cart stays saved.
+              Start a new conversation to continue. Your cart stays saved.
             </p>
             <button onClick={() => void reset()}>
               Start a new conversation
@@ -339,8 +350,7 @@ export default function ChatView() {
         )}
         {!conversationClosed && remainingTurns <= 3 && (
           <p className="storage-notice">
-            {remainingTurns} messages left in this conversation. Start a new
-            topic when you are ready.
+            {remainingTurns} messages left before starting a new conversation.
           </p>
         )}
         <form
@@ -397,100 +407,48 @@ export default function ChatView() {
           </div>
           <div className="composer-meta" id="composer-help">
             <span className="keyboard-hint">
-              Enter to send · Shift + Enter for a new line
+              Enter to send. Shift + Enter for a new line
             </span>
             <span className="mobile-save-hint">Saved on this device</span>
             <span>{draft.length}/2000</span>
           </div>
         </form>
       </section>
-      <section
-        className="demo-capabilities"
-        aria-labelledby="demo-capabilities-title"
-      >
-        <span className="eyebrow">TRY THE IMPLEMENTED FEATURES</span>
-        <h2 id="demo-capabilities-title">
-          How the shopping assistant works in this demo
-        </h2>
-        <p>
-          All 48 products, prices, stock and policies are mock data.
-          Recommendations use actual catalog tools; the assistant does not place
-          orders. Click a scenario to start testing it in this conversation.
-        </p>
+      <details className="demo-capabilities">
+        <summary>Try examples</summary>
         <div className="capability-grid">
           {[
-            [
-              "Semantic discovery",
-              "I need something for my morning coffee",
-              "Find two actual products before a follow-up question.",
-            ],
-            [
-              "Compare products",
-              "Compare mugs and carafe",
-              "Compare real descriptions, EUR prices and stock. No invented quality scores.",
-            ],
-            [
-              "Gift with a budget",
-              "Find a gift under EUR 25",
-              "Browse affordable, available examples; refine the recipient next.",
-            ],
-            [
-              "Stock-aware follow-up",
-              "Show only in-stock products",
-              "Keep the last search criteria and exclude unavailable items.",
-            ],
-            [
-              "Approximate price",
-              "Something for home around EUR 30",
-              "Rank near a target rather than silently treating it as a maximum.",
-            ],
-            [
-              "Language and categories",
-              "Możesz pisać po polsku?",
-              "Switch language, ask for categories, or request different suggestions.",
-            ],
-            [
-              "Grounded policies",
-              "How much is delivery?",
-              "Use the actual demo policy rather than a model-invented promise.",
-            ],
-            [
-              "Scope boundary",
-              "Write a Python loop",
-              "See a shopping-only refusal and a path back to the store.",
-            ],
-          ].map(([title, prompt, description]) => (
-            <article key={title}>
-              <h3>{title}</h3>
-              <p>{description}</p>
-              <button
-                disabled={!ready || busy || conversationClosed}
-                onClick={() => {
-                  send(prompt);
-                  thread.current?.scrollIntoView({
-                    behavior: "smooth",
-                    block: "center",
-                  });
-                }}
-              >
-                {prompt} ↗
-              </button>
-            </article>
+            ["Semantic discovery", "I need something for my morning coffee"],
+            ["Compare products", "Compare mugs and carafe"],
+            ["Gift with a budget", "Find a gift under EUR 25"],
+            ["Stock-aware follow-up", "Show only in-stock products"],
+            ["Approximate price", "Something for home around EUR 30"],
+            ["Language and categories", "Możesz pisać po polsku?"],
+            ["Grounded policies", "How much is delivery?"],
+            ["Scope boundary", "Write a Python loop"],
+          ].map(([title, prompt]) => (
+            <button
+              key={title}
+              disabled={!ready || busy || conversationClosed}
+              onClick={() => {
+                send(prompt);
+                thread.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+              }}
+            >
+              {prompt} ↗
+            </button>
           ))}
         </div>
         <p className="muted">
-          Your chat and cart are saved on this device. Try opening a product and
-          going Back, Shift+Enter for a new line, or New conversation to reset
-          only the chat. Conversations close after 20 customer messages or
-          24,000 text characters; the final reply can finish and the cart stays
-          saved. Retry repeats the failed question without adding a duplicate. A
-          structured request may run without an LLM call; free-form planning and
-          optional wording use the configured model.{" "}
+          Chat and cart are saved on this device.{" "}
           <Link href="https://github.com/MichalSalek/ecommerce-agent-ai">
-            Read the architecture and tests ↗
+            How it works ↗
           </Link>
         </p>
-      </section>
+      </details>
     </div>
   );
 }

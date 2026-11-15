@@ -1,12 +1,12 @@
 # Aurelle - an AI shopping assistant with real vector retrieval
 
-[Open the live demo](https://ecommerce-agent-ai-bpah.onrender.com)
+[Open the live demo](https://ecommerce-agent.michalsalek.com)
 
 A small, deliberately complete shopping demo: browse 48 products, inspect a product, ask an assistant for recommendations, and keep a cart across page reloads. The UI, catalog, code and documentation are in English; the assistant follows the customer language. Polish and English have grounded fallback replies, and live Spanish search narration is also verified. All catalog prices remain in EUR.
 
 The interesting part is the boundary between probabilistic reasoning and reliable commerce behavior. A language model selects validated tools and can supply conversational transitions. Product identity, prices, stock, policies, currency handling and ranking remain in application code and the catalog. Optional generated wording is validated and never supplies a numeric price; contextual fallback replies keep retrieved facts available if narration fails.
 
-Built with Next.js 16 App Router, React 19, TypeScript strict, Vercel AI SDK 7, Zod, embedded LanceDB and local CPU embeddings. The visual starting point and product photographs come from [dilums/kimi-k3-ecommerce-storefront](https://github.com/dilums/kimi-k3-ecommerce-storefront). Additional mock products use explicitly marked local SVG illustrations. This is a portfolio demo, without payment processing or order fulfillment.
+Built with Next.js 16 App Router, React 19, TypeScript strict, Vercel AI SDK 7, Zod, embedded LanceDB and local CPU embeddings. The visual starting point and original product photographs come from [dilums/kimi-k3-ecommerce-storefront](https://github.com/dilums/kimi-k3-ecommerce-storefront). The 23 additional mock products use generated product photographs, prepared as static WebP files. This is a portfolio demo, without payment processing or order fulfillment.
 
 ![Aurelle storefront](docs/images/storefront.png)
 
@@ -205,7 +205,7 @@ The browser suite uses an intercepted model stream to isolate Enter/newline, rou
 
 ## Hosting
 
-The demo runs on [Render Free](https://ecommerce-agent-ai-bpah.onrender.com), using direct Groq `openai/gpt-oss-120b`, MiniLM CPU embeddings and embedded LanceDB. The image includes model weights and a rebuildable index. No persistent disk is required for the mock catalog; the cart and conversation stay in the browser. See [deployment evidence](docs/RENDER_FREE_PLAN.md).
+The demo runs on [Render Free](https://ecommerce-agent.michalsalek.com), using direct Groq `openai/gpt-oss-120b`, MiniLM CPU embeddings and embedded LanceDB. The image includes model weights and a rebuildable index. No persistent disk is required for the mock catalog; the cart and conversation stay in the browser. See [deployment evidence](docs/RENDER_FREE_PLAN.md).
 
 A Better Stack monitor checks `/api/health` every three minutes, with email alerts and TLS validation. It measures the web service, not every model request or remaining Groq quota. There is no dedicated public status page. Render Free has resource and availability limits; first access after idle suspension can take longer. Native inference shares the instance's 512 MiB memory with Next.js. This is a portfolio deployment, not a production availability guarantee.
 
@@ -230,3 +230,11 @@ New discovery capabilities:
 - `Show only in-stock products` reuses the preceding search constraints when present and adds a true database availability filter. If there is no earlier search, it browses available products. Availability filtering is independent of semantic similarity and prices.
 
 The comparison tool participates in native action schemas, model instructions, UI tool rendering and versioned history restoration. Restored comparison cards again take their prices/stock from the canonical catalog. New tools use the existing repository/service boundary instead of creating a parallel data source.
+
+## Delivery and first-visit performance
+
+The custom domain uses Cloudflare caching for public HTML and static assets. API calls bypass cache, as do React Server Component requests. Catalog photos are already encoded WebP files; the runtime does not generate AVIF variants on the small Render instance. This removes first-visitor image-encoding work and avoids competing with CPU embeddings.
+
+After deploying a green commit, purge only this hostname's public HTML URLs, then run `node scripts/warm-deployment.mjs https://ecommerce-agent.michalsalek.com`. The command checks actual application documents and referenced asset responses, rejecting an HTML loading page returned in place of an asset. Keep the origin health monitor active. Render Free can still restart or suspend; CDN caching reduces public-page dependence on origin readiness but is not an always-on backend guarantee.
+
+Known-product details, including the coffee-grinder follow-up, are served from canonical catalog facts without an LLM call. A cart request returns its actionable product card; adding the item uses the visible browser-side button. The server does not claim it changed local browser storage. Other planning calls open the stream immediately and have a fifteen-second provider deadline.

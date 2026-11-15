@@ -6,7 +6,7 @@ import { CartLink } from "@/components/CartLink";
 import "./globals.css";
 export const metadata: Metadata = {
   title: "Aurelle - shop and assistant",
-  description: "Shopping demo with a local AI assistant",
+  description: "A demo shop with an AI shopping assistant",
   robots: { index: false, follow: false },
 };
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -16,11 +16,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <CartProvider>
           <ChatProvider>
             <div className="demo-bar">
-              A small collection. A thoughtful way to shop.
+              Demo store with mock products and no checkout.
             </div>
             <header>
               <Link className="brand" href="/">
-                Aurelle<span>Considered everyday goods</span>
+                Aurelle<span>Homeware collection</span>
               </Link>
               <nav aria-label="Main navigation">
                 <Link href="/">Products</Link>

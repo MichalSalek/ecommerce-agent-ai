@@ -4,6 +4,8 @@ services:
     runtime: docker
     plan: free
     region: frankfurt
+    domains:
+      - ecommerce-agent.michalsalek.com
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     autoDeployTrigger: "off"

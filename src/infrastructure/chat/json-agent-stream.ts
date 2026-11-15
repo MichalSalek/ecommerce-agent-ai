@@ -16,6 +16,10 @@ import {
 import { products as catalogProducts } from "@/data/products";
 import { compactModelHistory } from "@/application/chat/model-history";
 import { clearShoppingRequest } from "@/application/chat/shopping-intent";
+import {
+  productDetailsRequest,
+  isCartRequest,
+} from "@/application/chat/product-request";
 import { requestedProductId } from "@/application/chat/requests";
 import { budgetBrowseRequest } from "@/application/catalog/search-intent";
 import {
@@ -33,7 +37,6 @@ import {
   simpleReply,
   categoriesReply,
   policyReply,
-  nextQuestion,
 } from "@/application/chat/replies";
 import {
   actionSchema,
@@ -61,6 +64,8 @@ export function createJsonAgentStream(
   const context = conversationContext(messages);
   return createUIMessageStream({
     execute: async ({ writer }) => {
+      // Establish the response before a provider call or cold retrieval can wait.
+      writer.write({ type: "start", messageId: crypto.randomUUID() });
       try {
         const write = (text: string) => {
           writer.write({ type: "text-start", id: "answer" });
@@ -83,7 +88,8 @@ export function createJsonAgentStream(
         const budget = requestedBudget(text);
         const more = isMoreRequest(text);
         const broad = isHomeRequest(text);
-        const productId = requestedProductId(text);
+        const productId =
+          requestedProductId(text) ?? productDetailsRequest(messages, catalogProducts);
         const shoppingRequest = clearShoppingRequest(text);
         const compareIds = comparisonIds(
           text,
@@ -174,7 +180,7 @@ export function createJsonAgentStream(
               ...compactModelHistory(messages),
               { role: "user", content: selectionInstruction },
             ],
-            abortSignal: signal,
+            abortSignal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
             maxRetries: 0,
             temperature: 0.1,
             maxOutputTokens: options?.maxOutputTokens ?? 3000,
@@ -349,7 +355,22 @@ export function createJsonAgentStream(
           const product = productSchema.safeParse(output);
           write(
             product.success
-              ? `${product.data.name} — ${product.data.price.toFixed(2)} EUR. ${context.language === "pl" ? (product.data.inStock ? "Produkt dostępny." : "Produkt obecnie niedostępny.") : product.data.inStock ? "In stock." : "Currently out of stock."}\n\n${nextQuestion(context)}`
+              ? [
+                  `${product.data.name} — ${product.data.price.toFixed(2)} EUR.`,
+                  product.data.description,
+                  `${context.language === "pl" ? "Kategoria" : "Category"}: ${product.data.category}. ${context.language === "pl" ? (product.data.inStock ? "Produkt dostępny." : "Produkt obecnie niedostępny.") : product.data.inStock ? "In stock." : "Currently out of stock."}`,
+                  !product.data.inStock
+                    ? context.language === "pl"
+                      ? "Obecnie nie można dodać tego produktu do koszyka."
+                      : "This item cannot currently be added to the cart."
+                    : isCartRequest(text)
+                    ? context.language === "pl"
+                      ? "Użyj przycisku Add to cart na karcie poniżej, aby dodać produkt do koszyka na tym urządzeniu."
+                      : "Use Add to cart on the card below to add this item to your cart on this device."
+                    : context.language === "pl"
+                      ? "To wszystkie informacje dostępne w katalogu. Produkt możesz dodać do koszyka na karcie poniżej."
+                      : "These are all the available catalog facts. You can add the item to your cart on the card below.",
+                ].join("\n\n")
               : simpleReply("repair", context),
           );
         }

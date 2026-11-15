@@ -35,7 +35,7 @@ export function conversationContext(
       continue;
     }
     if (
-      /po polsku|polish|[ąćęłńóśźż]|szukam|jakie|mozesz|wiecej|kontynuuj/i.test(
+      /po polsku|polish|[ąćęłńóśźż]|szukam|jakie|mozesz|wiecej|kontynuuj|\bdodaj\b|koszyk|\bpodaj\b|wszystko|\bwiesz\b/i.test(
         text,
       )
     )

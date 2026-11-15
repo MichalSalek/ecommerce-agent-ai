@@ -49,10 +49,10 @@ try {
   assert.equal((await fetch(base)).status, 200);
   assert.equal((await fetch(`${base}/products/mugs`)).status, 200);
   const imageResponse = await fetch(
-    `${base}/_next/image?url=%2Fimages%2Fproducts%2Fmugs.webp&w=256&q=75`,
+    `${base}/images/products/mugs.webp`,
     { signal: AbortSignal.timeout(30000) },
   );
-  assert.equal(imageResponse.status, 200, "Production image optimizer");
+  assert.equal(imageResponse.status, 200, "Pre-encoded catalog photo");
   assert.ok(imageResponse.headers.get("Content-Type")?.startsWith("image/"));
   async function search(label) {
     const start = performance.now();
