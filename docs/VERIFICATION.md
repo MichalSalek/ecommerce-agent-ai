@@ -87,3 +87,13 @@ Application SHA `b4d408ee9096ad6b7a1fb71a471014a7fb0e4922` is live at https://ec
 A controlled restart returned HTTP 200 from the provider; deployment verification passed again afterwards. Initial provider memory samples were 393097200 and 441077760 bytes. These are samples, not a measured peak. Physical-device/IME and actual sleep/idle suspension have not been tested.
 
 Better Stack monitor `5239952` checks liveness every 180 seconds on the BV account; it does not spend model tokens. Source remained unchanged; later docs-only commits require no application rebuild.
+
+## First-visit and reported conversation follow-up - 2026-11-15
+
+Release `332997d356e7cbdbb0f3beb1732f938cff48879b`, Render deploy `dep-dbssd4jl550s739bnkd0`, passed all GitHub source/browser and container jobs. Live custom domain: https://ecommerce-agent.michalsalek.com. The source commit includes static WebP delivery,23generated photographs replacing product SVG references, a viewport-sized chat and concise expandable examples.
+
+A fresh Chromium session loaded homepage plus all49image elements in1223ms with no request/page errors. The exact Polish coffee-grinder request and follow-up ending `.lo` completed in106ms/197ms; product card add-to-cart and reload persisted. Tall desktop and390px mobile chat geometry passed. These are observed samples, not universal latency guarantees.
+
+An uncached AVIF conversion on the previous release took3169ms, while its readyWebP source took120ms. Runtime transcoding is now disabled. Actual initial missing-assets failure was not captured; a provider process restart was visible near the user's report, but its exact trigger remains unproven. The monitor recorded a missing health keyword at14:17UTC.
+
+Cloudflare scopes caching to the new hostname, excludes API/RSC requests and honors origin cache headers. API health returns DYNAMIC; a verified hostname-prefix purge replaced oldHTML after URL-only purges proved insufficient. `warm-deployment.mjs` rejects HTML loading responses in place of assets. Origin liveness monitoring remains active; RenderFree still provides no always-on guarantee.
