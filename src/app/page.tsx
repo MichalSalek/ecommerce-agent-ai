@@ -8,9 +8,9 @@ export default function Home() {
         <div className="intro-copy">
           <small>THE AURELLE EDIT</small>
           <h1>
-            Less searching.
+            Find products with
             <br />
-            More finding.
+            the shopping assistant.
           </h1>
           <p>
             Good things for your home, your desk

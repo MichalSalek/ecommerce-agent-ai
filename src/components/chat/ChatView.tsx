@@ -410,7 +410,7 @@ export default function ChatView() {
       >
         <span className="eyebrow">TRY THE IMPLEMENTED FEATURES</span>
         <h2 id="demo-capabilities-title">
-          A demo store. A real agent workflow.
+          How the shopping assistant works in this demo
         </h2>
         <p>
           All 48 products, prices, stock and policies are mock data.

@@ -325,7 +325,9 @@ test("capability guide is explicit about mock data and sends the advertised comp
   });
   await page.goto("/chat");
   await expect(
-    page.getByRole("heading", { name: "A demo store. A real agent workflow." }),
+    page.getByRole("heading", {
+      name: "How the shopping assistant works in this demo",
+    }),
   ).toBeVisible();
   await expect(
     page.getByText(
