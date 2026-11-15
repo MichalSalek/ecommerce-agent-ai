@@ -219,17 +219,12 @@ main {
 .hero-image img {
   display: block;
   width: 100%;
-  height: 430px;
-  object-fit: cover;
+  height: auto;
 }
 .hero-image > span {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
+  display: block;
   padding: 14px 0;
   font-size: 14px;
-}
-.hero-image > span > span {
   text-decoration: underline;
 }
 .catalog-toolbar {
@@ -509,9 +504,6 @@ footer {
   .intro {
     gap: 80px;
   }
-  .hero-image img {
-    height: 480px;
-  }
 }
 @media (max-width: 1000px) {
   header,
@@ -525,9 +517,6 @@ footer {
   }
   .hero-actions {
     gap: 16px;
-  }
-  .hero-image img {
-    height: 380px;
   }
   .catalog-toolbar {
     align-items: flex-start;
@@ -587,9 +576,6 @@ footer {
   }
   .intro-copy > p {
     font-size: 16px;
-  }
-  .hero-image img {
-    height: 300px;
   }
   .hero-image > span {
     font-size: 12px;
@@ -1390,7 +1376,7 @@ textarea::placeholder {
   aspect-ratio: auto;
 }
 .hero-image > .store-image-fallback {
-  height: 430px;
+  aspect-ratio: 4 / 3;
 }
 .composer-meta {
   font-size: 12px;

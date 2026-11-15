@@ -1,0 +1,14 @@
+{
+  "tool": "image_gen.imagegen (built-in)",
+  "prompt": "Create a refined photorealistic editorial photograph for the hero of Aurelle, an AI shopping assistant for homeware. Landscape 4:3 composition. An open, elegant, unbranded graphite laptop sits on a warm pale stone table in a quiet, carefully styled contemporary interior. The laptop is angled only slightly so its large screen is visible and legible as a shopping conversation, occupying most of the center and right of the image. The display has a simple dark navy header, a warm white conversation surface, a coral message accent, and two product photo cards depicting a sage green folding garden chair and a dark round bistro table. These are clean screen shapes and tiny photos, not lots of tiny writing; only the word 'Aurelle' at the top, no other readable words or prices. A restrained coral notebook on the table and a soft linen chair edge at the far side. Soft natural daylight, honest material texture, warm off-white and very pale lilac background, quiet navy details, premium homeware catalog photography. The photograph should immediately suggest choosing home products through a conversation on a laptop. Keep the upper-left background clean for a small HTML message overlay. Show the entire laptop without cropped edges. No cups, mugs, coffee, food, people, robots, glowing effects, neon, floating interface cards, brand logos, watermark, invented certifications, or plastic 3D illustration.",
+  "source": "exec-91f00205-88de-4359-9809-3efeca50e61f.png",
+  "image": "public/images/hero-shopping-assistant.webp",
+  "width": 1280,
+  "height": 960,
+  "encoding": {
+    "format": "webp",
+    "quality": 78,
+    "bytes": 93656
+  },
+  "purpose": "Illustrative hero preview linking to the shopping assistant; generated screen is not an interactive UI."
+}
