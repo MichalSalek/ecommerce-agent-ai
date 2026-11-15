@@ -163,7 +163,7 @@ test("outdoor furniture is distinct from indoor tables and indoor planters", () 
     assert.equal(products.find((p) => p.id === id)?.productKind, "furniture");
 });
 
-test("every added product has exactly one matching original image prompt", async () => {
+test("every added product has one recorded prompt and a prepared WebP", async () => {
   const prompts: Array<{ id: string; prompt: string }> = JSON.parse(
     await readFile(
       new URL("../docs/PRODUCT_IMAGE_PROMPTS.json", import.meta.url),
@@ -177,11 +177,27 @@ test("every added product has exactly one matching original image prompt", async
     new Set(prompts.map(({ id }) => id)),
     new Set(added.map(({ id }) => id)),
   );
+  const provenance: {
+    images: { id: string; prompt: string; bytes: number }[];
+  } = JSON.parse(
+    await readFile(
+      new URL("../docs/IMAGE_GENERATION.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.equal(provenance.images.length, added.length);
   for (const { id, prompt } of prompts) {
-    assert.ok(
-      prompt.includes("Photorealistic") && prompt.includes("no logos"),
-      id,
+    assert.match(prompt, /photorealistic/i, id);
+    assert.match(prompt, /\bno\b[^.]*\blogos\b/i, id);
+    const recorded = provenance.images.find((image) => image.id === id);
+    assert.equal(recorded?.prompt, prompt, id);
+    const photo = await readFile(
+      new URL(`../public/images/products/${id}.webp`, import.meta.url),
     );
+    assert.equal(photo.toString("ascii", 0, 4), "RIFF", id);
+    assert.equal(photo.toString("ascii", 8, 12), "WEBP", id);
+    assert.equal(photo.byteLength, recorded?.bytes, id);
+    assert.ok(photo.byteLength > 1000 && photo.byteLength < 150000, id);
     assert.equal(
       products.find((p) => p.id === id)?.imageUrl,
       `/images/products/${id}.webp`,
