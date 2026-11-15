@@ -192,3 +192,25 @@ test("an explicit Polish category keeps the same conflict as its English equival
   assert.equal(need.patch.productKind, "furniture");
   assert.equal(isCategoriesRequest("Szukam mebli w kategorii Ogród"), false);
 });
+
+test("a bounded history recovers all prior exclusions from the last canonical search input", () => {
+  const state = shoppingState([
+    call({
+      query: "",
+      productKind: "furniture",
+      useEnvironment: "outdoor",
+      excludeIds: ["folding-garden-chair", "outdoor-bistro-table"],
+    }),
+    result(["sun-lounger", "garden-bench"]),
+  ]);
+  const criteria = mergeNeed(state, {}, false, true);
+  assert.deepEqual(
+    new Set(criteria.excludeIds),
+    new Set([
+      "folding-garden-chair",
+      "outdoor-bistro-table",
+      "sun-lounger",
+      "garden-bench",
+    ]),
+  );
+});

@@ -102,3 +102,35 @@ test("model context stays bounded while retaining the latest question", async ()
   assert.ok(JSON.stringify(compact).length <= 6500);
   assert.equal(compact[0].role, "user");
 });
+
+test("request history retains an explicit language preference through the full allowed conversation", async () => {
+  const { conversationContext } =
+    await import("../src/application/chat/conversation");
+  const { convertToModelMessages } = await import("ai");
+  const messages: import("../src/types/shop").ChatMessage[] = [
+    {
+      id: "language",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Możesz pisać po polsku?" }],
+    },
+  ];
+  for (let i = 0; i < 15; i++)
+    messages.push(
+      {
+        id: `turn-${i}`,
+        role: "user",
+        parts: [{ type: "text", text: "Show me other options" }],
+      },
+      {
+        id: `reply-${i}`,
+        role: "assistant",
+        parts: [{ type: "text", text: "Here are catalog options." }],
+      },
+    );
+  const requested = requestMessages(messages);
+  assert.equal(requested[0].id, "language");
+  assert.equal(
+    conversationContext(await convertToModelMessages(requested)).language,
+    "pl",
+  );
+});

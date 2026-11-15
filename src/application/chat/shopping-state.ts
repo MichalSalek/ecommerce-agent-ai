@@ -81,6 +81,9 @@ export function shoppingState(messages: ModelMessage[]): ShoppingState {
             lastIds: [],
           };
         state.criteria = { ...state.criteria, ...parsed.data };
+        state.shownIds = [
+          ...new Set([...state.shownIds, ...(parsed.data.excludeIds ?? [])]),
+        ];
         state.rejectedTypes = parsed.data.excludeTypes ?? state.rejectedTypes;
       }
       if (

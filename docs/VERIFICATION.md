@@ -3,7 +3,7 @@
 The current source adds 86 catalog records across ten categories, 38 individually generated WebP assets, structural search and device-local cart actions. The catalog census preserves the original 48 IDs, prices, stock states and image paths.
 
 - BGE and MiniLM preparation passed with 86 products. Current fingerprints are `5827abe4ad9924bd` and `24709dc1df1fee04` respectively; the build manifest and `/api/health` identify the prepared runtime table.
-- `npm test`: 66 assertions/subtests passed, including actual LanceDB with both encoders, expected and counterexample products across all ten categories, legacy wrong garden cards, exhaustion, canonical cart selection and stable operation IDs.
+- `npm test`: 68 assertions/subtests passed, including actual LanceDB with both encoders, expected and counterexample products across all ten categories, legacy wrong garden cards, exhaustion, canonical cart selection and stable operation IDs.
 - `npm run typecheck` and `npm run build` passed. All 86 product pages are generated.
 - `npm run test:e2e`: 14 Chromium cases passed. They cover history/drafts, navigation, desktop/390px viewport, legacy cards, repeated events, Retry/reload, cancelled/reset conversations, failed storage and the 99-unit limit.
 - A direct Groq 120B and MiniLM API acceptance exercised the visible examples, Polish/English garden refinements, all six outdoor furniture products through exhaustion, topic change, actual comparison, cart-action Retry identity and missing products/attributes. This is an observed acceptance sample, not a guarantee of future model accuracy.

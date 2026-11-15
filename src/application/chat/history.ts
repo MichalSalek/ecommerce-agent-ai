@@ -212,15 +212,9 @@ export function restoreConversation(
 export function requestMessages(messages: ChatMessage[]): ChatMessage[] {
   let result = settledMessages(messages)
     .filter((m) => m.id !== WELCOME_ID)
-    .slice(-24);
-  while (
-    result.length > 1 &&
-    (result[0].role !== "user" ||
-      new TextEncoder().encode(JSON.stringify(result)).length > 80000)
-  )
-    result = result.slice(1);
+    .slice(-60);
   // Send identities rather than duplicate full metadata. The server hydrates current catalog facts.
-  return result.map((message) => ({
+  result = result.map((message) => ({
     ...message,
     parts: message.parts
       .filter((p) => p.type !== "data-cartAction")
@@ -250,4 +244,11 @@ export function requestMessages(messages: ChatMessage[]): ChatMessage[] {
         return part;
       }),
   })) as ChatMessage[];
+  while (
+    result.length > 1 &&
+    (result[0].role !== "user" ||
+      new TextEncoder().encode(JSON.stringify(result)).length > 80000)
+  )
+    result = result.slice(1);
+  return result;
 }
