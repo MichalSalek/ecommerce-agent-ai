@@ -100,4 +100,3 @@ Cloudflare scopes caching to the new hostname, excludes API requests and honors 
 
 Final cache/navigation acceptance also covers public static RSC payloads with full Next-validated `_rsc` query keys. This was added after a browser idle-wait was held by background prefetches during the first restart probe. HTML and RSC variants remain separate; invalid/missing RSC hashes reach Next for validation. After warming, three fresh browser contexts during another controlled Render restart loaded complete visible HTML/CSS/scripts/all49images in523/337/336ms, with no page or HTTP errors. API chat availability remains dependent on the origin/provider; this is not a free-tier uptime SLA.
 
-The owner confirmed physical microphone-to-paste after the independent Windows dictation repair. Its synthetic timing evidence belongs to the private voice project, not this application's service.
