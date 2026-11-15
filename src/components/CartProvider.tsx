@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { products } from "@/data/products";
 import {
   addToCart,
+  addItemsToCart,
   emptyCart,
   restoreCart,
   setQuantity,
@@ -78,10 +79,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     conversationId: string,
   ): ActionResult => {
     if (!readyRef.current) return "not-ready";
-    const result = addToCart(
+    const result = addItemsToCart(
       cartRef.current,
-      action.productId,
-      action.quantity,
+      action.items ?? [
+        { productId: action.productId, quantity: action.quantity },
+      ],
       products,
       action.operationId,
     );

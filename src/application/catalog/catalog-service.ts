@@ -15,7 +15,7 @@ export class CatalogService {
     return this.repository.categories();
   }
   searchResult(criteria: ProductSearch) {
-    return this.repository.searchResult(parseSearchIntent(criteria));
+    return this.repository.searchResult(criteria);
   }
   overview(criteria: Partial<ProductSearch> = {}) {
     return this.repository.overview(criteria);

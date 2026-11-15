@@ -1,56 +1,54 @@
 # Aurelle agent architecture
 
-Aurelle is a bounded shopping assistant. Application code owns product facts, filtering, cart rules and tool execution. A language model interprets requests that are not handled by a clear structured path; its proposed action is validated before execution. The catalog, prices, stock and policies are demo data, not a real merchant feed.
+Aurelle is a shopping assistant for a demo catalog. A configured language model interprets customer requests and uses native tool calls; application code owns tool execution, catalog facts, selection checks and cart rules. The 86 products, prices, stock, specifications and store policies are authored demo data.
 
-## From a request to a result
+## A conversation turn
 
-1. The chat endpoint validates the incoming messages and applies conversation and request limits. Language and the current shopping state are reconstructed from the validated history and tool results.
-2. Recognized requests can use deterministic paths for language, categories, known products, comparison, cart selection and shopping constraints. More complex intent is sent to the configured model as a bounded planning request. Zod validates the returned action; arbitrary tools, SQL and executable code are not accepted.
-3. Search criteria combine the active constraints and the new request. Product type and kind are separate from store category, and environment is `indoor`, `outdoor` or `both`. Corrections and negative types can narrow a search, while a genuine topic change resets unrelated constraints. Shown IDs are retained to support alternatives without repeats.
-4. LanceDB applies price, stock, category, kind, type, environment, excluded type and recorded-feature filters before vector ranking. A product with no supporting catalog fact does not meet a required feature. For pagination, previously shown IDs are removed from the ranked matches before selecting the page, so the response can retain the total match count.
-5. An envelope returns the products, total matches, unseen matches and remaining matches after the page. The catalog overview tool calculates actual category and type counts. Product replies and comparisons use canonical product records; prices and differences are application calculations. Responses need not end in a question, and narration is not required on every turn.
+The chat endpoint validates the message history, optional device-cart snapshot and request limits. It restores the latest validated shopping checkpoint and passes a compact state, recent text and the current request to the model. The state contains language, scope, criteria, preferences, requested count, shown and rejected IDs, recent selections and comparison IDs. It is a preference and conversation hint, not a source of product facts. The optional cart snapshot contains device-local IDs and quantities; it does not create a server-side cart.
 
-A request for garden furniture therefore searches the furniture kind with outdoor or both-environment use, independent of the Garden merchandising category. An indoor planter and the indoor oak side table cannot pass that filter. If a requested category and kind conflict, the reply can explain the conflict instead of quietly changing the request. An unknown product type produces no catalog matches.
+The model can call search, catalog overview, categories, product details, comparison, policy and cart-proposal tools. Each tool has a schema and is executed by the application. The model finishes by calling `presentAnswer` with an answer, view and evidence IDs. The server validates the citations, referenced products and supported absence claims and resolves supported price and count references against recorded evidence. A model may answer a greeting or ask a clarification without searching. The model cannot execute arbitrary code or write browser storage.
 
-The model can still misunderstand a request or choose an imperfect action. Schema validation and factual data boundaries reduce the effect; they do not guarantee model accuracy. The model does not execute a checkout or change browser storage.
+A turn is limited to four model inferences, including presentation, with a maximum of 1,024 output tokens per inference and one correction path for invalid calls or presentation. The Groq adapter requests low reasoning effort and disables parallel tool calls. Provider support for these options and the quality of interpretation remain model-dependent. A partial turn or provider failure is reported rather than presented as an empty inventory result.
 
-## Embeddings and the index
+## Search and evidence
 
-The catalog has 86 products across 10 categories. Each record contains a short description, fuller demo-authored specifications, a canonical type and kind, environment, material, dimensions, features and limitations. English and Polish names and aliases for types and kinds live in the taxonomy. The 38 added products have individual static WebP images.
+Search transitions distinguish a new search, refinement, change, alternatives and browsing. The model proposes the transition; application code validates it and merges or resets typed criteria. Shown IDs support alternatives, and explicitly rejected IDs are kept separately. A new topic can reset unrelated search conditions while explicitly persistent preferences remain. The model can still misunderstand a request, so these mechanisms are boundaries rather than guarantees of interpretation.
 
-A product has two embedding texts: a concise purpose document based on name and short description, and a detailed document containing its fuller description, type, kind, use and relevant recorded facts. Both are encoded independently, combined with equal weight and normalized. This preserves the purpose alongside the longer specifications. Queries are embedded separately; structured browsing can run without a query embedding.
+LanceDB filters category, kind, type, environment, price, stock, excluded types and required recorded features before semantic ranking. The Garden category is a merchandising grouping; outdoor furniture uses the furniture kind and outdoor or both-environment records across categories. `maxPrice` is a hard EUR ceiling. `targetPrice` uses a tolerance of the greater of EUR 5 or 20% and sorts by distance from the target. The application has no exchange-rate service.
 
-| CPU profile | Model | Pooling and query prefix | Profile cosine-distance cutoff |
+Required features are matched against exact normalized material or feature values, with an explicit catalog material set for wood and wooden. A substring in a description or limitation is not proof of a feature. Unsupported certification, waterproofing or other unrecorded facts cannot be inferred from a product's absence of limitations.
+
+A search normally requests five products and returns at most ten per page. `SearchEvidence` records the applied criteria, outcome, requested count, scope total, total matches, unseen matches before the page and remaining matches after it. Counts allow a short page, no match or exhausted result to be described from actual evidence. Category cards contain a name, count and canonical example ID for each of the ten categories. Comparisons accept two to ten distinct catalog IDs and calculate cheapest IDs and price differences in cents from canonical prices.
+
+## Stream, history and compatibility
+
+The storefront opts into `shopping-v3`. The stream carries text plus typed `data-products`, `data-categories`, `data-comparison`, `data-shoppingState` and `data-turnStatus` parts as appropriate. A checkpoint includes the before and after state and the user-message ID; a client can restore it after navigation or reload. Card details are resolved from the current catalog. Status can report complete, partial, provider limit or connection error, with usage and retry information when available.
+
+The same engine has adapters for `shopping-v2` and earlier consumers. The v2 adapter emits legacy tool-result shapes and supports single-item cart actions. Earlier clients receive legacy result arrays and use product-card controls. The current UI can render validated legacy history alongside the newer data parts. Incomplete tool calls are not replayed from stored history.
+
+The conversation is limited to 20 customer messages or 24,000 textual characters. The API validates history independently and limits incoming request size. Model context is compacted separately; these are application limits, not authentication or an exact provider-token budget. Retry resends the same user turn, while a stopped or replaced stream is isolated from later cart effects.
+
+## Cart actions
+
+The model may propose up to ten items only in response to an explicit add request. Application checks authorize the referenced selection and requested quantities against the request and shopping state. Ambiguous selections and ties require clarification; an unavailable item prevents the proposal. The typed action retains the legacy first `productId` and `quantity` and may include an `items` array.
+
+An operation ID derives from the conversation and user-message IDs. The browser accepts a proposal only from the matching active stream, checks stock and line limits, and saves the cart, operation ledger and receipt in one local storage write. It reports an addition only after that write succeeds. A repeated operation is idempotent, and a multi-item operation is applied atomically. The cart remains on the device and is not an order, payment or checkout.
+
+## Embeddings and index
+
+The catalog has 86 products across ten categories. Each record contains a short description, fuller specifications, canonical type and kind, environment, material, dimensions, features and limitations. Purpose and detailed documents are embedded independently, averaged with equal weight and normalized. Structured browsing does not require a query embedding.
+
+| CPU profile | Model | Pooling and query prefix | Cosine-distance cutoff |
 | --- | --- | --- | --- |
 | `bge` | `Xenova/bge-small-en-v1.5` | CLS; retrieval instruction prefix | 0.45 |
 | `minilm` | `Xenova/all-MiniLM-L6-v2` | Mean; no prefix | 0.74 |
 
-Both use pinned q8 models and normalized 384-dimensional embeddings. The Render/Docker profile selects MiniLM. Equal dimensions do not make the two spaces interchangeable. After structural filtering, the maximum accepted distance is the smaller of the profile cutoff and the best eligible neighbor's distance plus 0.2. This further limits distant neighbors; it does not establish universal relevance.
+Both profiles use pinned q8 models and normalized 384-dimensional vectors. After structural filtering, the accepted distance is the smaller of the profile cutoff and the best eligible neighbor's distance plus 0.2. The Docker profile uses MiniLM.
 
-Each derived LanceDB table is named from a fingerprint of the full catalog, encoder identity, both actual indexing texts and the representation version. A catalog, encoder, document or representation change therefore creates a different table. Existing tables are retained, keeping active indices separate. Local model files and tables are caches of weights and catalog vectors, not cached customer responses.
+A content-addressed LanceDB table fingerprint includes the full catalog, encoder identity, actual indexing documents and representation version. The explicit tokenizer loading fix does not change these fingerprint inputs, encoder revisions or vector representation. The tokenizer JSON and configuration are fetched directly at the pinned revision into the model cache when missing, then loaded with the pinned model. A populated cache can therefore support offline startup; an absent tokenizer file fails when remote model access is disabled. Local model files and tables are caches, not customer responses.
 
-## Conversation and tool boundaries
+## Operations and verification
 
-The shared client provider keeps the active conversation during route navigation. Device-local storage retains settled messages and a draft across reloads; restored product cards use the current catalog rather than stored prices. Incomplete tool parts are not replayed. Retry resends the same customer turn instead of appending another; it still counts toward request limits. Stopping or starting a new conversation isolates late responses.
+The configured provider is explicit and has no silent fallback. Per-instance admission limits count requests and retries, reset on restart and do not replace provider quota controls. The endpoint applies a request deadline and propagates cancellation. `/api/health` reports liveness, revision, embedding profile and prepared-index metadata without calling the model.
 
-The visible conversation has a limit of 20 customer messages or 24,000 textual characters. The server independently validates requests and rejects oversized histories. Model context is compacted separately to fit the provider budget. These are application limits, not exact tokenizer accounting or an identity boundary.
-
-The planner's allowed tools include search, catalog overview, product details, comparison, categories and policy. A free response is not a source of catalog inventory. Search inputs include structural constraints and exclusions; comparison resolves canonical IDs and calculates price differences from records. A foreign-currency amount is not converted: the application asks for a EUR budget rather than claiming an exchange rate.
-
-## Cart action contract
-
-A client opts in by sending `shopping-v2` and a conversation ID. The server identifies the selected product and quantity from the explicit request and the latest relevant products. An ambiguous selection or price tie requires clarification. Stock, integer quantities and the 99-unit line limit are checked; a request alone does not imply that a browser cart changed.
-
-For an accepted request, the server emits a typed action with an operation ID derived from the conversation ID, user-message ID and action kind. The browser accepts it only for the active live stream and matching user message. One local storage write saves the cart, executed-operation ledger and receipt together; a receipt is shown as added only after the write succeeds. Retry and duplicate delivery use the same operation ID, while history restoration and a cancelled or superseded stream do not execute it again. Existing cart documents remain readable. Manual add buttons use the same cart rules.
-
-A legacy client receives the original search result arrays and uses product-card buttons for manual cart addition. The cart is local to a device and is not a server-authoritative order, payment or checkout.
-
-## Operations and failure handling
-
-- The configured provider is explicit; there is no silent switch to another provider. A provider error remains an error with a retry path, not an empty catalog.
-- The endpoint has a request deadline; planner calls also have a shorter timeout. Cancellation propagates to the stream.
-- Per-instance request limits count valid chat requests and retries. They reset on restart and are not durable distributed rate limiting, authentication or a provider billing cap.
-- `/api/health` reports service liveness and revision without running the model or an embedding query. It cannot prove that every provider request will succeed.
-- Product facts and specs are demonstration data. Neither the model nor the application has evidence for an unrecorded certification, durability rating or real-world product performance.
-
-For setup, executable examples and local checks, see the [README](../README.md). For deployment configuration and caching, see [hosting](HOSTING.md).
+`npm run test:agent:dry` scripts native model responses while using the actual MiniLM encoder and LanceDB. The Docker smoke uses a native tool fixture and checks the container and index. `npm run test:agent:live -- <url>` exercises the configured running provider; its cart writes are simulated. Browser acceptance must separately verify the real device-storage flow. These checks establish different evidence and none guarantees future provider behavior. See the [README](../README.md) and [hosting](HOSTING.md) for commands and configuration.

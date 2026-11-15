@@ -39,8 +39,7 @@ export function createGroqRuntime(
   return {
     model: provider(config.modelId),
     label: `Groq / ${config.modelId}`,
-    providerOptions: { groq: { response_format: { type: "json_object" } } },
-    maxOutputTokens: 3000,
-    narrate: true,
+    providerOptions: { groq: { reasoningEffort: "low", include_reasoning: false, parallel_tool_calls: false } },
+    maxOutputTokens: 1024,
   };
 }

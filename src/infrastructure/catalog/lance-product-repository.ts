@@ -1,4 +1,5 @@
 import type { TextEmbedding } from "@/application/catalog/text-embedding";
+import { meetsFeature } from "@/domain/catalog/requirements";
 import { connect, type Table } from "@lancedb/lancedb";
 import { resolve } from "node:path";
 import {
@@ -115,9 +116,7 @@ export class LanceProductRepository implements ProductRepository {
     if (criteria.requiredFeatures?.length) {
       const eligible = this.catalog.filter((p) =>
         criteria.requiredFeatures!.every((feature) =>
-          `${p.material} ${p.features.join(" ")}`
-            .toLowerCase()
-            .includes(feature.toLowerCase()),
+          meetsFeature(p, feature),
         ),
       );
       filters.push(
@@ -185,13 +184,14 @@ export class LanceProductRepository implements ProductRepository {
       unseen.sort((a, b) => a.price - b.price || a.id.localeCompare(b.id));
     const products = unseen.slice(
       0,
-      Math.max(1, Math.min(criteria.limit ?? 2, 12)),
+      Math.max(1, Math.min(criteria.limit ?? 5, 10)),
     );
     return {
       products,
       totalMatches,
       unseenMatches: unseen.length,
       remainingMatches: unseen.length - products.length,
+      matchedIds: ranked.filter(relevant).map(row=>String(row.id)),
     };
   }
   async search(criteria: ProductSearch): Promise<Product[]> {
@@ -206,7 +206,7 @@ export class LanceProductRepository implements ProductRepository {
   async overview(criteria: Partial<ProductSearch> = {}) {
     // Use the same structural filters as retrieval, never a parallel list of merchandise claims.
     const table = await this.prepare();
-    const filters = this.filters({ query: "", ...criteria }, true);
+    const filters = this.filters({ query: "", ...criteria, excludeIds: undefined });
     let query = table.query();
     if (filters.length) query = query.where(filters.join(" AND "));
     const all = (await query.toArray())
@@ -216,8 +216,7 @@ export class LanceProductRepository implements ProductRepository {
           features: Array.from(p.features),
           limitations: Array.from(p.limitations),
         }),
-      )
-      .filter((p) => !criteria.excludeIds?.includes(p.id));
+      );
     return {
       total: all.length,
       categories: [...new Set(all.map((p) => p.category))]

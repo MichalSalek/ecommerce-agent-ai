@@ -45,7 +45,7 @@ test("live cart action is applied once across duplicate chunks, retry and reload
   let calls = 0;
   await page.route("**/api/chat", async (route) => {
     const body = route.request().postDataJSON();
-    expect(body.contract).toBe("shopping-v2");
+    expect(body.contract).toBe("shopping-v3");
     expect(body.conversationId).toBeTruthy();
     calls++;
     await route.fulfill({

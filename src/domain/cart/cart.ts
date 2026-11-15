@@ -30,13 +30,34 @@ export function restoreCart(
   catalog: readonly Product[],
 ): Cart {
   try {
-    const parsed = cartSchema.parse(JSON.parse(raw ?? "null"));
+    const rawCart = JSON.parse(raw ?? "null");
+    const parsed = cartSchema
+      .pick({ version: true, lines: true })
+      .parse(rawCart);
+    const operations: string[] = Array.isArray(rawCart.executedOperations)
+      ? rawCart.executedOperations.filter(
+          (id: unknown): id is string =>
+            typeof id === "string" && id.length > 0 && id.length <= 200,
+        )
+      : [];
+    const receiptSchema = cartActionSchema.extend({
+      conversationId: z.string().min(1).max(150),
+    });
+    const legacyReceiptSchema = receiptSchema.omit({ items: true });
+    const receipts: Cart["receipts"] = Array.isArray(rawCart.receipts)
+      ? rawCart.receipts.flatMap((receipt: unknown) => {
+          const result = receiptSchema.safeParse(receipt);
+          if (result.success) return [result.data];
+          const legacy = legacyReceiptSchema.safeParse(receipt);
+          return legacy.success ? [legacy.data] : [];
+        })
+      : [];
     const seen = new Set<string>();
     return {
       version: 1,
-      executedOperations: [...new Set(parsed.executedOperations)],
-      receipts: parsed.receipts.filter((receipt) =>
-        parsed.executedOperations.includes(receipt.operationId),
+      executedOperations: [...new Set(operations)],
+      receipts: receipts.filter((receipt) =>
+        operations.includes(receipt.operationId),
       ),
       lines: parsed.lines.filter((line) => {
         if (
@@ -75,6 +96,61 @@ export type CartAddResult =
   | { status: "added"; cart: Cart }
   | { status: "duplicate" | "unavailable" | "limit"; cart: Cart };
 
+export type CartItem = { productId: string; quantity: number };
+
+export function addItemsToCart(
+  cart: Cart,
+  items: readonly CartItem[],
+  catalog: readonly Product[],
+  operationId?: string,
+): CartAddResult {
+  if (operationId && cart.executedOperations.includes(operationId))
+    return { status: "duplicate", cart };
+  if (items.length < 1 || items.length > 10) return { status: "limit", cart };
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (seen.has(item.productId)) return { status: "limit", cart };
+    seen.add(item.productId);
+    const product = catalog.find((p) => p.id === item.productId);
+    if (!product?.inStock) return { status: "unavailable", cart };
+    const current =
+      cart.lines.find((line) => line.productId === item.productId)?.quantity ??
+      0;
+    if (
+      !Number.isInteger(item.quantity) ||
+      item.quantity < 1 ||
+      item.quantity > 99 ||
+      current + item.quantity > 99
+    )
+      return { status: "limit", cart };
+  }
+  const newLines = items.filter(
+    (item) => !cart.lines.some((line) => line.productId === item.productId),
+  ).length;
+  if (cart.lines.length + newLines > 100) return { status: "limit", cart };
+  const quantities = new Map(
+    items.map((item) => [item.productId, item.quantity]),
+  );
+  const lines = cart.lines.map((line) => ({
+    ...line,
+    quantity: line.quantity + (quantities.get(line.productId) ?? 0),
+  }));
+  for (const item of items) {
+    if (!cart.lines.some((line) => line.productId === item.productId))
+      lines.push({ ...item });
+  }
+  return {
+    status: "added",
+    cart: {
+      ...cart,
+      lines,
+      executedOperations: operationId
+        ? [...cart.executedOperations, operationId]
+        : cart.executedOperations,
+    },
+  };
+}
+
 export function addToCart(
   cart: Cart,
   id: string,
@@ -82,24 +158,12 @@ export function addToCart(
   catalog: readonly Product[],
   operationId?: string,
 ): CartAddResult {
-  if (operationId && cart.executedOperations.includes(operationId))
-    return { status: "duplicate", cart };
-  const product = catalog.find((p) => p.id === id);
-  if (!product?.inStock) return { status: "unavailable", cart };
-  const current =
-    cart.lines.find((line) => line.productId === id)?.quantity ?? 0;
-  if (!Number.isInteger(quantity) || quantity < 1 || current + quantity > 99)
-    return { status: "limit", cart };
-  const next = setQuantity(cart, id, current + quantity, catalog);
-  return {
-    status: "added",
-    cart: operationId
-      ? {
-          ...next,
-          executedOperations: [...next.executedOperations, operationId],
-        }
-      : next,
-  };
+  return addItemsToCart(
+    cart,
+    [{ productId: id, quantity }],
+    catalog,
+    operationId,
+  );
 }
 export function cartTotalCents(
   cart: Cart,

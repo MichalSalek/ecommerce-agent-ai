@@ -33,13 +33,13 @@ The ten examples remain visible on the chat page. Starters offer common entry po
 
 ## How it works
 
-The application separates model decisions from catalog facts and cart operations:
+The server validates the conversation and sends the current request to a model that uses native tool calls. The application executes the allowed catalog and cart tools, checks their inputs and uses their results as evidence for the final response. The model interprets the request; it cannot execute arbitrary code or change the device cart. Its interpretation and wording can still be wrong.
 
-1. The server validates the message history. Deterministic paths handle clear requests; a language model returns a validated action for more complex intent. It cannot execute arbitrary tools or supply an inventory claim through a free-text action.
-2. Search criteria include product kind and type, environment, price, availability, required features and exclusions. Product kinds are independent of store categories: furniture includes tables, chairs and benches; a planter is gardening equipment. The indoor oak side table is not outdoor furniture.
-3. LanceDB applies structural constraints before ranking eligible rows by cosine similarity. The active shopping state is reconstructed from validated history and tool results, including shown and rejected products. Refinements retain relevant constraints; a new topic resets unrelated ones. The catalog overview tool calculates actual category and type counts.
-4. Search results carry the total matching count, the unseen count and the number remaining after the current page. The response is grounded in the returned products and their recorded features. A follow-up question is used when helpful, rather than required on every turn.
-5. With the `shopping-v2` contract, an explicit add request produces a typed action. The browser checks stock and quantity, saves the cart and reports the result. Older clients retain product-array results and manual card buttons.
+Search combines category, product kind and type, environment, price, availability and recorded features. Furniture is a product kind, independent of the Garden merchandising category. Search starts with five products by default and can show up to ten in one response. Counts distinguish products in scope, matches, matches not previously shown and those remaining after the current response. The assistant can show all ten categories with counts and an example product, and compare two to ten products using catalog facts and application-calculated price differences.
+
+A typed checkpoint records language, criteria, preferences, shown products and selections across turns. The `shopping-v3` stream carries the checkpoint, result evidence, category cards, comparisons and turn status. Older clients have adapters for the earlier result format. An explicit cart request can produce a proposal for one or more items; the browser validates and saves it before reporting success.
+
+The engine allows up to four model calls per turn, including presentation, with up to 1,024 output tokens per call. The Groq adapter requests low reasoning effort. Provider errors and incomplete responses remain visible as such. These limits do not make model output infallible.
 
 The catalog's short purpose text and fuller product specifications are embedded separately, then their vectors are averaged with equal weight and normalized. Two CPU profiles are supported: pinned BGE small and MiniLM. The Docker/Render profile uses MiniLM. Each has a calibrated cutoff; a result must be within both its profile cutoff and 0.2 cosine distance of the best eligible neighbor. These are demo relevance rules, not a guarantee of accuracy.
 
@@ -55,7 +55,7 @@ Conversation and cart stay on the device; neither is an authenticated or cross-d
 
 ## Run locally
 
-Use Node.js 22 or later on a supported Linux, macOS or Windows native architecture. LanceDB and ONNX require compatible native binaries. The first catalog preparation downloads the selected pinned model; subsequent runs can use the local cache.
+Use Node.js 22 or later on a supported Linux, macOS or Windows native architecture. LanceDB and ONNX require compatible native binaries. The first catalog preparation downloads the selected pinned model and tokenizer files. Later runs can use the populated cache offline.
 
 ```bash
 git clone https://github.com/MichalSalek/ecommerce-agent-ai.git
@@ -84,7 +84,7 @@ LLAMA_BASE_URL=http://127.0.0.1:8080/v1
 LLAMA_MODEL=your-model-id
 ```
 
-`LLAMA_MODEL` is optional if the endpoint exposes a model list. The adapter requests JSON object mode and validates tool actions; its Bielik compatibility parser also handles legacy tool-call dictionaries without evaluating code. A remote deployment cannot reach a local machine's loopback address.
+`LLAMA_MODEL` is optional if the endpoint exposes a model list. The selected model and server must support the native OpenAI-compatible tool-calling protocol. A models endpoint alone does not verify the complete shopping flow. A remote deployment cannot reach a local machine's loopback address.
 
 For Groq:
 
@@ -105,6 +105,7 @@ A coding agent can also use [STARTER_PROMPT.md](STARTER_PROMPT.md) to inspect th
 EMBEDDING_MODEL=bge npm run catalog:prepare
 EMBEDDING_MODEL=minilm npm run catalog:prepare
 npm test
+npm run test:agent:dry
 npm run typecheck
 npm run build
 npx playwright install chromium
@@ -112,9 +113,15 @@ npm run test:e2e
 # Docker is required for these commands.
 docker build -t aurelle-demo:render-ready .
 npm run container:smoke
+# Explicit live acceptance against a running built app configured with Groq.
+npm run test:agent:live -- http://127.0.0.1:3000
+# Check a deployed revision and one v3 response.
+npm run verify:deployment -- https://your-service.example <expected-commit>
 ```
 
-The test suite covers real CPU encoders and LanceDB retrieval, structural filtering, conversation state, cart recovery and idempotency, provider contracts and browser behavior. Browser fixtures and live provider checks answer different questions; test results and deployment evidence are recorded separately in [verification evidence](docs/VERIFICATION.md). `npm start` serves a completed standalone build. `/api/health` reports liveness, revision and embedding profile without invoking the model.
+The dry agent test scripts model responses while using the real MiniLM encoder and LanceDB; prepare the MiniLM cache first. Browser E2E uses mocked responses for its covered scenarios. The Docker smoke uses a local native tool-call fixture while exercising the built container, concurrent requests, index rebuild and cgroup peak memory. None of these establishes that a real model follows the shopping instructions.
+
+The live runner sends real requests to the supplied app, covers Polish and English conversations and writes a transcript under `/tmp` by default. `AGENT_LIVE_ARTIFACT` selects the output path; `AGENT_LIVE_TPM`, `AGENT_LIVE_TURN_RESERVE` and `AGENT_LIVE_INTERVAL_MS` configure pacing. It simulates successful browser cart writes so later API turns can receive a cart snapshot; it does not prove browser storage. Verify the target's provider and exact model from its runtime configuration and logs. Run browser acceptance separately, and record actual results and the deployed revision in [verification evidence](docs/VERIFICATION.md). `npm start` serves a completed standalone build; `/api/health` reports liveness, revision and embedding profile without invoking the model.
 
 ## Hosting
 

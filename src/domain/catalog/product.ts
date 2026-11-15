@@ -40,6 +40,7 @@ export interface ProductSearchResult {
   totalMatches: number;
   unseenMatches: number;
   remainingMatches: number;
+  matchedIds?: string[];
 }
 export interface ProductRepository {
   searchResult(criteria: ProductSearch): Promise<ProductSearchResult>;

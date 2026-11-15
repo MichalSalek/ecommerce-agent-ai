@@ -1,9 +1,26 @@
 "use client";
-import { useState } from "react";
 import { products } from "@/data/products";
 import { ProductCard } from "@/components/ProductCard";
-export function ProductResults({ output }: { output: unknown }) {
-  const [expanded, setExpanded] = useState(false);
+import type { SearchEvidence } from "@/application/chat/shopping-v3";
+
+const outcomeText: Record<SearchEvidence["outcome"], string> = {
+  matches: "",
+  "no-match": "No products match these criteria.",
+  exhausted: "There are no more matching products to show.",
+  unavailable: "Matching products are currently unavailable.",
+  "unconfirmed-feature":
+    "The requested feature could not be confirmed for these products.",
+  "no-assortment": "There are no products in this part of the collection.",
+  "invalid-criteria": "These search criteria could not be used.",
+};
+
+export function ProductResults({
+  output,
+  evidence,
+}: {
+  output: unknown;
+  evidence?: SearchEvidence;
+}) {
   const envelope =
     typeof output === "object" &&
     output !== null &&
@@ -28,7 +45,13 @@ export function ProductResults({ output }: { output: unknown }) {
     const current = products.find((p) => p.id === id);
     return current ? [current] : [];
   });
-  if (!found.length) return null;
+  if (!found.length && !evidence) return null;
+  const explanation =
+    evidence &&
+    (outcomeText[evidence.outcome] ||
+      (found.length < evidence.requestedCount
+        ? `You requested ${evidence.requestedCount} products. ${evidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
+        : ""));
   return (
     <div className="product-results">
       <div className="result-heading">
@@ -37,22 +60,22 @@ export function ProductResults({ output }: { output: unknown }) {
           Showing {found.length} {found.length === 1 ? "product" : "products"}
         </span>
       </div>
+      {evidence && (
+        <div className="result-counts" aria-label="Search counts">
+          <span>In scope: {evidence.scopeTotal}</span>
+          <span>Matching: {evidence.totalMatches}</span>
+          <span>
+            Not yet shown before this result: {evidence.unseenMatches}
+          </span>
+          <span>Remaining after this result: {evidence.remainingMatches}</span>
+        </div>
+      )}
+      {explanation && <p className="result-explanation">{explanation}</p>}
       <div className="chat-products">
-        {(expanded ? found : found.slice(0, 4)).map((product) => (
+        {found.map((product) => (
           <ProductCard compact key={product.id} product={product} />
         ))}
       </div>
-      {found.length > 4 && (
-        <button
-          className="result-toggle"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded
-            ? "Show fewer products"
-            : `Show all ${found.length} products`}
-        </button>
-      )}
     </div>
   );
 }

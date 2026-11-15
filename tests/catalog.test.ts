@@ -7,11 +7,7 @@ import { join } from "node:path";
 import { products } from "../src/data/products";
 import { BgeEmbedding } from "../src/infrastructure/embeddings/bge-embedding";
 import { LanceProductRepository } from "../src/infrastructure/catalog/lance-product-repository";
-import {
-  parseJsonObject,
-  parseToolAction,
-  actionSchema,
-} from "../src/infrastructure/chat/json-protocol";
+
 
 test("real embeddings, semantic ranking, budget, persistence and catalog refresh", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aurelle-lance-"));
@@ -25,6 +21,7 @@ test("real embeddings, semantic ranking, budget, persistence and catalog refresh
     const service = new CatalogService(repository);
     const pricedCoffee = await service.search({
       query: "something for my morning coffee under EUR 25",
+      productTypes: ["mug", "carafe", "coffee-dripper", "coffee-grinder", "kettle", "scale"],
       maxPrice: 25,
     });
     assert.ok(pricedCoffee.length > 0);
@@ -45,7 +42,7 @@ test("real embeddings, semantic ranking, budget, persistence and catalog refresh
       [...products]
         .filter((p) => p.price <= 25)
         .sort((a, b) => a.price - b.price || a.id.localeCompare(b.id))
-        .slice(0, 12)
+        .slice(0, 10)
         .map((p) => p.id),
     );
     const warm = await repository.search({
@@ -95,42 +92,4 @@ test("real embeddings, semantic ranking, budget, persistence and catalog refresh
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
-test("JSON protocol handles escaped braces and rejects invalid tools and inputs", () => {
-  assert.deepEqual(
-    parseJsonObject('```json\n{"text":"a } and \\"quoted\\" word"}\n```'),
-    { text: 'a } and "quoted" word' },
-  );
-  assert.deepEqual(parseJsonObject('{"text":"first"}{"text":"second"}'), {
-    text: "first",
-  });
-  assert.equal(
-    parseToolAction(
-      'Example: {tool: searchProducts}. Actual: {"tool":"getPolicy","input":{"topic":"delivery"}}',
-    ).tool,
-    "getPolicy",
-  );
-  assert.equal(
-    parseToolAction(
-      "<tool_call>{'name':'searchProducts','arguments':{'query':'coffee','maxPrice':25}}</tool_call>",
-    ).tool,
-    "searchProducts",
-  );
-  assert.throws(() =>
-    parseToolAction(
-      "<tool_call>{'name':'shell','arguments':{'query':'coffee'}}</tool_call>",
-    ),
-  );
-  assert.throws(() => parseJsonObject('{"text":"unfinished'));
-  assert.equal(
-    actionSchema.safeParse({ tool: "shell", input: {} }).success,
-    false,
-  );
-  assert.equal(
-    actionSchema.safeParse({
-      tool: "searchProducts",
-      input: { query: "coffee", maxPrice: -1 },
-    }).success,
-    false,
-  );
 });

@@ -16,8 +16,10 @@ assert.equal(health.status, "ok");
 assert.equal(health.service, "aurelle");
 assert.equal(health.embeddingProfile, "minilm");
 assert.equal(health.productCount, 86);
-assert.equal(health.preparedIndex?.productCount, health.productCount);
+assert.equal(health.preparedIndex?.productCount, 86);
+assert.ok(health.indexFingerprint);
 assert.equal(health.preparedIndex?.fingerprint, health.indexFingerprint);
+assert.ok(health.revision, "Missing deployed revision");
 if (expected) assert.equal(health.revision, expected);
 console.log("[VERIFY] health", JSON.stringify(health));
 for (const path of [
@@ -27,79 +29,74 @@ for (const path of [
   "/products/outdoor-bistro-table",
   "/cart",
   "/images/products/folding-garden-chair.webp",
-])
-  assert.equal(
-    (await fetch(base + path, { signal: AbortSignal.timeout(30000) })).status,
-    200,
-    `Route ${path}`,
-  );
-async function chat(text) {
-  const response = await fetch(`${base}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: [
-        {
-          id: crypto.randomUUID(),
-          role: "user",
-          parts: [{ type: "text", text }],
-        },
-      ],
-    }),
-    signal: AbortSignal.timeout(100000),
+]) {
+  const response = await fetch(base + path, {
+    signal: AbortSignal.timeout(30000),
   });
-  assert.equal(response.status, 200);
-  const raw = await response.text();
-  const events = raw
-    .split("\n")
-    .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
-    .map((line) => JSON.parse(line.slice(6)));
-  assert.ok(
-    !events.some((event) => event.type === "error"),
-    "Chat stream reported an error",
-  );
-  return events;
+  assert.equal(response.status, 200, `Route ${path}`);
+  if (path.endsWith(".webp"))
+    assert.ok(response.headers.get("content-type")?.startsWith("image/"));
 }
-const coffee = await chat("I need something for my morning coffee");
+const response = await fetch(`${base}/api/chat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    contract: "shopping-v3",
+    conversationId: crypto.randomUUID(),
+    messages: [
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        parts: [
+          { type: "text", text: "Show me ten products from the collection" },
+        ],
+      },
+    ],
+  }),
+  signal: AbortSignal.timeout(120000),
+});
+if (!response.ok)
+  throw new Error(
+    `Chat API HTTP ${response.status}; Retry-After ${response.headers.get("retry-after") ?? "not reported"}; ${await response.text()}`,
+  );
+const raw = await response.text();
+const events = raw
+  .split(/\r?\n/)
+  .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+  .map((line) => JSON.parse(line.slice(6)));
+const status = events.find((event) => event.type === "data-turnStatus")?.data;
+if (
+  status?.status !== "complete" ||
+  events.some((event) => event.type === "error")
+)
+  throw new Error(
+    `Chat did not complete: ${status?.status ?? "stream error"}, Retry-After ${status?.retryAfter ?? "not reported"} seconds; window not reported`,
+  );
+const evidence = events.find((event) => event.type === "data-products")?.data;
+assert.equal(evidence?.products.length, 10, "Expected ten displayed products");
 assert.ok(
-  coffee.some(
-    (event) =>
-      event.type === "tool-output-available" &&
-      Array.isArray(event.output) &&
-      event.output.length === 2,
-  ),
+  evidence.totalMatches >= 10 && evidence.scopeTotal >= evidence.totalMatches,
 );
-console.log("[VERIFY] real retrieval returned two coffee recommendations");
-// Delivery is a deterministic policy lookup. The shopping acceptance script also exercises real model planning.
-const policy = await chat("How much is delivery?");
-assert.ok(
-  policy.some(
-    (event) =>
-      event.type === "tool-input-available" && event.toolName === "getPolicy",
-  ),
-  "The delivery policy tool did not run",
+assert.equal(
+  evidence.unseenMatches - evidence.products.length,
+  evidence.remainingMatches,
 );
 assert.ok(
-  policy.some(
-    (event) =>
-      event.type === "tool-output-available" &&
-      typeof event.output === "string" &&
-      event.output.includes("EUR 4"),
-  ),
-);
-console.log("[VERIFY] delivery-policy lookup returned canonical policy");
-const categories = await chat(
-  "jakie kategorie produktów macie dostępne na sklepie?",
+  events.some((event) => event.type === "data-shoppingState"),
+  "Missing conversation checkpoint",
 );
 assert.ok(
-  categories.some(
-    (event) =>
-      event.type === "tool-output-available" &&
-      Array.isArray(event.output) &&
-      event.output.length >= 10,
-  ),
+  events.some((event) => event.type === "text-delta" && event.delta.trim()),
+  "Missing assistant response",
 );
-console.log("[VERIFY] actual category discovery passed");
+assert.ok(
+  !events.some((event) => event.type.startsWith("tool-")),
+  "Internal tool output was exposed",
+);
 console.log(
-  "[VERIFY] Deployment checks passed: revision, prepared index, 86-product catalog, routes/photos, legacy search, policy and categories. Browser shopping-v2/cart and live model planning have separate acceptance checks.",
+  "[VERIFY] shopping-v3 smoke: ten cards, checkpoint, counts and completed status",
+  JSON.stringify(status.usage ?? {}),
+);
+console.log(
+  "[VERIFY] Deployment checks passed: revision, prepared index, catalog, routes, photos and one shopping-v3 turn. Verify real provider and full conversational acceptance separately.",
 );

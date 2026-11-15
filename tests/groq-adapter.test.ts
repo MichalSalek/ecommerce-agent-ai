@@ -20,8 +20,11 @@ test("Groq balancer uses the background route and preserves purpose attribution"
       const headers = new Headers(init?.headers);
       assert.equal(headers.get("X-Balancer-Client"), "aurelle-demo");
       const body = JSON.parse(String(init?.body));
-      assert.equal(body.max_tokens, 3000);
-      assert.deepEqual(body.response_format, { type: "json_object" });
+      assert.equal(body.max_tokens, 1024);
+      assert.equal(body.reasoning_effort, "low");
+      assert.equal(body.include_reasoning, false);
+      assert.equal(body.parallel_tool_calls, false);
+      assert.equal(body.response_format, undefined);
       return Response.json({
         id: "test",
         model: body.model,

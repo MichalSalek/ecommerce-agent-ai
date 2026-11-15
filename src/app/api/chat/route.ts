@@ -1,8 +1,4 @@
-import {
-  convertToModelMessages,
-  validateUIMessages,
-  createUIMessageStreamResponse,
-} from "ai";
+import { createUIMessageStreamResponse } from "ai";
 import {
   conversationUsage,
   MAX_CONVERSATION_TURNS,
@@ -13,7 +9,10 @@ import { chatAdmission } from "@/composition/admission";
 import { z } from "zod";
 import { getShop } from "@/composition/shop";
 import { resolveChatRuntime } from "@/composition/chat";
-import { createJsonAgentStream } from "@/infrastructure/chat/json-agent-stream";
+import {
+  createNativeAgentStream,
+  stateFromMessages,
+} from "@/infrastructure/chat/native-agent";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
   console.log("[AGENT] started");
@@ -28,8 +27,20 @@ export async function POST(request: Request) {
     const body = z
       .object({
         messages: z.array(z.unknown()).min(1).max(60),
-        contract: z.literal("shopping-v2").optional(),
+        contract: z.enum(["shopping-v2", "shopping-v3"]).optional(),
         conversationId: z.string().min(1).max(150).optional(),
+        cart: z
+          .object({
+            lines: z
+              .array(
+                z.object({
+                  productId: z.string().max(150),
+                  quantity: z.number().int().min(1).max(99),
+                }),
+              )
+              .max(100),
+          })
+          .optional(),
       })
       .parse(JSON.parse(raw));
     const normalized = settledMessages(body.messages);
@@ -52,12 +63,12 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     const shop = getShop();
-    const tools = body.contract === "shopping-v2" ? shop.toolsV2 : shop.tools;
-    const messages = await validateUIMessages({
-      messages: normalized,
-      tools,
-    });
-    const modelMessages = await convertToModelMessages(messages);
+    const user = normalized.findLast((m) => m.role === "user");
+    if (!user || normalized.at(-1)?.role !== "user")
+      return Response.json(
+        { error: "The final message must be a user turn." },
+        { status: 400 },
+      );
     const admission = chatAdmission()?.acquire();
     if (admission && !admission.allowed)
       return Response.json(
@@ -82,17 +93,33 @@ export async function POST(request: Request) {
     ]);
     const runtime = await resolveChatRuntime(signal);
     return createUIMessageStreamResponse({
-      stream: createJsonAgentStream(
-        runtime.model,
-        modelMessages,
-        tools,
+      stream: createNativeAgentStream(
+        runtime,
+        shop.catalog,
+        {
+          text: user.parts
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join(" "),
+          userMessageId: user.id,
+          conversationId: body.conversationId,
+          state: stateFromMessages(normalized, user.id),
+          cart: body.cart?.lines,
+          history: normalized
+            .slice(0, -1)
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.parts
+                .filter((p) => p.type === "text")
+                .map((p) => p.text)
+                .join(" "),
+            })),
+        },
         signal,
         {
-          ...runtime,
           onSettled: release,
           contract: body.contract,
-          conversationId: body.conversationId,
-          userMessageId: normalized.filter((m) => m.role === "user").at(-1)?.id,
         },
       ),
     });

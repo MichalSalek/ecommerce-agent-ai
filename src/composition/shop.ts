@@ -1,6 +1,5 @@
 import { products } from "@/data/products";
 import { CatalogService } from "@/application/catalog/catalog-service";
-import { createShopTools } from "@/application/chat/tools";
 import {
   TransformerEmbedding,
   embeddingProfiles,
@@ -25,8 +24,7 @@ export function createShop() {
   const catalog = new CatalogService(repository);
   return {
     repository,
-    tools: createShopTools(catalog),
-    toolsV2: createShopTools(catalog, "shopping-v2"),
+    catalog,
   };
 }
 let shop: ReturnType<typeof createShop> | undefined;

@@ -40,6 +40,8 @@ interface ConversationValue extends UseChatHelpers<ChatMessage> {
 const Context = createContext<ConversationValue | null>(null);
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { applyAction, cart } = useCart();
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
   const applyRef = useRef(applyAction);
   applyRef.current = applyAction;
   const activeConversation = useRef("aurelle-bootstrap");
@@ -55,8 +57,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       prepareSendMessagesRequest: ({ id, messages }) => ({
         body: {
           messages: requestMessages(messages),
-          contract: "shopping-v2",
+          contract: "shopping-v3",
           conversationId: id,
+          cart: { lines: cartRef.current.lines },
         },
       }),
     });

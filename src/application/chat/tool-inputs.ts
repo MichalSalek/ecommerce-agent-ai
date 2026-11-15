@@ -23,7 +23,7 @@ export const compareInput = z.object({
   productIds: z
     .array(z.string().min(1).max(100))
     .min(2)
-    .max(3)
+    .max(10)
     .refine(
       (ids) => new Set(ids).size === ids.length,
       "Choose distinct products.",

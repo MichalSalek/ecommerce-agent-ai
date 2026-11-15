@@ -4,6 +4,15 @@ import { getStorePolicy } from "@/domain/catalog/policies";
 import { products } from "@/data/products";
 import { cartActionSchema } from "./cart-action";
 import {
+  checkpointSchema,
+  searchEvidenceSchema,
+  categoryCardsSchema,
+  categoryCards,
+  comparisonSchema,
+  comparison,
+  turnStatusSchema,
+} from "./shopping-v3";
+import {
   searchInput,
   detailsInput,
   policyInput,
@@ -106,8 +115,8 @@ const comparisonPart = z
     ...callFields,
     input: compareInput,
     output: z.object({
-      products: z.array(z.object({ id: z.string() })).max(3),
-      missingIds: z.array(z.string()).max(3),
+      products: z.array(z.object({ id: z.string() })).max(10),
+      missingIds: z.array(z.string()).max(10),
     }),
   })
   .transform((part) => ({
@@ -121,6 +130,50 @@ const comparisonPart = z
     },
   }));
 const partSchema = z.union([
+  z.object({
+    type: z.literal("data-shoppingState"),
+    id: z.string().optional(),
+    data: checkpointSchema,
+  }),
+  z
+    .object({
+      type: z.literal("data-products"),
+      id: z.string().optional(),
+      data: searchEvidenceSchema,
+    })
+    .transform((part) => ({
+      ...part,
+      data: {
+        ...part.data,
+        products: part.data.products.filter((row) =>
+          products.some((p) => p.id === row.id),
+        ),
+      },
+    })),
+  z
+    .object({
+      type: z.literal("data-categories"),
+      id: z.string().optional(),
+      data: categoryCardsSchema,
+    })
+    .transform((part) => ({ ...part, data: categoryCards() })),
+  z
+    .object({
+      type: z.literal("data-comparison"),
+      id: z.string().optional(),
+      data: comparisonSchema,
+    })
+    .transform((part) => ({
+      ...part,
+      data: comparison(
+        part.data.productIds.filter((id) => products.some((p) => p.id === id)),
+      ),
+    })),
+  z.object({
+    type: z.literal("data-turnStatus"),
+    id: z.string().optional(),
+    data: turnStatusSchema,
+  }),
   textPart,
   searchPart,
   detailPart,

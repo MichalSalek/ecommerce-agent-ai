@@ -19,10 +19,7 @@ export async function resolveChatRuntime(
   return {
     model: await resolveLlamaModel(config, signal),
     label: config.modelId ?? "Local llama.cpp",
-    providerOptions: {
-      [LLAMA_PROVIDER]: { response_format: { type: "json_object" } },
-    },
-    maxOutputTokens: 3000,
-    narrate: true,
+    providerOptions: { [LLAMA_PROVIDER]: { parallel_tool_calls: false } },
+    maxOutputTokens: 1024,
   };
 }

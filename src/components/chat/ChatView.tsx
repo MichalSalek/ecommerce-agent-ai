@@ -5,23 +5,10 @@ import Link from "next/link";
 import { useConversation } from "@/components/chat/ChatProvider";
 import { AssistantIcon } from "@/components/chat/AssistantIcon";
 import { ProductResults } from "@/components/chat/ProductResults";
+import { CategoryResults } from "@/components/chat/CategoryResults";
+import { ComparisonResults } from "@/components/chat/ComparisonResults";
 import { products } from "@/data/products";
 import { WELCOME_ID } from "@/application/chat/history";
-function errorText(message: string) {
-  try {
-    const body: unknown = JSON.parse(message);
-    if (
-      typeof body === "object" &&
-      body !== null &&
-      "error" in body &&
-      typeof body.error === "string"
-    )
-      return body.error;
-  } catch {
-    /* Plain SDK error. */
-  }
-  return message;
-}
 const starters = [
   {
     label: "My morning coffee",
@@ -144,20 +131,47 @@ export default function ChatView() {
       m.parts.some(
         (p) =>
           (p.type === "text" && p.text.trim()) ||
+          p.type === "data-products" ||
+          p.type === "data-categories" ||
+          p.type === "data-comparison" ||
+          p.type === "data-turnStatus" ||
           (p.type.startsWith("tool-") &&
             "state" in p &&
             p.state === "output-available"),
       ),
   );
   const unanswered = !busy && visible.at(-1)?.role === "user";
-  const lastAssistant =
-    !busy && visible.at(-1)?.role === "assistant" ? visible.at(-1) : undefined;
-  const lastSearch = lastAssistant?.parts.findLast(
-    (part) =>
-      part.type === "tool-searchProducts" && part.state === "output-available",
-  );
+  const lastSearch = [...visible]
+    .reverse()
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => {
+      const hasV3 = message.parts.some((part) =>
+        [
+          "data-products",
+          "data-categories",
+          "data-comparison",
+          "data-turnStatus",
+          "data-shoppingState",
+        ].includes(part.type),
+      );
+      return [...message.parts]
+        .reverse()
+        .filter(
+          (part) =>
+            part.type === "data-products" ||
+            part.type === "data-comparison" ||
+            part.type === "data-categories" ||
+            (!hasV3 &&
+              part.type === "tool-searchProducts" &&
+              part.state === "output-available"),
+        );
+    })[0];
   const lastOutput =
-    lastSearch && "output" in lastSearch ? lastSearch.output : undefined;
+    lastSearch?.type === "data-products"
+      ? lastSearch.data
+      : lastSearch && "output" in lastSearch
+        ? lastSearch.output
+        : undefined;
   const resultEnvelope =
     typeof lastOutput === "object" &&
     lastOutput !== null &&
@@ -166,11 +180,13 @@ export default function ChatView() {
       ? lastOutput
       : null;
   const resultCount =
-    resultEnvelope && Array.isArray(resultEnvelope.products)
-      ? resultEnvelope.products.length
-      : Array.isArray(lastOutput)
-        ? lastOutput.length
-        : 0;
+    lastSearch?.type === "data-comparison"
+      ? lastSearch.data.productIds.length
+      : resultEnvelope && Array.isArray(resultEnvelope.products)
+        ? resultEnvelope.products.length
+        : Array.isArray(lastOutput)
+          ? lastOutput.length
+          : 0;
   const remaining =
     resultEnvelope &&
     "remainingMatches" in resultEnvelope &&
@@ -282,7 +298,50 @@ export default function ChatView() {
                   ...message.parts.filter((p) => p.type !== "text"),
                 ].map((part, i) => {
                   if (part.type === "text") return <p key={i}>{part.text}</p>;
+                  if (part.type === "data-products")
+                    return (
+                      <ProductResults
+                        key={i}
+                        output={part.data}
+                        evidence={part.data}
+                      />
+                    );
+                  if (part.type === "data-categories")
+                    return (
+                      <CategoryResults
+                        key={i}
+                        categories={part.data}
+                        disabled={!ready || busy || conversationClosed}
+                        onSelect={(name) =>
+                          send(`Show me products in category ${name}`)
+                        }
+                      />
+                    );
+                  if (part.type === "data-comparison")
+                    return <ComparisonResults key={i} comparison={part.data} />;
                   if (
+                    part.type === "data-turnStatus" &&
+                    part.data.status !== "complete"
+                  )
+                    return (
+                      <p className="result-explanation" role="status" key={i}>
+                        {part.data.status === "partial"
+                          ? "The response is incomplete. You can try again."
+                          : part.data.status === "provider-limit"
+                            ? `The model provider has reached its limit. ${part.data.retryAfter ? `Retry in ${part.data.retryAfter} seconds.` : "Please retry later."}`
+                            : "The connection was interrupted. Please try again."}
+                      </p>
+                    );
+                  if (
+                    !message.parts.some((p) =>
+                      [
+                        "data-products",
+                        "data-categories",
+                        "data-comparison",
+                        "data-turnStatus",
+                        "data-shoppingState",
+                      ].includes(p.type),
+                    ) &&
                     (part.type === "tool-searchProducts" ||
                       part.type === "tool-getProductDetails" ||
                       part.type === "tool-compareProducts") &&
@@ -295,9 +354,9 @@ export default function ChatView() {
             ))
           )}
           {cartFeedback.map(({ action, status }) => {
-            const product = products.find(
-              (item) => item.id === action.productId,
-            );
+            const items = action.items ?? [
+              { productId: action.productId, quantity: action.quantity },
+            ];
             return (
               <div
                 className="chat-cart-feedback"
@@ -306,11 +365,27 @@ export default function ChatView() {
               >
                 {status === "added" || status === "duplicate" ? (
                   <>
-                    <p>
-                      {status === "added"
-                        ? `Added ${action.quantity} × ${product?.name ?? "product"} to your cart.`
-                        : "This request was already processed."}
-                    </p>
+                    {status === "added" && items.length > 1 ? (
+                      <>
+                        <p>Added to your cart:</p>
+                        <ul>
+                          {items.map((item) => (
+                            <li key={item.productId}>
+                              {item.quantity} ×{" "}
+                              {products.find(
+                                (product) => product.id === item.productId,
+                              )?.name ?? "Product"}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p>
+                        {status === "added"
+                          ? `Added ${items[0].quantity} × ${products.find((product) => product.id === items[0].productId)?.name ?? "product"} to your cart.`
+                          : "This request was already processed."}
+                      </p>
+                    )}
                     <Link href="/cart">Open cart ↗</Link>
                   </>
                 ) : (
@@ -376,7 +451,7 @@ export default function ChatView() {
           {error && (
             <div role="alert" className="chat-error">
               <strong>Let's try that again.</strong>
-              <p>{errorText(error.message)}</p>
+              <p>The response could not be completed. Please try again.</p>
               <button
                 disabled={busy || conversationClosed}
                 onClick={() => {
