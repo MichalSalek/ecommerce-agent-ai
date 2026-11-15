@@ -1,0 +1,386 @@
+{
+  "description": "Individual generated Aurelle catalog product photographs",
+  "processing": "Sharp: fit within 960x960, pad with copied edge pixels to square without cropping, WebP quality 72.",
+  "images": [
+    {
+      "id": "floor-lamp",
+      "prompt": "Photorealistic individual studio product photograph: A slim matte cream metal floor lamp with a cylindrical linen shade on a round base. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-be64dbcc-d4c9-499b-a0d3-9139217fc66c.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/floor-lamp.webp",
+      "bytes": 4860,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "bedside-lamp",
+      "prompt": "Photorealistic individual studio product photograph: A small warm white ceramic table lamp with a natural fabric drum shade. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-35cd02b0-bb34-4f62-9e26-993e936cbf49.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/bedside-lamp.webp",
+      "bytes": 20666,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "reading-lamp",
+      "prompt": "Photorealistic individual studio product photograph: A cream metal desk reading lamp with a hinged adjustable arm and small conical shade. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-25e83e49-f302-451d-91e7-0a993db9f16c.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/reading-lamp.webp",
+      "bytes": 8916,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "wall-sconce",
+      "prompt": "Photorealistic individual studio product photograph: A simple brass-finish wall sconce with an opaque white globe shade and round wall plate. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-691c26a8-5eb5-42db-a38d-d62d82fc13c8.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/wall-sconce.webp",
+      "bytes": 9392,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "solar-garden-lantern",
+      "prompt": "Photorealistic individual studio product photograph: A dark metal outdoor lantern with a handle, frosted light panel and small solar panel on top. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-f1c08394-da77-4c62-8f22-3ca04b8831cc.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/solar-garden-lantern.webp",
+      "bytes": 18250,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "outdoor-string-lights",
+      "prompt": "Photorealistic individual studio product photograph: A neatly coiled outdoor string of warm globe bulbs on a dark cable, individual product view. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-df91a6f9-183c-48b3-9964-6ffd69305545.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/outdoor-string-lights.webp",
+      "bytes": 32026,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "cork-coasters",
+      "prompt": "Photorealistic individual studio product photograph: Exactly four round natural cork drink coasters in total, three stacked together and one placed separately beside the stack. Do not show any additional coasters. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-b7c42180-5dd3-4312-84b2-6167940991ba.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/cork-coasters.webp",
+      "bytes": 40026,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "canvas-travel-pouch",
+      "prompt": "Photorealistic individual studio product photograph: A small natural cotton canvas travel pouch with a closed brass-coloured zipper. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-80713c8e-3e62-4444-a676-471381bd9b1c.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/canvas-travel-pouch.webp",
+      "bytes": 33682,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "hand-trowel",
+      "prompt": "Photorealistic individual studio product photograph: A steel garden hand trowel with a smooth wooden handle, shown diagonally. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-15a56b8c-7f30-4a47-bd9c-b168ce073154.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/hand-trowel.webp",
+      "bytes": 16184,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "garden-hand-rake",
+      "prompt": "Photorealistic individual studio product photograph: A steel three-prong garden hand rake with a smooth wooden handle, shown diagonally. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-dac99312-0b86-4fe5-868d-23dd527c70ce.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/garden-hand-rake.webp",
+      "bytes": 13446,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "garden-hose",
+      "prompt": "Photorealistic individual studio product photograph: A neatly coiled muted green garden hose with visible plain ends, no nozzle or tap connector. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-ead5724c-312c-4c9f-b3b8-a91f6b119182.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/garden-hose.webp",
+      "bytes": 38424,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "bird-feeder",
+      "prompt": "Photorealistic individual studio product photograph: A small natural wood hanging bird feeder with a pitched roof, open feeding tray and metal hanging loop. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-aeb411eb-45aa-492a-b7ef-e67262b40803.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/bird-feeder.webp",
+      "bytes": 16806,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "soap-dispenser",
+      "prompt": "Photorealistic individual studio product photograph: A matte ivory ceramic liquid soap dispenser with a brushed metal pump. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-5c6398d3-b7c0-43fa-a7d5-fd979acdfb29.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/soap-dispenser.webp",
+      "bytes": 6574,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "bath-mat",
+      "prompt": "Photorealistic individual studio product photograph: A rectangular textured natural cotton bath mat, laid flat with a neatly bound edge. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-8c37c862-c881-4b1e-854c-c51084f5c82c.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/bath-mat.webp",
+      "bytes": 58288,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "shower-caddy",
+      "prompt": "Photorealistic individual studio product photograph: A simple stainless steel hanging shower caddy with two open wire shelves and a hook. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-92d4d0ad-1916-49be-9596-e9a1613789f3.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/shower-caddy.webp",
+      "bytes": 20738,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "toothbrush-cup",
+      "prompt": "Photorealistic individual studio product photograph: A matte ivory ceramic toothbrush cup with an open top, empty. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-07b26a2e-3b21-48d6-8a11-ff3e9eae8cd6.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/toothbrush-cup.webp",
+      "bytes": 4460,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "laundry-basket",
+      "prompt": "Photorealistic individual studio product photograph: A tall natural woven laundry basket with two handles and open top, empty. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-1d29e14f-989c-48cb-9a45-f7e50166ecc8.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/laundry-basket.webp",
+      "bytes": 79274,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "bathroom-mirror",
+      "prompt": "Photorealistic individual studio product photograph: A round wall mirror with a thin matte black metal frame, neutral reflection. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-06a8ae0b-0714-4a8b-975d-97c918edde73.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/bathroom-mirror.webp",
+      "bytes": 8670,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "outdoor-bistro-table",
+      "prompt": "Create one photorealistic ecommerce product photograph for Aurelle: a compact round outdoor bistro table, graphite powder-coated metal, 60 cm diameter top, simple slim three legs, no chairs, no other products. Complete table entirely visible, centered with generous margins in a square composition. Warm off-white seamless studio floor and background, soft daylight from upper left, realistic metal texture and subtle contact shadow, editorial homeware photography, natural proportions. No text, logos, watermark, people or illustration. Save this project asset locally if supported.",
+      "source": "01a1dfea-09dd-7ca0-bd96-930a9b345516/exec-4a7f1920-d9f6-4647-843c-9cf4c13cb7e1.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/outdoor-bistro-table.webp",
+      "bytes": 9816,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "folding-garden-chair",
+      "prompt": "Photorealistic individual studio product photograph: A single folding garden chair in muted sage powder-coated steel with slatted seat and back. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-2abec9c9-6ff1-4292-ba65-72df903a1c97.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/folding-garden-chair.webp",
+      "bytes": 16764,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "garden-bench",
+      "prompt": "Photorealistic individual studio product photograph: A two-person outdoor garden bench with natural wood slats and dark steel frame, no cushions. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-7cb0b231-a688-4546-995c-a7b5b08c7681.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/garden-bench.webp",
+      "bytes": 24098,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "sun-lounger",
+      "prompt": "Photorealistic individual studio product photograph: An outdoor reclining sun lounger with natural wood frame and cream fabric sling, no cushion. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-8662f64b-1416-40ba-8d03-eeb1e9dbecf4.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/sun-lounger.webp",
+      "bytes": 14640,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "patio-sofa",
+      "prompt": "Photorealistic individual studio product photograph: A two-seat outdoor patio sofa with dark metal frame and simple warm beige removable cushions. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-535727bb-4bd3-477f-9bc5-5797abdb1a11.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/patio-sofa.webp",
+      "bytes": 13190,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "garden-storage-bench",
+      "prompt": "Photorealistic individual studio product photograph: A natural wood garden storage bench with backrest and visible hinged seat, closed. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-556f8651-0829-4e3b-847c-9d5cd0ffb79f.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/garden-storage-bench.webp",
+      "bytes": 23174,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "stackable-storage-boxes",
+      "prompt": "Photorealistic individual studio product photograph: Three neatly stacked translucent neutral plastic storage boxes with fitted lids. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-36b7ac60-2a9e-4d80-bc92-10963be0844b.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/stackable-storage-boxes.webp",
+      "bytes": 6794,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "under-bed-storage",
+      "prompt": "Photorealistic individual studio product photograph: A low rectangular beige fabric under-bed storage bag with zipper and clear top panel. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-c55f5ad7-7c31-46b0-8cf1-a7c32e23dccb.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/under-bed-storage.webp",
+      "bytes": 16430,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "shoe-rack",
+      "prompt": "Photorealistic individual studio product photograph: A small natural wood two-tier slatted shoe rack, empty. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-c386af82-5098-4977-a88f-9b1cb2f063ba.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/shoe-rack.webp",
+      "bytes": 12882,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "wall-hooks",
+      "prompt": "Photorealistic individual studio product photograph: A natural wood wall rail with four simple dark metal hooks, no items hanging. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-f623c7a3-b84d-49a9-abac-7561dae69f84.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/wall-hooks.webp",
+      "bytes": 14272,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "document-organizer",
+      "prompt": "Photorealistic individual studio product photograph: A natural wood desktop document organizer with three vertical open compartments, empty. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-0387355c-34d3-435c-b603-5f790ad81d48.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/document-organizer.webp",
+      "bytes": 20320,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "lidded-storage-box",
+      "prompt": "Photorealistic individual studio product photograph: A rectangular natural wood storage box with a fitted removable lid, closed. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-6d34c8e5-af03-441e-a294-dff886a45d24.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/lidded-storage-box.webp",
+      "bytes": 17716,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "usb-desk-fan",
+      "prompt": "Photorealistic individual studio product photograph: A compact cream desktop fan with round protective grille and visible USB cable. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-dd094cf7-410d-4fe7-9003-1e20c358b75c.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/usb-desk-fan.webp",
+      "bytes": 18106,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "yoga-blocks",
+      "prompt": "Photorealistic individual studio product photograph: Two natural cork yoga blocks, one standing and one lying flat. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-ed0c1af3-14e5-41e8-9325-baca867cdbd9.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/yoga-blocks.webp",
+      "bytes": 35396,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "stretching-strap",
+      "prompt": "Photorealistic individual studio product photograph: A neatly looped natural cotton yoga stretching strap with a simple metal buckle. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-a8c66315-d9e0-448d-b69a-df63620d644d.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/stretching-strap.webp",
+      "bytes": 22040,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "foam-roller",
+      "prompt": "Photorealistic individual studio product photograph: A muted beige cylindrical foam roller with a gently textured surface. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-bb8472c5-6206-4a25-a19d-83f67291304f.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/foam-roller.webp",
+      "bytes": 15398,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "massage-ball",
+      "prompt": "Photorealistic individual studio product photograph: A single muted sage rubber massage ball with a subtly textured surface. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-03dc14cb-0396-49fb-9f86-22f94643a8b7.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/massage-ball.webp",
+      "bytes": 8118,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "resistance-bands",
+      "prompt": "Photorealistic individual studio product photograph: Three looped resistance bands in muted earth tones, neatly arranged together. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-f39ba138-58a5-4ed1-a665-9c2cba625191.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/resistance-bands.webp",
+      "bytes": 9036,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "meditation-cushion",
+      "prompt": "Photorealistic individual studio product photograph: A round warm beige cotton meditation cushion with subtle pleats. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-fcb313ae-c9fa-4a1b-9c76-d61bfd03b85c.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/meditation-cushion.webp",
+      "bytes": 13880,
+      "width": 960,
+      "height": 960
+    },
+    {
+      "id": "workout-towel",
+      "prompt": "Photorealistic individual studio product photograph: A neatly folded muted sage cotton workout towel, simple textured fabric. Warm off-white seamless backdrop, soft natural studio light, subtle realistic contact shadow, centered product, no text, no labels, no logos, no people. Show the entire product with clear space around every edge.",
+      "source": "01a1dfec-e40f-7113-b1b4-802a7a7dc51c/exec-4b69f7ec-c10b-40c5-b846-4f21759c9c8e.png",
+      "tool": "image_gen.imagegen (built-in)",
+      "final": "public/images/products/workout-towel.webp",
+      "bytes": 47364,
+      "width": 960,
+      "height": 960
+    }
+  ]
+}

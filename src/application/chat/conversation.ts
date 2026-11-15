@@ -71,9 +71,15 @@ export function conversationContext(
         part.type === "tool-result" &&
         part.toolName === "searchProducts" &&
         part.output.type === "json" &&
-        Array.isArray(part.output.value)
+        part.output.value !== null
       )
-        for (const value of part.output.value) {
+        for (const value of Array.isArray(part.output.value)
+          ? part.output.value
+          : typeof part.output.value === "object" &&
+              "products" in part.output.value &&
+              Array.isArray(part.output.value.products)
+            ? part.output.value.products
+            : []) {
           const parsed = productSchema.safeParse(value);
           if (parsed.success) shown.add(parsed.data.id);
         }
@@ -138,7 +144,12 @@ export function isHomeRequest(text: string) {
   );
 }
 export function isCategoriesRequest(text: string) {
-  return /kategori|categories|departments/i.test(text);
+  return (
+    /kategori|categories|departments/i.test(text) &&
+    !/\b(?:in|from)\s+(?:the\s+)?categor|\b(?:w|z)\s+kategor|\bcategory\s+\w/i.test(
+      text,
+    )
+  );
 }
 export function isLanguageRequest(text: string) {
   return (

@@ -38,6 +38,9 @@ try {
         const body = await response.json();
         assert.equal(body.status, "ok");
         assert.equal(body.embeddingProfile, "minilm");
+        assert.equal(body.productCount, 86);
+        assert.equal(body.preparedIndex?.productCount, 86);
+        assert.equal(body.preparedIndex?.fingerprint, body.indexFingerprint);
         if (expectedRevision) assert.equal(body.revision, expectedRevision);
         healthy = true;
         break;
@@ -49,7 +52,7 @@ try {
   assert.equal((await fetch(base)).status, 200);
   assert.equal((await fetch(`${base}/products/mugs`)).status, 200);
   const imageResponse = await fetch(
-    `${base}/images/products/mugs.webp`,
+    `${base}/images/products/folding-garden-chair.webp`,
     { signal: AbortSignal.timeout(30000) },
   );
   assert.equal(imageResponse.status, 200, "Pre-encoded catalog photo");

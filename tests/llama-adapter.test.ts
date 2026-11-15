@@ -1,3 +1,4 @@
+import { repositoryFixture } from "./repository-fixture";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createLlamaModel } from "../src/infrastructure/chat/llama-model";
@@ -9,16 +10,18 @@ test("the JSON agent sends JSON mode to the HTTP server and executes the validat
   const requests: Record<string, unknown>[] = [];
   let searched = false;
   const tools = createShopTools(
-    new CatalogService({
-      categories: async () => ["Home", "Kitchen"],
-      browse: async () => [],
-      search: async (input) => {
-        assert.equal(input.query, "coffee");
-        searched = true;
-        return [];
-      },
-      findById: async () => undefined,
-    }),
+    new CatalogService(
+      repositoryFixture({
+        categories: async () => ["Home", "Kitchen"],
+        browse: async () => [],
+        search: async (input) => {
+          assert.equal(input.query, "coffee");
+          searched = true;
+          return [];
+        },
+        findById: async () => undefined,
+      }),
+    ),
   );
   const fakeFetch: typeof fetch = async (_input, init) => {
     requests.push(JSON.parse(String(init?.body)));
@@ -43,7 +46,7 @@ test("the JSON agent sends JSON mode to the HTTP server and executes the validat
   };
   const stream = createJsonAgentStream(
     createLlamaModel("http://fixture/v1", "bielik-test", fakeFetch),
-    [{ role: "user", content: "coffee" }],
+    [{ role: "user", content: "I need a vessel for a warm drink" }],
     tools,
     new AbortController().signal,
   );
@@ -73,18 +76,20 @@ test("the JSON agent sends JSON mode to the HTTP server and executes the validat
 test("budget-only browsing does not ask the LLM to invent a product intent", async () => {
   let browsed = false;
   const tools = createShopTools(
-    new CatalogService({
-      categories: async () => [],
-      search: async () => {
-        throw Error("Semantic search should not run");
-      },
-      browse: async (maxPrice) => {
-        assert.equal(maxPrice, 25);
-        browsed = true;
-        return [];
-      },
-      findById: async () => undefined,
-    }),
+    new CatalogService(
+      repositoryFixture({
+        categories: async () => [],
+        search: async () => {
+          throw Error("Semantic search should not run");
+        },
+        browse: async (maxPrice) => {
+          assert.equal(maxPrice, 25);
+          browsed = true;
+          return [];
+        },
+        findById: async () => undefined,
+      }),
+    ),
   );
   const model = createLlamaModel("http://fixture/v1", "test", async () => {
     throw Error("LLM should not be called for a structured budget");
@@ -108,13 +113,15 @@ test("the morning-coffee purchase intent shows two products even if a model woul
   const { products } = await import("../src/data/products");
   let calls = 0;
   const tools = createShopTools(
-    new CatalogService({
-      search: async () =>
-        products.filter((p) => ["mugs", "carafe"].includes(p.id)),
-      browse: async () => [],
-      categories: async () => [],
-      findById: async () => undefined,
-    }),
+    new CatalogService(
+      repositoryFixture({
+        search: async () =>
+          products.filter((p) => ["mugs", "carafe"].includes(p.id)),
+        browse: async () => [],
+        categories: async () => [],
+        findById: async () => undefined,
+      }),
+    ),
   );
   const model = createLlamaModel(
     "http://fixture/v1",

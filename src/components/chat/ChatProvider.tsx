@@ -11,6 +11,11 @@ import {
   type RefObject,
 } from "react";
 import { conversationUsage } from "@/application/chat/conversation-limit";
+import {
+  cartActionSchema,
+  type CartAction,
+} from "@/application/chat/cart-action";
+import { useCart } from "@/components/CartProvider";
 import type { ChatMessage } from "@/types/shop";
 import {
   CHAT_STORAGE_KEY,
@@ -20,18 +25,7 @@ import {
   welcomeMessage,
   type ConversationSnapshot,
 } from "@/application/chat/history";
-const transport = new DefaultChatTransport<ChatMessage>({
-  api: "/api/chat",
-  prepareSendMessagesRequest: ({ messages }) => ({
-    body: { messages: requestMessages(messages) },
-  }),
-});
-function createConversation(
-  id: string,
-  messages: ChatMessage[] = [welcomeMessage()],
-) {
-  return new Chat<ChatMessage>({ id, transport, messages });
-}
+type CartFeedback = { action: CartAction; status: string };
 interface ConversationValue extends UseChatHelpers<ChatMessage> {
   draft: string;
   setDraft: (text: string) => void;
@@ -41,9 +35,97 @@ interface ConversationValue extends UseChatHelpers<ChatMessage> {
   remainingTurns: number;
   newConversation: () => Promise<void>;
   threadPosition: RefObject<{ top: number; follow: boolean }>;
+  cartFeedback: CartFeedback[];
 }
 const Context = createContext<ConversationValue | null>(null);
 export function ChatProvider({ children }: { children: ReactNode }) {
+  const { applyAction, cart } = useCart();
+  const applyRef = useRef(applyAction);
+  applyRef.current = applyAction;
+  const activeConversation = useRef("aurelle-bootstrap");
+  const generation = useRef(0);
+  const active = useRef<{ generation: number; userMessageId: string } | null>(
+    null,
+  );
+  const chunkGenerations = useRef(new WeakMap<object, number>());
+  const [cartFeedback, setCartFeedback] = useState<CartFeedback[]>([]);
+  const [transport] = useState(() => {
+    const base = new DefaultChatTransport<ChatMessage>({
+      api: "/api/chat",
+      prepareSendMessagesRequest: ({ id, messages }) => ({
+        body: {
+          messages: requestMessages(messages),
+          contract: "shopping-v2",
+          conversationId: id,
+        },
+      }),
+    });
+    return {
+      async sendMessages(options: Parameters<typeof base.sendMessages>[0]) {
+        const token = ++generation.current;
+        const user = [...options.messages]
+          .reverse()
+          .find((m) => m.role === "user");
+        active.current =
+          options.chatId === activeConversation.current && user
+            ? { generation: token, userMessageId: user.id }
+            : null;
+        const stream = await base.sendMessages(options);
+        return stream.pipeThrough(
+          new TransformStream({
+            transform(chunk, controller) {
+              if (
+                options.abortSignal?.aborted ||
+                active.current?.generation !== token ||
+                options.chatId !== activeConversation.current
+              )
+                return;
+              if (chunk.type === "data-cartAction")
+                chunkGenerations.current.set(chunk, token);
+              controller.enqueue(chunk);
+            },
+          }),
+        );
+      },
+      reconnectToStream: base.reconnectToStream.bind(base),
+    };
+  });
+  function createConversation(
+    id: string,
+    messages: ChatMessage[] = [welcomeMessage()],
+  ) {
+    return new Chat<ChatMessage>({
+      id,
+      transport,
+      messages,
+      onData(part) {
+        if (part.type !== "data-cartAction") return;
+        const parsed = cartActionSchema.safeParse(part.data);
+        if (
+          !parsed.success ||
+          !active.current ||
+          chunkGenerations.current.get(part) !== active.current.generation ||
+          parsed.data.userMessageId !== active.current.userMessageId ||
+          id !== activeConversation.current
+        )
+          return;
+        const action = parsed.data;
+        const status = applyRef.current(action, id);
+        setCartFeedback((previous) => {
+          const existing = previous.find(
+            (item) => item.action.operationId === action.operationId,
+          );
+          if (existing && status === "duplicate") return previous;
+          return [
+            ...previous.filter(
+              (item) => item.action.operationId !== action.operationId,
+            ),
+            { action, status },
+          ];
+        });
+      },
+    });
+  }
   const [chat, setChat] = useState(() =>
     createConversation("aurelle-bootstrap"),
   );
@@ -62,9 +144,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     try {
       const raw = localStorage.getItem(CHAT_STORAGE_KEY);
       const saved = restoreConversation(raw);
-      setChat(
-        createConversation(saved?.id ?? crypto.randomUUID(), saved?.messages),
-      );
+      activeConversation.current = saved?.id ?? crypto.randomUUID();
+      setChat(createConversation(activeConversation.current, saved?.messages));
       setDraft(saved?.draft ?? "");
       if (raw && !saved)
         setStorageNotice(
@@ -109,9 +190,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
   }, [ready, chat.id, helpers.messages, helpers.status, draft]);
   const newConversation = async () => {
+    active.current = null;
+    generation.current++;
     await helpers.stop();
     threadPosition.current = { top: 0, follow: true };
     const next = createConversation(crypto.randomUUID());
+    activeConversation.current = next.id;
+    setCartFeedback([]);
     latest.current = {
       version: 1,
       id: next.id,
@@ -133,6 +218,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     <Context.Provider
       value={{
         ...helpers,
+        stop: async () => {
+          active.current = null;
+          generation.current++;
+          await helpers.stop();
+        },
         draft,
         setDraft,
         ready,
@@ -141,6 +231,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         remainingTurns: conversationUsage(helpers.messages).remaining,
         newConversation,
         threadPosition,
+        cartFeedback: [
+          ...cart.receipts
+            .filter(
+              (receipt) =>
+                receipt.conversationId === chat.id &&
+                helpers.messages.some(
+                  (message) =>
+                    message.role === "user" &&
+                    message.id === receipt.userMessageId,
+                ),
+            )
+            .map((receipt) => ({ action: receipt, status: "added" })),
+          ...cartFeedback.filter(
+            (feedback) =>
+              !cart.receipts.some(
+                (receipt) =>
+                  receipt.operationId === feedback.action.operationId,
+              ),
+          ),
+        ],
       }}
     >
       {children}

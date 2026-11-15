@@ -1,3 +1,4 @@
+import { products } from "../src/data/products";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -45,19 +46,7 @@ test("conversation restores completed tools with canonical prices and drops corr
   assert.ok(
     part.type === "tool-searchProducts" && part.state === "output-available",
   );
-  assert.deepEqual(part.output, [
-    {
-      id: "mugs",
-      name: "Ceramic mugs",
-      description: "Two ceramic mugs for coffee or tea.",
-      price: 22,
-      currency: "EUR",
-      imageUrl: "/images/products/mugs.webp",
-      productUrl: "/products/mugs",
-      category: "Kitchen",
-      inStock: true,
-    },
-  ]);
+  assert.deepEqual(part.output, [products.find((p) => p.id === "mugs")]);
   assert.equal(restored.messages[2].parts.length, 2);
   assert.equal(requestMessages(restored.messages)[0].role, "user");
   assert.equal(restoreConversation("bad json"), undefined);

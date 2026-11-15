@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { Product } from "@/domain/catalog/product";
+import { resultProducts } from "./shopping-state";
 export function comparisonIds(
   text: string,
   shownIds: string[],
@@ -28,16 +29,9 @@ export function latestResultIds(messages: ModelMessage[]): string[] {
           part.type === "tool-result" &&
           part.toolName === "searchProducts" &&
           part.output.type === "json" &&
-          Array.isArray(part.output.value)
+          part.output.value !== null
         )
-          return part.output.value.flatMap((p) =>
-            typeof p === "object" &&
-            p !== null &&
-            "id" in p &&
-            typeof p.id === "string"
-              ? [p.id]
-              : [],
-          );
+          return resultProducts(part.output.value).map((p) => p.id);
   return [];
 }
 export function wantsAvailableOnly(text: string) {

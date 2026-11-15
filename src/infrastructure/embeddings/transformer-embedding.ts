@@ -1,23 +1,12 @@
 import type { TextEmbedding } from "@/application/catalog/text-embedding";
 import { pipeline } from "@huggingface/transformers";
 import { resolve } from "node:path";
-export const embeddingProfiles = {
-  bge: {
-    model: "Xenova/bge-small-en-v1.5",
-    revision: "ea104dacec62c0de699686887e3f920caeb4f3e3",
-    pooling: "cls" as const,
-    maxDistance: 0.45,
-    prefix: "Represent this sentence for searching relevant passages: ",
-  },
-  minilm: {
-    model: "Xenova/all-MiniLM-L6-v2",
-    revision: "751bff37182d3f1213fa05d7196b954e230abad9",
-    pooling: "mean" as const,
-    maxDistance: 0.74,
-    prefix: "",
-  },
-};
-export type EmbeddingProfile = keyof typeof embeddingProfiles;
+import {
+  embeddingProfiles,
+  embeddingIdentity,
+  type EmbeddingProfile,
+} from "./profiles";
+export { embeddingProfiles, type EmbeddingProfile } from "./profiles";
 export class TransformerEmbedding implements TextEmbedding {
   readonly dimensions = 384;
   readonly identity: string;
@@ -30,7 +19,7 @@ export class TransformerEmbedding implements TextEmbedding {
     this.profile = embeddingProfiles[profile];
     if (!this.profile)
       throw new Error("Unknown embedding profile. Use bge or minilm.");
-    this.identity = `${this.profile.model}@${this.profile.revision}:q8:${this.profile.pooling}:normalized:v1`;
+    this.identity = embeddingIdentity(profile);
   }
   private load() {
     console.log("[EMBEDDING] loading on CPU:", this.profile.model);

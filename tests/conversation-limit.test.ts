@@ -1,3 +1,4 @@
+import { repositoryFixture } from "./repository-fixture";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -44,12 +45,14 @@ test("material durability follow-up stays grounded in documented evidence withou
     throw Error("Must not claim unrecorded product durability from an LLM");
   });
   const tools = createShopTools(
-    new CatalogService({
-      search: async () => [],
-      browse: async () => [],
-      categories: async () => [],
-      findById: async () => undefined,
-    }),
+    new CatalogService(
+      repositoryFixture({
+        search: async () => [],
+        browse: async () => [],
+        categories: async () => [],
+        findById: async () => undefined,
+      }),
+    ),
   );
   const stream = createJsonAgentStream(
     model,

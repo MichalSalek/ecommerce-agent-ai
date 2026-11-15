@@ -14,17 +14,19 @@ export {
   policyInput,
   compareInput,
 } from "./tool-inputs";
-export function createShopTools(catalog: CatalogService) {
+export function createShopTools(
+  catalog: CatalogService,
+  contract?: "shopping-v2",
+) {
   return {
     searchProducts: tool({
       description:
-        "Search the store by meaning. Use an English query and an optional maximum price in EUR. For browsing use an empty query. maxPrice is a hard ceiling; targetPrice ranks within 20% or EUR 5 around an approximate budget. Never turn around into a hard ceiling. Categories, inStockOnly and exclusions are structured filters.",
+        "Search the store by meaning. Use an English query and an optional maximum price in EUR. For browsing use an empty query. maxPrice is a hard ceiling; targetPrice ranks within 20% or EUR 5 around an approximate budget. Never turn around into a hard ceiling. Categories, product kinds/types, environment, required features, inStockOnly and exclusions are structural prefilters.",
       inputSchema: searchInput,
       execute: async (input) => {
         console.log("[TOOL] searchProducts", input);
-        const products = await catalog.search(input);
-        console.log(`[TOOL] ${products.length} products`);
-        return products;
+        const result = await catalog.searchResult(input);
+        return contract === "shopping-v2" ? result : result.products;
       },
     }),
     getProductDetails: tool({
@@ -54,6 +56,12 @@ export function createShopTools(catalog: CatalogService) {
         console.log("[TOOL] getCategories");
         return catalog.categories();
       },
+    }),
+    getCatalogOverview: tool({
+      description:
+        "Count actual products and available types under structural constraints. Use for assortment questions; never invent inventory.",
+      inputSchema: searchInput.partial(),
+      execute: async (input) => catalog.overview(input),
     }),
     getPolicy: tool({
       description: "Get the demo store delivery, returns or payment policy.",

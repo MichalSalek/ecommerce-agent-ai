@@ -47,15 +47,53 @@ export default async function ProductPage({
         <div className="detail-copy">
           <small>{product.category}</small>
           <h1>{product.name}</h1>
-          <p className="lead">{product.description}</p>
+          <p className="lead">{product.fullDescription}</p>
           <p className="detail-price">{formatPrice(product.price)}</p>
           <p className="availability">
-            {product.inStock
-              ? "In stock · Ready for your everyday"
-              : "Currently out of stock"}
+            {product.inStock ? "In stock" : "Currently out of stock"}
           </p>
           <AddToCart product={product} />
-          <p className="detail-policy">Delivery €4 · Returns within 14 days</p>
+          <p className="detail-policy">Delivery €4. Returns within 14 days.</p>
+          <dl className="product-specifications">
+            <div>
+              <dt>Type</dt>
+              <dd>{product.productType}</dd>
+            </div>
+            <div>
+              <dt>Kind</dt>
+              <dd>{product.productKind}</dd>
+            </div>
+            <div>
+              <dt>Use</dt>
+              <dd>
+                {product.useEnvironment === "both"
+                  ? "Indoors and outdoors"
+                  : product.useEnvironment === "outdoor"
+                    ? "Outdoors"
+                    : "Indoors"}
+              </dd>
+            </div>
+            <div>
+              <dt>Material</dt>
+              <dd>{product.material}</dd>
+            </div>
+            <div>
+              <dt>Dimensions</dt>
+              <dd>{product.dimensions}</dd>
+            </div>
+          </dl>
+          <h2>Features</h2>
+          <ul>
+            {product.features.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <h2>Things to consider</h2>
+          <ul>
+            {product.limitations.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
           <Link href={`/chat?product=${product.id}`}>
             Ask the assistant about this product ↗
           </Link>

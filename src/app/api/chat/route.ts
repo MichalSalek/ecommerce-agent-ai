@@ -26,7 +26,11 @@ export async function POST(request: Request) {
         { status: 413 },
       );
     const body = z
-      .object({ messages: z.array(z.unknown()).min(1).max(60) })
+      .object({
+        messages: z.array(z.unknown()).min(1).max(60),
+        contract: z.literal("shopping-v2").optional(),
+        conversationId: z.string().min(1).max(150).optional(),
+      })
       .parse(JSON.parse(raw));
     const normalized = settledMessages(body.messages);
     if (normalized.length !== body.messages.length)
@@ -47,7 +51,8 @@ export async function POST(request: Request) {
         },
         { status: 409 },
       );
-    const { tools } = getShop();
+    const shop = getShop();
+    const tools = body.contract === "shopping-v2" ? shop.toolsV2 : shop.tools;
     const messages = await validateUIMessages({
       messages: normalized,
       tools,
@@ -82,7 +87,13 @@ export async function POST(request: Request) {
         modelMessages,
         tools,
         signal,
-        { ...runtime, onSettled: release },
+        {
+          ...runtime,
+          onSettled: release,
+          contract: body.contract,
+          conversationId: body.conversationId,
+          userMessageId: normalized.filter((m) => m.role === "user").at(-1)?.id,
+        },
       ),
     });
   } catch (error) {

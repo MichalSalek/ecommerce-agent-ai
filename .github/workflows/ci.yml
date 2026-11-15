@@ -12,7 +12,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run catalog:prepare
+      - run: EMBEDDING_MODEL=bge npm run catalog:prepare
+      - run: EMBEDDING_MODEL=minilm npm run catalog:prepare
       - run: npm test
       - run: npm run typecheck
       - run: npm run build

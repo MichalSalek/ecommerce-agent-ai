@@ -40,7 +40,14 @@ test("real embeddings, semantic ranking, budget, persistence and catalog refresh
     });
     assert.ok(browse.length > 0);
     assert.ok(browse.every((p) => p.price <= 25));
-    assert.ok(browse.some((p) => p.id === "cutlery"));
+    assert.deepEqual(
+      browse.map((p) => p.id),
+      [...products]
+        .filter((p) => p.price <= 25)
+        .sort((a, b) => a.price - b.price || a.id.localeCompare(b.id))
+        .slice(0, 12)
+        .map((p) => p.id),
+    );
     const warm = await repository.search({
       query: "something to keep me warm on the sofa",
     });

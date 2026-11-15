@@ -25,8 +25,15 @@ export function compactModelHistory(messages: ModelMessage[]): ModelMessage[] {
               : part.output.type === "text"
                 ? part.output.value
                 : undefined;
-          const summary = Array.isArray(output)
-            ? output.map((value) =>
+          const records =
+            output &&
+            typeof output === "object" &&
+            "products" in output &&
+            Array.isArray(output.products)
+              ? output.products
+              : output;
+          const summary = Array.isArray(records)
+            ? records.map((value) =>
                 typeof value === "object" && value !== null && "id" in value
                   ? {
                       id: value.id,

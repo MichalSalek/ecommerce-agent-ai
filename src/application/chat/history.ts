@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ChatMessage } from "@/types/shop";
 import { getStorePolicy } from "@/domain/catalog/policies";
 import { products } from "@/data/products";
+import { cartActionSchema } from "./cart-action";
 import {
   searchInput,
   detailsInput,
@@ -35,14 +36,29 @@ const searchPart = z
     type: z.literal("tool-searchProducts"),
     ...callFields,
     input: searchInput,
-    output: z.array(z.object({ id: z.string() })).max(12),
+    output: z.union([
+      z.array(z.object({ id: z.string() })).max(12),
+      z.object({
+        products: z.array(z.object({ id: z.string() })).max(12),
+        totalMatches: z.number().int().min(0).max(products.length),
+        unseenMatches: z.number().int().min(0).max(products.length),
+        remainingMatches: z.number().int().min(0).max(products.length),
+      }),
+    ]),
   })
   .transform((part) => ({
     ...part,
-    output: part.output.flatMap((item) => {
-      const product = products.find((p) => p.id === item.id);
-      return product ? [product] : [];
-    }),
+    output: Array.isArray(part.output)
+      ? part.output.flatMap((item) => {
+          const product = products.find((p) => p.id === item.id);
+          return product ? [product] : [];
+        })
+      : {
+          ...part.output,
+          products: part.output.products.flatMap((item) =>
+            products.filter((p) => p.id === item.id),
+          ),
+        },
   }));
 const detailPart = z
   .object({
@@ -111,6 +127,33 @@ const partSchema = z.union([
   policyPart,
   categoriesPart,
   comparisonPart,
+  z.object({
+    type: z.literal("data-cartAction"),
+    id: z.string().optional(),
+    data: cartActionSchema,
+  }),
+  z.object({
+    type: z.literal("tool-getCatalogOverview"),
+    ...callFields,
+    input: searchInput.partial(),
+    output: z.object({
+      total: z.number().int().nonnegative().max(products.length),
+      categories: z
+        .array(
+          z.object({ name: z.string(), count: z.number().int().nonnegative() }),
+        )
+        .max(30),
+      types: z
+        .array(
+          z.object({
+            type: z.string(),
+            kind: z.string(),
+            count: z.number().int().nonnegative(),
+          }),
+        )
+        .max(100),
+    }),
+  }),
 ]);
 const baseMessage = z.object({
   id: z.string().min(1).max(150),
@@ -176,5 +219,35 @@ export function requestMessages(messages: ChatMessage[]): ChatMessage[] {
       new TextEncoder().encode(JSON.stringify(result)).length > 80000)
   )
     result = result.slice(1);
-  return result;
+  // Send identities rather than duplicate full metadata. The server hydrates current catalog facts.
+  return result.map((message) => ({
+    ...message,
+    parts: message.parts
+      .filter((p) => p.type !== "data-cartAction")
+      .map((part) => {
+        if (
+          part.type.startsWith("tool-") &&
+          "output" in part &&
+          part.state === "output-available"
+        ) {
+          const output = part.output;
+          if (Array.isArray(output) && part.type === "tool-searchProducts")
+            return { ...part, output: output.map((p) => ({ id: p.id })) };
+          if (
+            output &&
+            typeof output === "object" &&
+            "products" in output &&
+            Array.isArray(output.products)
+          )
+            return {
+              ...part,
+              output: {
+                ...output,
+                products: output.products.map((p) => ({ id: p.id })),
+              },
+            };
+        }
+        return part;
+      }),
+  })) as ChatMessage[];
 }

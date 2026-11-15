@@ -138,8 +138,8 @@ test("chat fills the remaining viewport and serves product photos directly", asy
         const panel = await page.locator(".chat-panel").boundingBox();
         return Boolean(
           panel &&
-            panel.y + panel.height <= viewport.height + 1 &&
-            panel.height >= viewport.height - panel.y - 32,
+          panel.y + panel.height <= viewport.height + 1 &&
+          panel.height >= viewport.height - panel.y - 32,
         );
       })
       .toBe(true);
@@ -156,9 +156,15 @@ test("chat fills the remaining viewport and serves product photos directly", asy
   await expect(photos).toHaveCount(2);
   for (const photo of await photos.all()) {
     await expect
-      .poll(() => photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+      .poll(() =>
+        photo.evaluate(
+          (img: HTMLImageElement) => img.complete && img.naturalWidth > 0,
+        ),
+      )
       .toBe(true);
-    const source = await photo.evaluate((img: HTMLImageElement) => img.currentSrc);
+    const source = await photo.evaluate(
+      (img: HTMLImageElement) => img.currentSrc,
+    );
     expect(new URL(source).pathname).toMatch(/^\/images\/.+\.webp$/);
   }
 });
@@ -351,10 +357,12 @@ test("capability guide is explicit about mock data and sends the advertised comp
     });
   });
   await page.goto("/chat");
-  await page.getByText("Try examples", { exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Shopping examples" }),
+  ).toBeVisible();
   await expect(
     page.getByText(
-      "All 48 products, prices, stock and policies are mock data.",
+      `All ${products.length} products, prices, stock and policies are mock data.`,
       { exact: false },
     ),
   ).toBeVisible();

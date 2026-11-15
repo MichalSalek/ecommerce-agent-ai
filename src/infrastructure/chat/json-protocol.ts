@@ -13,21 +13,33 @@ export const actionSchema = z.discriminatedUnion("tool", [
   z.object({ tool: z.literal("compareProducts"), input: compareInput }),
   z.object({ tool: z.literal("getCategories"), input: z.object({}) }),
   z.object({
+    tool: z.literal("getCatalogOverview"),
+    input: searchInput.partial(),
+  }),
+  z.object({
+    tool: z.literal("addToCart"),
+    input: z.object({
+      productId: z.string().max(100),
+      quantity: z.number().int().min(1).max(99).default(1),
+    }),
+  }),
+  z.object({
     tool: z.literal("respond"),
     input: z.object({ message: z.string().min(1).max(800) }),
   }),
   z.object({ tool: z.literal("refuse"), input: z.object({}) }),
 ]);
 export type ShopAction = z.infer<typeof actionSchema>;
-export const selectionInstruction = `Select one tool for the LAST customer question. Return only one JSON object using exactly one of these shapes:
-- Products: {"tool":"searchProducts","input":{"query":"customer product request","maxPrice":25}}. Query is in English without invented intent. maxPrice is optional, in EUR. For approximate budgets use targetPrice instead. Preserve category and exclude already shown IDs for alternatives. Translate semantic query into English for the English encoder. Do not refuse language requests or greetings.
-- Greetings, language changes or a clarification (never product facts): {"tool":"respond","input":{"message":"A helpful short reply in the customer language, with a relevant next question"}}.
-- Comparison: {"tool":"compareProducts","input":{"productIds":["mugs","carafe"]}}. Use only known product IDs.
-- Categories: {"tool":"getCategories","input":{}}.
-- Known product ID: {"tool":"getProductDetails","input":{"productId":"mugs"}}.
-- Delivery/returns/payments: {"tool":"getPolicy","input":{"topic":"delivery"}}. The topic field is REQUIRED, not query.
-- Anything unrelated to this store, including programming: {"tool":"refuse","input":{}}.
-When the customer expresses a clear product need, searchProducts MUST run now and show two options before any clarifying question. Never use respond to suggest unverified products or merely ask mug vs coffee maker. Do not answer yet or invent products. Do not reuse an earlier question when the customer has changed the topic.`;
+export const selectionInstruction = `Interpret the latest request and return ONE validated JSON action. Do not write an answer or inventory claims.
+Product action shape: {"tool":"searchProducts","input":{"query":"outdoor seating","productKind":"furniture","useEnvironment":"outdoor","maxPrice":150,"limit":2}}.
+searchProducts input: query (short positive English embedding query or empty to structurally browse), category, productKind, productType (one string), productTypes (list of allowed canonical types), useEnvironment indoor|outdoor|both, excludeTypes:string[], requiredFeatures:string[], maxPrice or targetPrice, inStockOnly, newSearch:boolean, limit:2. All optional except query.
+Keep user constraints through refinements, preserving outdoor use when furniture is requested after garden. A true topic change (headphones after garden) sets newSearch:true and removes unrelated restrictions. "Garden" as a use context does not mean category Garden. Explicit category plus conflicting kind must remain conflicting. Furniture includes tables/chairs/benches/shelves, never planters. Put negated types in excludeTypes, never in positive vector query. Use an empty query only when structural filters cover the full need. For a purpose such as sitting, use productTypes:["chair","bench","lounger","sofa","stool"] together with productKind:furniture; a table is not seating. For other purposes combine only supported canonical types with positive semantic query if needed. Never drop a stated use or requirement. Clear product needs MUST search now, not ask a preliminary question. Use canonical names. Unavailable requested types such as grill get productType:"grill", never a loose semantic substitute. Exact required attributes not confirmed by catalog must produce no results; put explicit requirements in requiredFeatures using concise English terms. Never silently relax requirements.
+Assortment overview: {"tool":"getCatalogOverview","input":{"useEnvironment":"outdoor"}}. This tool computes available types/counts. Categories: {"tool":"getCategories","input":{}}.
+Compare: {"tool":"compareProducts","input":{"productIds":["mugs","carafe"]}}. Details: {"tool":"getProductDetails","input":{"productId":"mugs"}}. Use only known product IDs, and ask clarification if reference is ambiguous.
+Policies: {"tool":"getPolicy","input":{"topic":"delivery"}}.
+Unrelated request: {"tool":"refuse","input":{}}. Genuine unclear request: {"tool":"respond","input":{"message":"Clarification only"}}. Never use respond for product or assortment facts.
+Cart: {"tool":"addToCart","input":{"productId":"mugs","quantity":2}} only after explicit add/take command with unambiguous canonical reference. No purchase, checkout, payment or order tool exists.
+For complex wording, typos and negations interpret intent generally, translating Polish to English concepts. Do not imitate a canned example response. Return one JSON object only.`;
 // Reasoning-capable servers may leave examples or prose in the content channel.
 // Only complete, valid JSON is considered; tool-specific validation remains mandatory.
 function jsonObjects(text: string): unknown[] {

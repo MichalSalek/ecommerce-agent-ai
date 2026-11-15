@@ -1454,30 +1454,8 @@ nav a {
 }
 .demo-capabilities {
   grid-column: 1 / -1;
-  margin-top: 0;
+  margin-top: 24px;
   font-size: 14px;
-  interpolate-size: allow-keywords;
-}
-.demo-capabilities summary {
-  display: list-item;
-  width: fit-content;
-  min-height: 44px;
-  padding: 10px 0;
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--ink);
-}
-.demo-capabilities summary:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 4px;
-}
-.demo-capabilities::details-content {
-  block-size: 0;
-  overflow: clip;
-  transition: block-size 180ms ease, content-visibility 180ms allow-discrete;
-}
-.demo-capabilities[open]::details-content {
-  block-size: auto;
 }
 .capability-grid {
   display: flex;
@@ -1502,5 +1480,84 @@ nav a {
 @media (max-width: 800px) {
   .intro-catalog {
     display: none;
+  }
+}
+
+/* Shopping actions and product information use the existing chat and detail palette. */
+.demo-capabilities h2 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.chat-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.chat-followups button {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.chat-followups button:hover {
+  background: var(--tint);
+}
+.chat-cart-feedback {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.chat-cart-feedback p {
+  margin: 0 0 8px;
+}
+.product-specifications {
+  margin: 24px 0;
+}
+.product-specifications div {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 2fr;
+  gap: 12px;
+  margin: 8px 0;
+}
+.product-specifications dt {
+  font-weight: 700;
+}
+.product-specifications dd {
+  margin: 0;
+}
+.detail-copy h2 {
+  font-size: 19px;
+  margin-top: 24px;
+}
+.detail-copy ul {
+  margin: 8px 0 20px;
+  padding-left: 20px;
+  list-style: disc;
+}
+.detail-copy li + li {
+  margin-top: 4px;
+}
+.detail-copy > a {
+  display: inline-block;
+  margin-top: 4px;
+}
+
+@media (max-width: 700px) {
+  body:has(.assistant-workspace) header {
+    padding-top: 12px;
+    padding-bottom: 8px;
+    gap: 4px;
+  }
+  body:has(.assistant-workspace) .brand {
+    font-size: 28px;
+  }
+  body:has(.assistant-workspace) .brand span {
+    display: none;
+  }
+  .related .product p {
+    min-height: 0;
   }
 }

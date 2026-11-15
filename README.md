@@ -1,42 +1,77 @@
 **[Try the live demo](https://ecommerce-agent.michalsalek.com)**
 
-# Aurelle - an AI shopping assistant with real vector retrieval
+# Aurelle: an AI shopping assistant
 
-A small, deliberately complete shopping demo: browse 48 products, inspect a product, ask an assistant for recommendations, and keep a cart across page reloads. The UI, catalog, code and documentation are in English; the assistant follows the customer language. Polish and English have grounded fallback replies, and live Spanish search narration is also verified. All catalog prices remain in EUR.
+Aurelle is a portfolio shopping demo that combines a conversational assistant with a browsable catalog and a device-local cart. Ask in Polish or English, refine a search, compare real catalog records and add a choice from the conversation. The UI and catalog are in English, with prices in EUR.
 
-The interesting part is the boundary between probabilistic reasoning and reliable commerce behavior. A language model selects validated tools and can supply conversational transitions. Product identity, prices, stock, policies, currency handling and ranking remain in application code and the catalog. Optional generated wording is validated and never supplies a numeric price; contextual fallback replies keep retrieved facts available if narration fails.
+The catalog contains 86 demo products across 10 categories, including 38 new products with individual prepared WebP photographs. Product specifications, availability, prices and policies are authored demo data. The original visual starting point and some photographs come from [dilums/kimi-k3-ecommerce-storefront](https://github.com/dilums/kimi-k3-ecommerce-storefront). The demo has no checkout, payments, accounts or order fulfillment.
 
-Built with Next.js 16 App Router, React 19, TypeScript strict, Vercel AI SDK 7, Zod, embedded LanceDB and local CPU embeddings. The visual starting point and original product photographs come from [dilums/kimi-k3-ecommerce-storefront](https://github.com/dilums/kimi-k3-ecommerce-storefront). The 23 additional mock products use generated product photographs, prepared as static WebP files. This is a portfolio demo, without payment processing or order fulfillment.
+## Try the assistant
 
-![Aurelle storefront](docs/images/storefront.png)
+The chat page offers these ten clickable examples. They use the ordinary assistant flow; refinement, alternatives and adding a cheaper item work in the context of preceding results.
 
-![Persistent shopping conversation with real recommendations](docs/images/chat.png)
+| Capability | Example prompt |
+| --- | --- |
+| Outdoor furniture with a budget | `Show me garden furniture under EUR 150` |
+| Refine a search | `I need something to sit on` |
+| Ask for alternatives | `Show me different options` |
+| Correct a classification | `A plant pot is not furniture. Show me outdoor furniture` |
+| Compare catalog products | `Compare mugs and carafe` |
+| Add a selected quantity | `Add two of the cheaper option to my cart` |
+| Search by purpose | `I need something for my morning coffee` |
+| Filter for availability | `Show only in-stock products` |
+| Find a gift within a budget | `Find a gift under EUR 25` |
+| Ask about a policy | `How much is delivery?` |
 
-## Start with an agent
+Try these multi-turn paths in a fresh conversation:
 
-Give your coding agent [STARTER_PROMPT.md](STARTER_PROMPT.md) after cloning. It instructs the agent to inspect the project, detect available providers, offer local llama.cpp or Groq setup, prepare the real vector database and verify the complete shopping flow. It never assumes the author's private endpoints or credentials exist on your machine.
+1. **Garden and exhaustion:** ask `Show me garden furniture under EUR 150`, then `I need something to sit on`. Ask `Show me different options` repeatedly; the assistant keeps the active constraints, avoids cards already shown and reports when there are no more matching options. You can also correct a result with `A plant pot is not furniture. Show me outdoor furniture`.
+2. **Compare:** ask `Compare mugs and carafe`, then ask `Tell me more about the first product` to inspect its recorded construction and limitations. The first answer includes both cards and the calculated price difference. The comparison is limited to catalog facts; an unrecorded quality claim is not a measured advantage.
+3. **Select and add:** ask `Compare mugs and carafe`, then `Add two of the cheaper option to my cart`. The assistant resolves the cheaper item from the actual prices and the browser confirms after saving. Open the cart to inspect or change the quantity.
 
-[Initial brief](docs/INITIAL_BRIEF.md) records the original assignment and how this project evolved beyond it.
+The ten examples remain visible on the chat page. Starters offer common entry points; suggestions after a result depend on what the shopper can do next. A request for a product or feature absent from the catalog should not become an invented offer.
 
-## Run manually
+## How it works
 
-Use Node.js 22 or later on Linux, macOS or Windows with a supported native architecture. Linux x64 / WSL is the verified development environment. The native LanceDB and ONNX dependencies do not support FreeBSD out of the box.
+The application separates model decisions from catalog facts and cart operations:
+
+1. The server validates the message history. Deterministic paths handle clear requests; a language model returns a validated action for more complex intent. It cannot execute arbitrary tools or supply an inventory claim through a free-text action.
+2. Search criteria include product kind and type, environment, price, availability, required features and exclusions. Product kinds are independent of store categories: furniture includes tables, chairs and benches; a planter is gardening equipment. The indoor oak side table is not outdoor furniture.
+3. LanceDB applies structural constraints before ranking eligible rows by cosine similarity. The active shopping state is reconstructed from validated history and tool results, including shown and rejected products. Refinements retain relevant constraints; a new topic resets unrelated ones. The catalog overview tool calculates actual category and type counts.
+4. Search results carry the total matching count, the unseen count and the number remaining after the current page. The response is grounded in the returned products and their recorded features. A follow-up question is used when helpful, rather than required on every turn.
+5. With the `shopping-v2` contract, an explicit add request produces a typed action. The browser checks stock and quantity, saves the cart and reports the result. Older clients retain product-array results and manual card buttons.
+
+The catalog's short purpose text and fuller product specifications are embedded separately, then their vectors are averaged with equal weight and normalized. Two CPU profiles are supported: pinned BGE small and MiniLM. The Docker/Render profile uses MiniLM. Each has a calibrated cutoff; a result must be within both its profile cutoff and 0.2 cosine distance of the best eligible neighbor. These are demo relevance rules, not a guarantee of accuracy.
+
+The content-addressed table fingerprint includes the full catalog, encoder identity, both actual embedding texts and the vector representation version. Changes create a new table rather than mixing embedding spaces or replacing an active index. See [agent architecture](docs/AGENT_ARCHITECTURE.md) for the execution paths and boundaries.
+
+### Cart, history and limits
+
+The cart stores IDs and quantities, while names, prices and stock come from the catalog. An action ID derived from the conversation and user-message IDs makes retries idempotent. The cart, operation ledger and receipts are saved in one local storage write; existing cart data remains readable. Only an active live stream can execute an action, so restoring history or receiving a cancelled response does not repeat it. A line is limited to 99 units, and unavailable products cannot be added. If saving fails, the action is not confirmed as added.
+
+Conversation and cart stay on the device; neither is an authenticated or cross-device order. A conversation is limited to 20 customer messages or 24,000 textual characters. The interface retains the draft and settled messages, supports retry and reset, and keeps the cart when a conversation ends. Provider errors are shown rather than represented as an empty catalog. Model decisions and generated wording can still be wrong; recorded product details and typed tool results provide the source of demo facts.
+
+`maxPrice` is a hard EUR ceiling. `targetPrice` uses a tolerance of the greater of EUR 5 or 20% and ranks by distance from the target. Foreign amounts are not silently converted: there is no live exchange-rate service.
+
+## Run locally
+
+Use Node.js 22 or later on a supported Linux, macOS or Windows native architecture. LanceDB and ONNX require compatible native binaries. The first catalog preparation downloads the selected pinned model; subsequent runs can use the local cache.
 
 ```bash
 git clone https://github.com/MichalSalek/ecommerce-agent-ai.git
 cd ecommerce-agent-ai
 npm ci
 cp .env.example .env.local
-# Configure one chat provider below.
+# Configure one chat provider in .env.local.
 npm run catalog:prepare
 npm run dev
 ```
 
-Open http://localhost:3000, http://localhost:3000/chat and http://localhost:3000/cart. Products live at `/products/<id>` (for example `/products/mugs`). If port 3000 is occupied, Next prints the actual port. Preparation downloads the pinned BGE weights on first use (about 34 MB) and creates the LanceDB table. Internet access is needed for that first download; the cache is local afterwards. The database is also prepared lazily, but explicit preparation avoids a download during a customer conversation.
+Open http://localhost:3000, `/chat` or `/cart`. Product pages use `/products/<id>`. If port 3000 is occupied, Next.js reports the chosen port. `EMBEDDING_MODEL=bge` is the local default; set `EMBEDDING_MODEL=minilm` for the smaller Docker profile. `LANCEDB_DIR` and `EMBEDDING_CACHE_DIR` control the local index and model cache. The index can also be prepared lazily.
 
-### Local llama.cpp / Bielik
+### Chat provider
 
-Start a compatible llama.cpp server with your own GGUF file, then inspect its model ID:
+For a local llama.cpp-compatible server, choose your own GGUF model and obtain its model ID:
 
 ```bash
 llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8080 --jinja
@@ -46,15 +81,12 @@ curl http://127.0.0.1:8080/v1/models
 ```dotenv
 CHAT_PROVIDER=llama
 LLAMA_BASE_URL=http://127.0.0.1:8080/v1
-# Optional: exact ID returned by /v1/models.
 LLAMA_MODEL=your-model-id
 ```
 
-The adapter discovers the model and requests JSON object mode. Native function calling is not required. The model must follow the tool-selection protocol. The Bielik compatibility parser also supports its template's legacy `<tool_call>` dictionaries with single quotes through JSON5 data parsing, followed by the same Zod validation; no eval is used. Tested locally with **Bielik PL 11B v3.0 Instruct Q8_0**, served by Windows llama-swap and reached from WSL. A local runtime is not automatically a production endpoint; a remote deployment cannot reach your laptop's localhost.
+`LLAMA_MODEL` is optional if the endpoint exposes a model list. The adapter requests JSON object mode and validates tool actions; its Bielik compatibility parser also handles legacy tool-call dictionaries without evaluating code. A remote deployment cannot reach a local machine's loopback address.
 
-### Groq API
-
-Groq (the inference provider) is different from xAI Grok. The application integrates with Groq, not a Cursor model session.
+For Groq:
 
 ```dotenv
 CHAT_PROVIDER=groq
@@ -63,178 +95,29 @@ GROQ_MODEL=openai/gpt-oss-120b
 GROQ_API_KEY=your-existing-key
 ```
 
-Set a real key only in `.env.local` or a hosting secret store. No key is sent to the browser. The direct API path is covered by the same adapter contract; both the local balancer path and the deployed direct Groq key have passed live acceptance.
+Keep credentials in `.env.local` or the hosting secret store, never in source. An optional OpenAI-compatible balancer can be selected with `GROQ_BALANCER=true`; `GROQ_TRANSPORT=windows` enables the loopback-only Windows transport when applicable. See `.env.example` for settings. Groq is an inference provider, distinct from xAI Grok. There is no silent provider fallback.
 
-### Optional Groq balancer
+A coding agent can also use [STARTER_PROMPT.md](STARTER_PROMPT.md) to inspect the project and guide setup. The [initial brief](docs/INITIAL_BRIEF.md) records the original assignment.
 
-An existing OpenAI-compatible balancer can own the credentials and quotas:
-
-```dotenv
-CHAT_PROVIDER=groq
-GROQ_BASE_URL=http://127.0.0.1:8787/v1
-GROQ_MODEL=openai/gpt-oss-120b
-GROQ_BALANCER=true
-# Use only when the balancer runs on Windows loopback and Next runs in WSL:
-GROQ_TRANSPORT=windows
-```
-
-This adapter deliberately sends `/v1/background/chat/completions`, `X-Balancer-Client: aurelle-demo` and a purpose header. It uses the balancer's background policy instead of its dictation-cleanup path, preserving the owner's reserved dictation quota. The balancer, not the shop, owns credential rotation and budget accounting. Optional bearer authentication uses `GROQ_API_KEY`; no vault file is read by the application. Windows transport invokes `curl.exe` with arguments and a JSON body on stdin, without a shell. It is optional and loopback-only, with timeout and cancellation.
-
-Live-tested model: **openai/gpt-oss-120b through the existing Groq balancer**. The completion allowance is 3000 tokens so the reasoning model can finish a JSON action. There is no silent provider fallback. The current local installation selects this provider; a fresh clone defaults to llama.cpp.
-
-## Architecture
-
-```mermaid
-flowchart LR
-  Browser[Catalog / product / chat / cart] --> Route[Next.js chat endpoint]
-  Route --> Composition[Composition root]
-  Composition --> Planner[LLM tool planner]
-  Planner --> Local[llama.cpp / Bielik adapter]
-  Planner --> Cloud[Groq / balancer adapter]
-  Planner --> Validation[Zod action validation]
-  Validation --> Tools[Application tools]
-  Tools --> Catalog[Catalog service]
-  Catalog --> Browse[Structured price browsing]
-  Catalog --> Search[Semantic search]
-  Browse --> DB[(LanceDB)]
-  Search --> Embeddings[BGE CPU encoder]
-  Embeddings --> DB
-  Tools --> Facts[Deterministic fact presentation]
-  Facts --> Browser
-  Facts --> Wording[Optional validated wording]
-  Wording --> Browser
-  Browser --> Storage[Versioned localStorage cart]
-```
-
-The source follows ports and adapters with small domain boundaries, rather than a framework-heavy DDD implementation:
-
-| Layer | Responsibility | Examples |
-| --- | --- | --- |
-| Domain | Product and cart contracts, quantities, stock rules, integer-cent totals, store policies | `src/domain/catalog`, `src/domain/cart` |
-| Application | Interpret search intent, browse vs semantic search, tool contracts and policy | `src/application/catalog`, `src/application/chat` |
-| Infrastructure | LanceDB persistence, BGE inference, llama.cpp/Groq transport, UI stream encoding | `src/infrastructure` |
-| Composition | Choose adapters and read deployment configuration | `src/composition` |
-| Presentation | Pages, shared cards, client cart lifecycle and search/filter controls | `src/app`, `src/components` |
-
-The domain imports neither Next.js nor the AI SDK, LanceDB or ONNX. The repository and embedding ports separate business intent from persistence and inference. Application use cases receive dependencies explicitly. Transport quirks such as Windows loopback are isolated in an adapter.
-
-### What happens during a conversation
-
-1. The API validates the UI-message structure and converts it to model messages. Invalid requests return an HTTP error; the request has a 90-second deadline.
-2. A pure budget question such as `What can I buy under EUR 25?` is recognized deterministically. It uses a structured database filter, not vector similarity to generic words such as “what can I buy.”
-3. Explicit product IDs, language changes, greetings, category requests, broad home requests and continuation of earlier searches have structured handling. Other requests use a validated LLM action: `searchProducts`, `getProductDetails`, `getCategories`, `getPolicy`, conversational `respond` or `refuse`. Unsupported actions produce a clarifying question instead of an unexplained blank turn.
-4. The selected application tool executes. Semantic queries embed the product intent and query LanceDB; price-only browsing filters and sorts the stored catalog directly.
-5. Results are streamed as typed AI SDK tool parts. The client renders actual product cards and detail links. An optional narration call writes only a brief opening and a relevant next question in the customer language, using the conversation and returned product names/categories. Digits, currencies, URLs, empty-inventory claims after successful retrieval and payment offers are rejected. Narration has an eight-second deadline and falls back to contextual replies; it never creates catalog facts. A free-form successful search can therefore use two model calls; structured requests need no model decision.
-
-This is intentionally a bounded shopping agent, not an unrestricted autonomous agent. Provider errors remain visible, are not disguised as “no products,” and do not trigger unannounced cloud fallback. Tool execution is server-side. Model compliance on arbitrary adversarial requests is not guaranteed; the validated tool boundary limits what a model can execute.
-
-### Retrieval
-
-Bielik/Groq selects actions; it does not produce embeddings. [BGE small English v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), using [Xenova's ONNX distribution](https://huggingface.co/Xenova/bge-small-en-v1.5), runs independently on CPU. The local default BGE profile uses q8, CLS pooling, normalization, a retrieval query prefix and 384 dimensions, pinned to `ea104dacec62c0de699686887e3f920caeb4f3e3`. The Render/Docker profile selects the smaller `Xenova/all-MiniLM-L6-v2` q8 encoder (about 23 MiB), mean pooling, no query prefix, the same 384 dimensions and revision `751bff37182d3f1213fa05d7196b954e230abad9`. Set `EMBEDDING_MODEL=bge` or `minilm`. Each has its own vector fingerprint and calibrated distance cutoff (0.45 / 0.74); dimensions alone do not make embedding spaces interchangeable. Native tests exercise both profiles.
-
-LanceDB is embedded and persistent under `.data/lancedb`; no database daemon or vector service is required. For 48 products, exact cosine search is appropriate. Semantic search applies the budget filter, selects at most two nearest candidates and drops distances above the selected profile cutoff. This cutoff is a demo calibration, not a relevance guarantee. Structured browsing returns up to 12 products ordered by price and ID, without a similarity cutoff. Category and text filters on the home page are deterministic UI controls, distinct from semantic recommendations.
-
-The table name fingerprints the complete catalog and embedding identity. Price, stock, URL, description or encoder changes produce a new table, avoiding stale records and mixed embedding spaces. Old derived tables are retained; stop the app before removing `.data/lancedb` to rebuild. Cache paths are configurable through `LANCEDB_DIR` and `EMBEDDING_CACHE_DIR`.
-
-### Conversation and price meaning
-
-The conversation adapter derives language preference, previous search constraints and already shown product IDs from validated message history. `Something else?` reuses the earlier intent and excludes displayed products; `continue` can recover a preceding unanswered user question. Broad home requests return two examples and ask about a category. Actual categories come from a repository operation rather than model recall. Reply wording is action-specific and can be generated in the customer language; the static fallback is not prepended to every answer.
-
-`maxPrice` is a hard ceiling. `targetPrice` is an approximate price target: candidates within 20% or EUR 5 are ranked by absolute distance from the target, after semantic/category constraints. For home items around EUR 30, the EUR 32 vase ranks ahead of the EUR 14 candle. Approximate ranking is a documented demo policy, not an exchange rate or a universal recommendation metric.
-
-Foreign currency amounts (USD, PLN, GBP and CHF) are not silently interpreted as EUR. The assistant may show explicitly labeled EUR price-level examples and asks the shopper to confirm a euro budget. It does not claim those examples are a currency conversion. No live FX feed is integrated.
-
-The failed question remains in chat and the UI offers `Try again`; a failed model request is not an empty-catalog result. The source language remains English while localized assistant replies are intentional application content.
-
-### Chat interaction and persistence
-
-The conversation is owned by a shared client provider above route navigation, not by the `/chat` page. Returning from a product preserves the same active conversation. A versioned localStorage snapshot also retains settled messages and the draft across reloads. Partial tool calls are discarded on restore; product cards are rehydrated from the canonical catalog, so browser storage cannot supply a price. The saved conversation is bounded to 60 messages, while transport/model context has its own smaller budget.
-
-Enter sends, Shift+Enter adds a line, and IME composition is not submitted as a message. The textarea grows with the draft. Incoming replies follow the bottom only while the reader is there; a jump-to-latest control appears when reading earlier content. Product recommendations are compact, and large result sets disclose the remaining matches on request. Missing pictures have a visible fallback.
-
-`New conversation` cancels the old request and creates a fresh chat instance with a welcome message. A late response cannot enter the new topic. It clears the saved chat/draft, not the cart. Saved incomplete requests offer a resume action, and transport errors preserve the question with a retry action. Storage failure leaves an in-memory conversation and a visible notice.
-
-The morning-coffee starter is a clear shopping intent: real retrieval runs before a clarifying question. An explicit regression fixture supplies the old question-only model response and verifies that two actual products still appear.
-
-Model context is compacted separately from UI history: recent text, search inputs and product IDs/names are retained, while full product records and image URLs are omitted. This avoids replaying the entire visible transcript into the free provider's token budget. It does not silently erase the displayed conversation.
-
-### Cart and product pages
-
-Each of the 48 products has a generated page with availability, policy summary, related items and an assistant deep link carrying its ID. Unknown IDs produce a 404.
-
-The cart stores only product IDs and bounded integer quantities in a versioned localStorage document. Prices, names, currency and stock are always read from the current catalog; persisted browser values cannot supply a price. Malformed or incompatible storage recovers to an empty cart, missing products are removed, duplicate IDs are normalized, out-of-stock additions are rejected, and quantities are capped at 99. Totals use integer cents. Storage events synchronize tabs; storage failure leaves an in-memory cart and a visible notice. Initial hydration completes before storage is written.
-
-There is deliberately no checkout, payment, account or backend order database. Demo shipping is EUR 4 and the mock return window is 14 days. A local cart is not a server-authoritative order or cross-device basket.
-
-## Verification
+## Checks
 
 ```bash
-npm run catalog:prepare
+EMBEDDING_MODEL=bge npm run catalog:prepare
+EMBEDDING_MODEL=minilm npm run catalog:prepare
 npm test
 npm run typecheck
 npm run build
-npm start
-```
-
-The tests exercise real BGE vectors and a temporary LanceDB database, semantic ranking, budget-only browsing, invalid budgets, persistence and catalog refresh. They also cover cart restoration/quantity/stock/price rules, JSON parsing, model action validation and provider HTTP contracts. Unit tests do not spend cloud tokens. First execution may download BGE weights. Live checks are recorded separately in [verification evidence](docs/VERIFICATION.md).
-
-Acceptance examples:
-
-- `What can I buy under EUR 25?` - real affordable products, including cutlery, rather than a semantic false negative.
-- `Something for my morning coffee under EUR 25` - vector recommendations with the price bound.
-- `Tell me about product mugs` - actual product details.
-- `How much is delivery?` - the static policy.
-- `Write a Python loop` - refusal and a return to shopping.
-- Add from a product page or a chat card, change quantity, reload `/cart`, remove an item.
-
-Logs use `[AGENT]`, `[LLM]`, `[TOOL]`, `[VECTOR]`, `[EMBEDDING]` and `[CART]`. Full model output, credentials and complete conversations are not logged in loops.
-
-## Browser and container checks
-
-```bash
 npx playwright install chromium
 npm run test:e2e
-# Requires Docker; uses MiniLM by default.
+# Docker is required for these commands.
 docker build -t aurelle-demo:render-ready .
 npm run container:smoke
 ```
 
-The browser suite uses an intercepted model stream to isolate Enter/newline, route return/reload, draft persistence, reset during generation, scroll behavior, mobile geometry and image-failure handling. Real LLM checks are separate. The Docker test uses actual CPU embeddings/LanceDB with an intentionally offline model endpoint, under 512 MiB and 0.1 CPU, including deleting/rebuilding the derived index. It creates/removes only its own temporary container and does not deploy publicly.
-
-`npm start` launches the generated standalone build, copies public/static assets and loads the source project's local environment. Docker uses the generated server directly and supplies its environment at runtime. The lightweight `/api/health` reports liveness/revision/profile without calling the LLM or indexing.
+The test suite covers real CPU encoders and LanceDB retrieval, structural filtering, conversation state, cart recovery and idempotency, provider contracts and browser behavior. Browser fixtures and live provider checks answer different questions; test results and deployment evidence are recorded separately in [verification evidence](docs/VERIFICATION.md). `npm start` serves a completed standalone build. `/api/health` reports liveness, revision and embedding profile without invoking the model.
 
 ## Hosting
 
-The demo runs on [Render Free](https://ecommerce-agent.michalsalek.com), using direct Groq `openai/gpt-oss-120b`, MiniLM CPU embeddings and embedded LanceDB. The image includes model weights and a rebuildable index. No persistent disk is required for the mock catalog; the cart and conversation stay in the browser. See [deployment evidence](docs/RENDER_FREE_PLAN.md).
+The intended deployment uses Render Free, direct Groq, MiniLM and embedded LanceDB, with ready WebP assets and a rebuildable index. Browser data remains local. Render Free can suspend or restart and has resource limits; there is no availability guarantee. The health monitor checks the web service, not every model request or provider quota. Per-instance chat admission controls are configurable and reset on restart; they are not authentication or a distributed billing limit.
 
-A Better Stack monitor checks `/api/health` every three minutes, with email alerts and TLS validation. It measures the web service, not every model request or remaining Groq quota. There is no dedicated public status page. Render Free has resource and availability limits; first access after idle suspension can take longer. Native inference shares the instance's 512 MiB memory with Next.js. This is a portfolio deployment, not a production availability guarantee.
-
-The deployment uses a server-only credential from a separately allocated Groq organization. Production has per-instance admission controls (two concurrent chat requests and 120 valid chat POSTs per rolling hour by default, configurable with `CHAT_MAX_CONCURRENT` / `CHAT_REQUESTS_PER_HOUR`). Retries count as requests; liveness does not. These in-memory controls reset on restart and are not authentication, durable distributed rate limiting or a billing cap. The repository includes `.env.example`, excludes credentials/models/database caches and keeps template attribution. Publishing source code does not require publishing private endpoints or credentials.
-
-## Explaining the agent and its guardrails
-
-See [AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md) for execution-path tables, why a structured shopping answer can take about 100 ms without an LLM call, the difference between cached weights/index/session and a response cache, context boundaries, errors, quotas and honest interview positioning.
-
-A conversation now closes after 20 customer messages or 24000 textual characters, warns for its last three turns, disables the composer and invites a new topic while keeping the cart. The server independently enforces excessive-history rejection; it is a simple application lifetime policy, not exact tokenizer accounting or a secure identity boundary. Existing model-context compaction and request deadlines remain separate safeguards. Dev runs Webpack in `.next-development` so production builds do not overwrite its output.
-
-[Next project proposals](docs/NEXT_PROJECTS.md) cover a Python document workflow, a Spring Boot support copilot and a static-site service assistant with a small server-side Groq proxy; these are proposals, not implemented products.
-
-## Try the full demo without reading the source first
-
-The chat page explicitly identifies the catalog, prices, availability and policies as mock data. Its **Try the implemented features** guide contains clickable scenarios and the boundaries of the demo, including persistence, language, conversation lifetime and retry.
-
-New discovery capabilities:
-
-- `Compare mugs and carafe` invokes the validated `compareProducts` tool, reads both canonical records, shows their cards and computes the EUR price difference in application code. Comparisons accept two or three distinct known IDs and report unknown IDs; they do not invent quality scores. After recommendations, `Compare these products` resolves the latest shown search results rather than guessing another pair.
-- `Find a gift under EUR 25` returns two available catalog starting points within the hard budget and asks about the recipient. This is a deliberately broad discovery starting point, not an assertion that every item suits every recipient.
-- `Show only in-stock products` reuses the preceding search constraints when present and adds a true database availability filter. If there is no earlier search, it browses available products. Availability filtering is independent of semantic similarity and prices.
-
-The comparison tool participates in native action schemas, model instructions, UI tool rendering and versioned history restoration. Restored comparison cards again take their prices/stock from the canonical catalog. New tools use the existing repository/service boundary instead of creating a parallel data source.
-
-## Delivery and first-visit performance
-
-The custom domain uses Cloudflare caching for public HTML and static assets. API calls bypass cache. Public static React Server Component responses are cached separately using their complete Next-validated `_rsc` query hash; HTML and RSC responses never share a cache entry. Catalog photos are already encoded WebP files; the runtime does not generate AVIF variants on the small Render instance. This removes first-visitor image-encoding work and avoids competing with CPU embeddings.
-
-After deploying a green commit, purge only this hostname's cache by prefix (`ecommerce-agent.michalsalek.com`), then run `node scripts/warm-deployment.mjs https://ecommerce-agent.michalsalek.com`. The command checks actual application documents and referenced asset responses, rejecting an HTML loading page returned in place of an asset. Keep the origin health monitor active. Render Free can still restart or suspend; CDN caching reduces public-page dependence on origin readiness but is not an always-on backend guarantee.
-
-Known-product details, including the coffee-grinder follow-up, are served from canonical catalog facts without an LLM call. A cart request returns its actionable product card; adding the item uses the visible browser-side button. The server does not claim it changed local browser storage. Other planning calls open the stream immediately and have a fifteen-second provider deadline.
+See [hosting](docs/HOSTING.md) and the [deployment procedure](docs/RENDER_FREE_PLAN.md). Public pages and static assets can be cached at the edge; API responses are not cached. After a release, the cache-warming script checks the relevant public documents and assets.

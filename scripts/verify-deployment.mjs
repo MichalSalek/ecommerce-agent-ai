@@ -15,9 +15,19 @@ const health = await healthResponse.json();
 assert.equal(health.status, "ok");
 assert.equal(health.service, "aurelle");
 assert.equal(health.embeddingProfile, "minilm");
+assert.equal(health.productCount, 86);
+assert.equal(health.preparedIndex?.productCount, health.productCount);
+assert.equal(health.preparedIndex?.fingerprint, health.indexFingerprint);
 if (expected) assert.equal(health.revision, expected);
 console.log("[VERIFY] health", JSON.stringify(health));
-for (const path of ["/", "/chat", "/products/mugs", "/cart"])
+for (const path of [
+  "/",
+  "/chat",
+  "/products/mugs",
+  "/products/outdoor-bistro-table",
+  "/cart",
+  "/images/products/folding-garden-chair.webp",
+])
   assert.equal(
     (await fetch(base + path, { signal: AbortSignal.timeout(30000) })).status,
     200,
@@ -60,14 +70,14 @@ assert.ok(
   ),
 );
 console.log("[VERIFY] real retrieval returned two coffee recommendations");
-// This unstructured request must actually reach the chosen LLM, not only a deterministic starter path.
+// Delivery is a deterministic policy lookup. The shopping acceptance script also exercises real model planning.
 const policy = await chat("How much is delivery?");
 assert.ok(
   policy.some(
     (event) =>
       event.type === "tool-input-available" && event.toolName === "getPolicy",
   ),
-  "The real LLM did not call getPolicy",
+  "The delivery policy tool did not run",
 );
 assert.ok(
   policy.some(
@@ -77,7 +87,7 @@ assert.ok(
       event.output.includes("EUR 4"),
   ),
 );
-console.log("[VERIFY] real LLM selected the delivery-policy tool");
+console.log("[VERIFY] delivery-policy lookup returned canonical policy");
 const categories = await chat(
   "jakie kategorie produktów macie dostępne na sklepie?",
 );
@@ -91,5 +101,5 @@ assert.ok(
 );
 console.log("[VERIFY] actual category discovery passed");
 console.log(
-  "[VERIFY] Deployment checks passed. Browser navigation/persistence and actual provider quota/access settings still require their separate acceptance checks.",
+  "[VERIFY] Deployment checks passed: revision, prepared index, 86-product catalog, routes/photos, legacy search, policy and categories. Browser shopping-v2/cart and live model planning have separate acceptance checks.",
 );

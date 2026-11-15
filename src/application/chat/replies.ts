@@ -1,17 +1,28 @@
-import type { Product } from "@/domain/catalog/product";
+import type {
+  Product,
+  CatalogOverview,
+  ProductSearchResult,
+} from "@/domain/catalog/product";
 import type { ConversationContext, BudgetRequest } from "./conversation";
+import { categoryLabels } from "@/domain/catalog/category-labels";
+import { featureClause } from "./catalog-language";
+import { productTypes } from "@/domain/catalog/taxonomy";
+export function localizedDimensions(dimensions: string, pl: boolean) {
+  return pl
+    ? dimensions
+        .replaceAll("diameter", "średnicy")
+        .replaceAll("high", "wysokości")
+        .replaceAll("long", "długości")
+        .replaceAll("each", "każdy")
+        .replaceAll("loop length", "długości pętli")
+    : dimensions;
+}
 export function nextQuestion(context: ConversationContext, broad = false) {
-  if (context.language === "pl")
-    return broad
-      ? "Co najbardziej Cię interesuje: dekoracje, tekstylia, oświetlenie czy kuchnia?"
-      : context.turn % 2
-        ? "Zawęzić wybór do konkretnej kategorii czy porównać te propozycje?"
-        : "Wolisz zobaczyć inne propozycje czy dowiedzieć się więcej o jednej z tych rzeczy?";
   return broad
-    ? "What interests you most: decor, textiles, lighting or kitchen essentials?"
-    : context.turn % 2
-      ? "Would you like to narrow this to a category, or compare these options?"
-      : "Would you prefer more suggestions or a closer look at one of these?";
+    ? context.language === "pl"
+      ? "Co najbardziej Cię interesuje: dekoracje, tekstylia, oświetlenie czy kuchnia?"
+      : "What interests you most: decor, textiles, lighting or kitchen essentials?"
+    : "";
 }
 export function searchReply(
   products: Product[],
@@ -22,65 +33,66 @@ export function searchReply(
     more?: boolean;
     budget?: BudgetRequest;
     narration?: { opening: string; followUp: string };
+    result?: ProductSearchResult;
   } = {},
 ) {
-  const pl = context.language === "pl";
-  const budget = options.budget;
+  const pl = context.language === "pl",
+    budget = options.budget;
   const currencyNote =
     budget && budget.currency !== "EUR"
       ? pl
-        ? `Ceny w sklepie są w EUR. To przykłady w okolicach ${budget.amount} EUR, a nie przeliczenie ${budget.amount} ${budget.currency}. Czy mogę przyjąć taki budżet w euro?`
-        : `Store prices are in EUR. These examples are around EUR ${budget.amount}, not a conversion of ${budget.currency} ${budget.amount}. May I use that budget in euros?`
+        ? `Ceny są w EUR. To przykłady blisko ${budget.amount} EUR, a nie przeliczenie ${budget.amount} ${budget.currency}. Czy mogę przyjąć taki budżet w euro?`
+        : `Prices are in EUR. These examples are near EUR ${budget.amount}, not a conversion of ${budget.amount} ${budget.currency}. May I use that budget in euros?`
       : "";
   if (!products.length)
     return [
-      currencyNote,
       pl
-        ? "Nie mam kolejnych pasujących propozycji przy tych warunkach. Zwiększyć budżet czy spróbować innej kategorii?"
-        : "There are no further matches with these constraints. Shall we widen the budget or try another category?",
+        ? "Nie mam kolejnych pasujących propozycji przy tych warunkach."
+        : "There are no further matches under these requirements.",
+      pl
+        ? "Możemy zmienić jeden warunek, na przykład wybrać inny typ produktu."
+        : "We could change one requirement, such as the product type.",
+      currencyNote,
     ]
       .filter(Boolean)
-      .join("\n\n");
-  let intro: string;
-  if (options.gift)
-    intro = pl
-      ? "Na początek dwa dostępne przykłady na prezent w podanym budżecie. Dla kogo szukasz prezentu i co ta osoba lubi?"
-      : "Here are two available starting points for a gift within your budget. Who is it for, and what do they enjoy?";
-  else if (options.broad)
-    intro = pl
-      ? "Do domu można wybrać coś praktycznego albo dekoracyjnego. Na początek dwa przykłady poniżej."
-      : "For your home, we can look at something practical or decorative. Here are two starting points.";
-  else if (budget?.mode === "around")
-    intro = pl
-      ? `Najbliżej poziomu ${budget.amount} EUR są te propozycje.`
-      : `These options are closest to EUR ${budget.amount}.`;
-  else if (options.more)
-    intro =
-      context.turn % 2 === 0
-        ? pl
-          ? "Mam kolejne przykłady, inne niż poprzednio."
-          : "Here are some different examples to consider."
-        : pl
-          ? "Spójrzmy na inne rzeczy — pominąłem produkty już pokazane w tej rozmowie."
-          : "Let's look at alternatives — these exclude products already shown in this conversation.";
-  else
-    intro = pl
-      ? context.turn % 2
-        ? "Te propozycje pasują do Twojego zapytania."
-        : "Warto przyjrzeć się tym produktom."
-      : context.turn % 2
-        ? "These options match what you're looking for."
-        : "These are worth a closer look.";
-  if (options.narration && budget?.mode !== "around" && !options.gift)
-    intro = options.narration.opening;
-  return [
-    intro,
-    currencyNote ||
-      (options.gift ? "" : options.narration?.followUp) ||
-      (options.gift ? "" : nextQuestion(context, options.broad)),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+      .join(" ");
+  const intro = options.more
+    ? pl
+      ? `Pokazuję ${products.length} ${products.length === 1 ? "kolejną propozycję" : "kolejne propozycje"}.`
+      : `Showing ${products.length} different ${products.length === 1 ? "suggestion" : "suggestions"}.`
+    : pl
+      ? `Pokazuję ${products.length} ${products.length === 1 ? "propozycję" : "propozycje"} z katalogu.`
+      : `Showing ${products.length} ${products.length === 1 ? "suggestion" : "suggestions"} from the catalog.`;
+  const featureIndex =
+    products.length === 2 && products[0].features[0] === products[1].features[0]
+      ? 1
+      : 0;
+  const facts = products.map((p) =>
+    pl
+      ? `${p.name} ${featureClause(p, "pl", featureIndex)} i kosztuje ${p.price.toFixed(2)} EUR${p.inStock ? "" : "; obecnie jest niedostępny"}.`
+      : `${p.name} ${featureClause(p, "en", featureIndex)}; the price is EUR ${p.price.toFixed(2)}${p.inStock ? "" : " and it is currently out of stock"}.`,
+  );
+  let follow = options.gift
+    ? pl
+      ? "Dla kogo szukasz prezentu i co ta osoba lubi?"
+      : "Who is the gift for and what do they enjoy?"
+    : nextQuestion(context, options.broad);
+  return [intro, ...facts, currencyNote || follow].filter(Boolean).join(" ");
+}
+export function overviewReply(
+  overview: CatalogOverview,
+  context: ConversationContext,
+) {
+  const pl = context.language === "pl";
+  const types = overview.types
+    .map(
+      (row) =>
+        `${productTypes[row.type]?.[pl ? "pl" : "en"] ?? row.type} (${row.count})`,
+    )
+    .join(", ");
+  return pl
+    ? `Oferta spełniająca te warunki obejmuje ${overview.total} produktów. Dostępne typy: ${types || "brak"}.`
+    : `There are ${overview.total} catalog products under these requirements. Available types: ${types || "none"}.`;
 }
 export function simpleReply(
   kind: "greeting" | "language" | "refuse" | "repair",
@@ -103,33 +115,20 @@ export function simpleReply(
   };
   return replies[kind];
 }
-const polishCategories: Record<string, string> = {
-  Accessories: "akcesoria",
-  Bathroom: "łazienka",
-  Electronics: "elektronika",
-  Furniture: "meble",
-  Garden: "ogród",
-  Home: "dom i dekoracje",
-  Kitchen: "kuchnia",
-  Lighting: "oświetlenie",
-  Storage: "przechowywanie",
-  Wellness: "wellness",
-};
 export function categoriesReply(
   categories: string[],
   context: ConversationContext,
 ) {
   return context.language === "pl"
-    ? `W katalogu mamy: ${categories.map((category) => polishCategories[category] ?? category).join(", ")}. Która kategoria Cię interesuje? Mogę pokazać dwa przykłady.`
+    ? `W katalogu mamy: ${categories.map((category) => categoryLabels[category] ?? category).join(", ")}. Która kategoria Cię interesuje? Mogę pokazać dwa przykłady.`
     : `Our categories are: ${categories.join(", ")}. Which would you like to explore? I can show two examples.`;
 }
 export function policyReply(policy: string, context: ConversationContext) {
-  if (context.language !== "pl")
-    return `${policy}\n\nWould you like help finding a product next?`;
+  if (context.language !== "pl") return policy;
   const text = /14 days/.test(policy)
     ? "W demo przyjmujemy zwroty do 14 dni od dostawy."
     : /EUR 4/.test(policy)
       ? "W demo dostawa kosztuje 4 EUR i trwa 2–3 dni robocze."
       : "To demo nie przyjmuje płatności ani nie składa prawdziwych zamówień.";
-  return `${text}\n\nPomóc Ci teraz wybrać produkt?`;
+  return text;
 }

@@ -22,7 +22,12 @@ export function createShop() {
     products,
     embeddingProfiles[profile].maxDistance,
   );
-  return { repository, tools: createShopTools(new CatalogService(repository)) };
+  const catalog = new CatalogService(repository);
+  return {
+    repository,
+    tools: createShopTools(catalog),
+    toolsV2: createShopTools(catalog, "shopping-v2"),
+  };
 }
 let shop: ReturnType<typeof createShop> | undefined;
 export function getShop() {

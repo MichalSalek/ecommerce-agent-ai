@@ -5,6 +5,7 @@ import {
   restoreCart,
   setQuantity,
   cartTotalCents,
+  addToCart,
 } from "../src/domain/cart/cart";
 import { products } from "../src/data/products";
 test("cart validates persisted data and uses canonical prices", () => {
@@ -38,4 +39,32 @@ test("cart validates persisted data and uses canonical prices", () => {
   );
   assert.equal(setQuantity(cart, "mugs", 0, products).lines.length, 1);
   assert.equal(setQuantity(cart, "missing", 2, products), cart);
+});
+test("chat additions persist their operation and reject replay, unavailable stock and overflow", () => {
+  const legacy = restoreCart(
+    JSON.stringify({
+      version: 1,
+      lines: [{ productId: "mugs", quantity: 97 }],
+    }),
+    products,
+  );
+  assert.deepEqual(legacy.executedOperations, []);
+  const added = addToCart(legacy, "mugs", 2, products, "conversation:user-1");
+  assert.equal(added.status, "added");
+  assert.equal(added.cart.lines[0].quantity, 99);
+  const restored = restoreCart(JSON.stringify(added.cart), products);
+  assert.equal(
+    addToCart(restored, "mugs", 2, products, "conversation:user-1").status,
+    "duplicate",
+  );
+  assert.equal(
+    addToCart(restored, "mugs", 1, products, "conversation:user-2").status,
+    "limit",
+  );
+  assert.equal(
+    addToCart(restored, "compact-keyboard", 1, products, "conversation:user-3")
+      .status,
+    "unavailable",
+  );
+  assert.deepEqual(restored.executedOperations, ["conversation:user-1"]);
 });

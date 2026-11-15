@@ -1,3 +1,20 @@
+# Shopping-v2 acceptance
+
+The current source adds 86 catalog records across ten categories, 38 individually generated WebP assets, structural search and device-local cart actions. The catalog census preserves the original 48 IDs, prices, stock states and image paths.
+
+- BGE and MiniLM preparation passed with 86 products. Current fingerprints are `5827abe4ad9924bd` and `24709dc1df1fee04` respectively; the build manifest and `/api/health` identify the prepared runtime table.
+- `npm test`: 66 assertions/subtests passed, including actual LanceDB with both encoders, expected and counterexample products across all ten categories, legacy wrong garden cards, exhaustion, canonical cart selection and stable operation IDs.
+- `npm run typecheck` and `npm run build` passed. All 86 product pages are generated.
+- `npm run test:e2e`: 14 Chromium cases passed. They cover history/drafts, navigation, desktop/390px viewport, legacy cards, repeated events, Retry/reload, cancelled/reset conversations, failed storage and the 99-unit limit.
+- A direct Groq 120B and MiniLM API acceptance exercised the visible examples, Polish/English garden refinements, all six outdoor furniture products through exhaustion, topic change, actual comparison, cart-action Retry identity and missing products/attributes. This is an observed acceptance sample, not a guarantee of future model accuracy.
+- The built application passed `verify:deployment` locally, including the 86-product manifest, actual retrieval and legacy search arrays. Production publication additionally requires same-commit green source/container CI, exact Render revision, scoped hostname cache invalidation and fresh browser cart acceptance.
+
+Local Docker Desktop is unavailable in this WSL distribution. The release uses the actual GitHub container job for the same commit, with the existing 512 MiB/0.1 CPU smoke. Model availability is a separate runtime check.
+
+Generated assets are in `public/images/products/`; [prompts and encoding provenance](IMAGE_GENERATION.json) record all 38 new photos. Existing photos were preserved. Screenshots are local verification artifacts, not repository assets.
+
+The prior release records below are historical. Their smaller catalog, expanded/collapsed guide, narration and latency observations describe those earlier revisions only.
+
 # Current verification evidence
 
 Last checked: 2026-11-13. Older intermediate behavior and failures are preserved in Git history; this file describes the accepted refinement.

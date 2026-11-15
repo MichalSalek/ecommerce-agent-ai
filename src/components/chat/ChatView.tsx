@@ -27,6 +27,7 @@ const starters = [
     label: "My morning coffee",
     text: "I need something for my morning coffee",
   },
+  { label: "Garden furniture", text: "Show me garden furniture under EUR 150" },
   { label: "Finds under €25", text: "What can I buy under EUR 25?" },
   { label: "Delivery & returns", text: "How much is delivery?" },
 ];
@@ -46,6 +47,7 @@ export default function ChatView() {
     remainingTurns,
     newConversation,
     threadPosition,
+    cartFeedback,
   } = useConversation();
   const router = useRouter();
   const thread = useRef<HTMLDivElement>(null);
@@ -148,12 +150,42 @@ export default function ChatView() {
       ),
   );
   const unanswered = !busy && visible.at(-1)?.role === "user";
+  const lastAssistant =
+    !busy && visible.at(-1)?.role === "assistant" ? visible.at(-1) : undefined;
+  const lastSearch = lastAssistant?.parts.findLast(
+    (part) =>
+      part.type === "tool-searchProducts" && part.state === "output-available",
+  );
+  const lastOutput =
+    lastSearch && "output" in lastSearch ? lastSearch.output : undefined;
+  const resultEnvelope =
+    typeof lastOutput === "object" &&
+    lastOutput !== null &&
+    "products" in lastOutput &&
+    Array.isArray(lastOutput.products)
+      ? lastOutput
+      : null;
+  const resultCount =
+    resultEnvelope && Array.isArray(resultEnvelope.products)
+      ? resultEnvelope.products.length
+      : Array.isArray(lastOutput)
+        ? lastOutput.length
+        : 0;
+  const remaining =
+    resultEnvelope &&
+    "remainingMatches" in resultEnvelope &&
+    typeof resultEnvelope.remainingMatches === "number"
+      ? resultEnvelope.remainingMatches
+      : 0;
   return (
     <div className="assistant-workspace">
       <aside className="assistant-intro">
         <span className="eyebrow">AURELLE</span>
         <h1>Shopping assistant</h1>
-        <p>All 48 products, prices, stock and policies are mock data.</p>
+        <p>
+          All {products.length} products, prices, stock and policies are mock
+          data.
+        </p>
         <Link className="intro-catalog" href="/#collection">
           Browse products ↗
         </Link>
@@ -171,7 +203,9 @@ export default function ChatView() {
             <div>
               <strong>Aurelle assistant</strong>
               <span className="assistant-presence">
-                {busy ? "Working on your request…" : "Products, prices and delivery"}
+                {busy
+                  ? "Working on your request…"
+                  : "Products, prices and delivery"}
               </span>
             </div>
           </div>
@@ -254,23 +288,67 @@ export default function ChatView() {
                       part.type === "tool-compareProducts") &&
                     part.state === "output-available"
                   )
-                    return (
-                      <ProductResults
-                        key={i}
-                        output={
-                          part.type === "tool-compareProducts" &&
-                          typeof part.output === "object" &&
-                          part.output !== null &&
-                          "products" in part.output
-                            ? part.output.products
-                            : part.output
-                        }
-                      />
-                    );
+                    return <ProductResults key={i} output={part.output} />;
                   return null;
                 })}
               </article>
             ))
+          )}
+          {cartFeedback.map(({ action, status }) => {
+            const product = products.find(
+              (item) => item.id === action.productId,
+            );
+            return (
+              <div
+                className="chat-cart-feedback"
+                role="status"
+                key={action.operationId}
+              >
+                {status === "added" || status === "duplicate" ? (
+                  <>
+                    <p>
+                      {status === "added"
+                        ? `Added ${action.quantity} × ${product?.name ?? "product"} to your cart.`
+                        : "This request was already processed."}
+                    </p>
+                    <Link href="/cart">Open cart ↗</Link>
+                  </>
+                ) : (
+                  <p>
+                    {status === "limit"
+                      ? "The cart cannot hold more than 99 of this item."
+                      : status === "unavailable"
+                        ? "This item is unavailable and was not added."
+                        : "The cart could not be saved, so this item was not added. Please try again."}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          {resultCount > 0 && !busy && !conversationClosed && (
+            <div
+              className="chat-followups"
+              aria-label="Suggested follow-up questions"
+            >
+              {resultCount > 1 && (
+                <button onClick={() => send("Compare these products")}>
+                  Compare these
+                </button>
+              )}
+              {remaining > 0 && (
+                <button onClick={() => send("Show me other options")}>
+                  Show other options
+                </button>
+              )}
+              <button
+                onClick={() => send("Tell me more about the first product")}
+              >
+                More details
+              </button>
+              <button onClick={() => send("Add the first product to my cart")}>
+                Add the first to cart
+              </button>
+            </div>
           )}
           {!started && ready && (
             <div className="chat-starters" aria-label="Conversation starters">
@@ -281,7 +359,6 @@ export default function ChatView() {
                   disabled={busy || conversationClosed}
                 >
                   {s.label}
-                  <span aria-hidden="true">↗</span>
                 </button>
               ))}
             </div>
@@ -340,9 +417,7 @@ export default function ChatView() {
         {conversationClosed && !busy && (
           <div className="chat-recovery" role="status">
             <strong>This conversation is complete.</strong>
-            <p>
-              Start a new conversation to continue. Your cart stays saved.
-            </p>
+            <p>Start a new conversation to continue. Your cart stays saved.</p>
             <button onClick={() => void reset()}>
               Start a new conversation
             </button>
@@ -414,18 +489,23 @@ export default function ChatView() {
           </div>
         </form>
       </section>
-      <details className="demo-capabilities">
-        <summary>Try examples</summary>
+      <section className="demo-capabilities" aria-label="Shopping examples">
+        <h2>Explore with the assistant</h2>
         <div className="capability-grid">
           {[
-            ["Semantic discovery", "I need something for my morning coffee"],
-            ["Compare products", "Compare mugs and carafe"],
-            ["Gift with a budget", "Find a gift under EUR 25"],
-            ["Stock-aware follow-up", "Show only in-stock products"],
-            ["Approximate price", "Something for home around EUR 30"],
-            ["Language and categories", "Możesz pisać po polsku?"],
-            ["Grounded policies", "How much is delivery?"],
-            ["Scope boundary", "Write a Python loop"],
+            ["Garden budget", "Show me garden furniture under EUR 150"],
+            ["Refine", "I need something to sit on"],
+            ["Alternatives", "Show me different options"],
+            [
+              "Correction",
+              "A plant pot is not furniture. Show me outdoor furniture",
+            ],
+            ["Compare", "Compare mugs and carafe"],
+            ["Add", "Add two of the cheaper option to my cart"],
+            ["Coffee", "I need something for my morning coffee"],
+            ["Availability", "Show only in-stock products"],
+            ["Gift", "Find a gift under EUR 25"],
+            ["Delivery", "How much is delivery?"],
           ].map(([title, prompt]) => (
             <button
               key={title}
@@ -438,7 +518,7 @@ export default function ChatView() {
                 });
               }}
             >
-              {prompt} ↗
+              {prompt}
             </button>
           ))}
         </div>
@@ -448,7 +528,7 @@ export default function ChatView() {
             How it works ↗
           </Link>
         </p>
-      </details>
+      </section>
     </div>
   );
 }
