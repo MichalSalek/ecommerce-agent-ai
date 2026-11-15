@@ -233,7 +233,7 @@ The comparison tool participates in native action schemas, model instructions, U
 
 ## Delivery and first-visit performance
 
-The custom domain uses Cloudflare caching for public HTML and static assets. API calls bypass cache, as do React Server Component requests. Catalog photos are already encoded WebP files; the runtime does not generate AVIF variants on the small Render instance. This removes first-visitor image-encoding work and avoids competing with CPU embeddings.
+The custom domain uses Cloudflare caching for public HTML and static assets. API calls bypass cache. Public static React Server Component responses are cached separately using their complete Next-validated `_rsc` query hash; HTML and RSC responses never share a cache entry. Catalog photos are already encoded WebP files; the runtime does not generate AVIF variants on the small Render instance. This removes first-visitor image-encoding work and avoids competing with CPU embeddings.
 
 After deploying a green commit, purge only this hostname's cache by prefix (`ecommerce-agent.michalsalek.com`), then run `node scripts/warm-deployment.mjs https://ecommerce-agent.michalsalek.com`. The command checks actual application documents and referenced asset responses, rejecting an HTML loading page returned in place of an asset. Keep the origin health monitor active. Render Free can still restart or suspend; CDN caching reduces public-page dependence on origin readiness but is not an always-on backend guarantee.
 

@@ -4,10 +4,10 @@ The approved launch was executed on 2026-11-15. This record supersedes the accou
 
 ## Release
 
-- URL: https://ecommerce-agent-ai-bpah.onrender.com
+- URL: https://ecommerce-agent.michalsalek.com
 - Service: `srv-dbsr8pnf3r2c73b5ki30`, dedicated demo workspace.
-- Initial deploy: `dep-dbsr8qnf3r2c73b5klhg`.
-- Application revision: `b4d408ee9096ad6b7a1fb71a471014a7fb0e4922`, verified through live `/api/health`.
+- Current deploy: `dep-dbssd4jl550s739bnkd0`.
+- Application revision: `332997d356e7cbdbb0f3beb1732f938cff48879b`, verified through live `/api/health`.
 - Later documentation-only commits do not change this application artifact. Auto-deploy remains off.
 - Docker, Free, Frankfurt, one instance, no paid disk/database/GPU.
 - Direct Groq `openai/gpt-oss-120b`, MiniLM q8 local CPU embeddings, genuine embedded LanceDB.
@@ -31,3 +31,11 @@ The cloud credential belongs to an organization allocated to AI agents. It is su
 For updates: select a green release, deploy that commit explicitly through Render, then run `npm run verify:deployment -- URL FULL_SHA` and browser checks for affected behavior. Roll back to the previous successful deployment if runtime acceptance fails. Do not clear build caches or rebuild unchanged images without a reason.
 
 Free services may restart, suspend or exhaust included resources. A liveness monitor does not establish model availability. Payment, account verification or paid upgrades require the owner if the provider asks for them.
+
+## Follow-up: first visitor and custom domain
+
+The custom domain has a verified Render certificate and a proxied Cloudflare CNAME. Scoped rules cache public HTML, immutable/static assets and static RSC payloads with their complete validated query hash. API calls always bypass cache. Prefix purging this hostname was verified; URL-only purges did not reliably remove the old HTML object. Purge only `ecommerce-agent.michalsalek.com`, then run `node scripts/warm-deployment.mjs https://ecommerce-agent.michalsalek.com`. No other hostname needs a purge.
+
+The image path now serves already-encoded WebP without runtime AVIF work.23generated product photographs replaced the flat SVG references. A new browser loaded all49images in1223ms; after cache warming, three samples during a controlled origin restart were523/337/336ms. These observations are not a universal latency guarantee. The exact reported coffee-grinder conversation passed, including its typo-bearing follow-up, plus real product-card/cart persistence.
+
+The chat fills the remaining viewport; all examples remain in a compact disclosure. The current source revision passed21unit/native tests and all8browser cases in GitHub CI, including the actual Docker container check. Local Docker Desktop was unavailable; GitHub's container result supplies that packaging evidence.

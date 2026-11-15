@@ -8,6 +8,6 @@ The existing MyDevil account runs FreeBSD, which lacks the required native Lance
 
 Render Free has 512 MiB memory, ephemeral storage and availability/usage limits. No paid plan or persistent disk is configured. A persistent disk and suitable capacity would be needed if this demo gained durable server-side user data. Better Stack checks lightweight liveness every three minutes without calling the model.
 
-The custom hostname is a proxied Cloudflare CNAME with a verified Render certificate. Scoped cache rules cache public HTML and static files while preserving origin TTLs; API and RSC responses are not cached. HTML uses a one-hour edge TTL with stale revalidation/error allowance. Images use static WebP, with no runtime transcoding. Public documents and assets are checked/warmed explicitly after release.
+The custom hostname is a proxied Cloudflare CNAME with a verified Render certificate. Scoped cache rules cache public HTML and static files while preserving origin TTLs; API responses are not cached. Public static RSC payloads use the full Next-validated `_rsc` query as their cache key, separate from HTML. HTML uses a one-hour edge TTL with stale revalidation/error allowance. Images use static WebP, with no runtime transcoding. Public documents and assets are checked/warmed explicitly after release.
 
 Release invalidation uses a hostname-prefix purge, not a zone-wide purge. URL-only purges did not remove an older cached HTML response during acceptance. The prefix purge was verified by fetching the new Try examples UI and matching the live revision.
