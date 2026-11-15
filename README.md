@@ -1,4 +1,4 @@
-**[Try the live demo](https://ecommerce-agent.michalsalek.com)**
+**[Try the live demo](https://ecommerce-agent.michalsalek.com)** -> https://ecommerce-agent.michalsalek.com/
 
 # Aurelle: an AI shopping assistant
 
