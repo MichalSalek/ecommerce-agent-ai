@@ -63,7 +63,7 @@ async function save() { const p = `${artifact}.${process.pid}.tmp`; await writeF
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 let modelCalls = 0, modelSuccesses = 0;
 const upstreamCalls = new Set();
-let warming = !engine, warmClaimed = false, finishWarm;
+let warming = true, warmClaimed = false, finishWarm;
 const warmResult = new Promise(resolve => { finishWarm = resolve; });
 const proxy = createServer(async (req, res) => {
   const controller = new AbortController();
@@ -77,8 +77,10 @@ const proxy = createServer(async (req, res) => {
     const chunks = []; for await (const c of req) chunks.push(c);
     let body = Buffer.concat(chunks).toString();
     if (path.endsWith('/chat/completions')) {
-      const v = JSON.parse(body); assert.equal(v.model, model); v.chat_template_kwargs = {...v.chat_template_kwargs, enable_thinking:false}; body = JSON.stringify(v); modelCalls++;
-      if (warming) { assert.ok(!warmClaimed, 'Warm probe permits one native request'); warmClaimed = true; warmRequest = true; }
+      const v = JSON.parse(body); assert.equal(v.model, model); v.chat_template_kwargs = {...v.chat_template_kwargs, enable_thinking:false};
+      if (warming && engine) v.max_tokens=1; // Prefill only; deliberately not a functional response.
+      body = JSON.stringify(v); modelCalls++;
+      if (warming && !engine) { assert.ok(!warmClaimed, 'Warm probe permits one native request'); warmClaimed = true; warmRequest = true; }
     }
     const response = await fetch(`${upstream.href.replace(/\/$/, '')}${path.slice(3)}`, { method:req.method, headers: { 'content-type':'application/json' }, ...(req.method === 'POST' ? {body} : {}), redirect:'error', signal:AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]) });
     if (!res.destroyed) res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'application/json' });
@@ -132,6 +134,7 @@ try {
     const response=await fetch(`${base}/api/chat`,warmInit);
     assert.equal(response.status,200,'Engine warm probe failed'); await response.arrayBuffer();
     assert.ok(modelSuccesses>before,'Engine warm probe did not complete a provider request');
+    warming=false;
   } else {
     const warmApp=fetch(`${base}/api/chat`,warmInit).then(async r=>{await r.arrayBuffer();}).catch(()=>{});
     const warmed = await Promise.race([warmResult, new Promise(resolve=>{ const timer=setTimeout(()=>resolve({ok:false,error:'warm probe timed out'}),180000); timer.unref(); })]);
