@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,6 +23,42 @@ test('local runner refuses public model endpoints before launching a server', ()
   const result = run('agent-local', ['--smoke'], { LLAMA_BASE_URL: 'https://api.groq.com/openai/v1' });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /private IPv4 or localhost/);
+});
+
+test('guard-only resume proves historical source, runner and previously accepted queries', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-guard-resume-'));
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  const write=(path:string,value:string)=>writeFileSync(join(dir,path),value);
+  const digest=(paths:string[])=>{const h=createHash('sha256'); for(const path of paths){const content=readFileSync(join(dir,path));h.update(`${path.length}:${path}:${content.length}:`);h.update(content);} return h.digest('hex');};
+  try {
+    git('init'); mkdirSync(join(dir,'scripts')); mkdirSync(join(dir,'src/application/chat'),{recursive:true});
+    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs'));
+    write('scripts/agent-local-core.ts','export {};\n');
+    const originalGuard='export function queryLanguageError(query: string | undefined) { return query === "bad" ? {code:"QUERY_LANGUAGE"} : undefined; }\n';
+    write('src/application/chat/query-language.ts',originalGuard); write('src/other.ts','export const value=1;\n'); write('package-lock.json','{}\n');
+    symlinkSync(join(process.cwd(),'node_modules'),join(dir,'node_modules'),'dir');
+    git('add','scripts','src','package-lock.json');
+    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
+    const revision=git('rev-parse','HEAD');
+    const artifact=join(dir,'prior.json');
+    const prior={fingerprint:digest(['src/application/chat/query-language.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/v1',batches:[{name:'passed',passed:true,turns:[{validated:true,checkpoint:{after:{criteria:{query:'morning coffee'}}},result:{appliedCriteria:{query:'morning coffee'}}}]},{name:'failed',passed:false,turns:[]}]};
+    writeFileSync(artifact,JSON.stringify(prior));
+    const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--query-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
+    const unchanged=invoke(); assert.notEqual(unchanged.status,0); assert.match(unchanged.stderr,/Only the query-language guard may differ/);
+    write('src/application/chat/query-language.ts',`${originalGuard}// verified adjustment\n`);
+    const accepted=invoke(); assert.equal(accepted.status,0,accepted.stderr);
+    const proof=JSON.parse(accepted.stdout); assert.equal(proof.originalRevision,revision); assert.deepEqual(proof.checkedQueries,['morning coffee']); assert.deepEqual(proof.reusedBatches,['passed']);
+    const strict=spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
+    assert.notEqual(strict.status,0); assert.match(strict.stderr,/Source\/build fingerprint changed/);
+    write('src/other.ts','export const value=2;\n'); const other=invoke(); assert.notEqual(other.status,0); assert.match(other.stderr,/Only the query-language guard may differ/); write('src/other.ts','export const value=1;\n');
+    write('src/added.ts','export const value=3;\n'); const added=invoke(); assert.notEqual(added.status,0); assert.match(added.stderr,/Source paths differ/); rmSync(join(dir,'src/added.ts'));
+    write('package-lock.json','{"changed":true}\n'); const lock=invoke(); assert.notEqual(lock.status,0); assert.match(lock.stderr,/Only the query-language guard may differ/); write('package-lock.json','{}\n');
+    writeFileSync(artifact,JSON.stringify({...prior,runnerHash:'0'.repeat(64)})); const forged=invoke(); assert.notEqual(forged.status,0); assert.match(forged.stderr,/Original revision does not match artifact runner fingerprint/); writeFileSync(artifact,JSON.stringify(prior));
+    write('src/application/chat/query-language.ts','export function queryLanguageError(q: string | undefined) { return q === "morning coffee" ? {code:"QUERY_LANGUAGE"} : undefined; }\n');
+    const rejected=invoke(); assert.notEqual(rejected.status,0); assert.match(rejected.stderr,/previously passing query was rejected/);
+    write('src/application/chat/query-language.ts',`${originalGuard}// verified adjustment\n`); write('scripts/agent-local-core.ts','export const changed=true;\n');
+    const helper=invoke(); assert.notEqual(helper.status,0); assert.match(helper.stderr,/Engine helper changed/);
+  } finally { rmSync(dir,{recursive:true,force:true}); }
 });
 
 test('engine QA helper rejects unsafe providers, routes, keys and public bind before starting', () => {

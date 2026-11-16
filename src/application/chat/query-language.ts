@@ -16,13 +16,20 @@ const englishStems = new Set(
       .map((product) =>
         [
           product.name,
+          product.category,
+          product.productKind,
+          product.productType,
           product.description,
           product.fullDescription,
           product.material,
           ...product.features,
         ].join(" "),
       )
-      .join(" "),
+      .join(" ") +
+      " " +
+      Object.values({ ...productKinds, ...productTypes })
+        .map((value) => value.en)
+        .join(" "),
   ).map((word) => word.slice(0, 3)),
 );
 const polishStems = new Set(

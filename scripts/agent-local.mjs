@@ -9,13 +9,13 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 if (process.argv.includes('--help')) {
-  console.log('Usage: node scripts/agent-local.mjs [--engine] [--smoke|--suite] [--resume /tmp/artifact.json] [--artifact /tmp/artifact.json]\n--engine: source-based ENGINE functional QA with 600s test turns; not HTTP latency acceptance. Without --engine requires an up-to-date standalone build. Both require local llama-server. Private artifacts reuse only whole passing batches of the same mode and inputs.');
+  console.log('Usage: node scripts/agent-local.mjs [--engine] [--smoke|--suite] [--resume /tmp/artifact.json] [--query-guard-revision <old-SHA>] [--artifact /tmp/artifact.json] [--inspect-resume]\n--engine: source-based ENGINE functional QA with 600s test turns; not HTTP latency acceptance. Cross-revision reuse requires the explicit query-guard revision and a verified guard-only source change; --inspect-resume verifies without running the model. Without --engine requires an up-to-date standalone build. Both require local llama-server. Private artifacts reuse only whole passing batches of the same mode and inputs.');
   process.exit(0);
 }
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
-  assert.ok(['--engine', '--smoke', '--suite', '--resume', '--artifact'].includes(args[i]), `Unknown option: ${args[i]}`);
-  if (['--resume', '--artifact'].includes(args[i])) assert.ok(args[++i] && !args[i].startsWith('--'), 'Missing option value');
+  assert.ok(['--engine', '--smoke', '--suite', '--resume', '--artifact', '--query-guard-revision', '--inspect-resume'].includes(args[i]), `Unknown option: ${args[i]}`);
+  if (['--resume', '--artifact', '--query-guard-revision'].includes(args[i])) assert.ok(args[++i] && !args[i].startsWith('--'), 'Missing option value');
 }
 assert.ok(!(args.includes('--smoke') && args.includes('--suite')), 'Choose smoke or suite');
 const option = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
@@ -29,6 +29,9 @@ const privatePath = (value) => {
 };
 const artifact = privatePath(option('--artifact') ?? join(tmpdir(), `aurelle-local-${Date.now()}.json`));
 const resume = option('--resume') && privatePath(option('--resume'));
+const guardRevision = option('--query-guard-revision');
+assert.ok(!guardRevision || (engine && resume && /^[a-f0-9]{40}$/.test(guardRevision)), '--query-guard-revision requires --engine, --resume and a full lowercase Git SHA');
+assert.ok(!args.includes('--inspect-resume') || (guardRevision && resume), '--inspect-resume requires --query-guard-revision and --resume');
 assert.notEqual(artifact, resume, 'Resume and output must differ');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const upstream = new URL(process.env.LLAMA_BASE_URL ?? 'http://172.20.0.1:8090/v1');
@@ -48,17 +51,52 @@ async function hash(paths) {
   for (const path of paths) { const content = await readFile(join(root, path)); h.update(`${path.length}:${path}:${content.length}:`); h.update(content); }
   return h.digest('hex');
 }
-const fingerprint = await hash([...(await files('src')), 'package-lock.json', ...(!engine ? ['.next/standalone/server.js', '.next/standalone/.next/BUILD_ID', ...(await files('.next/standalone/.next/server'))] : [])]);
+const sourcePaths = await files('src');
+const fingerprint = await hash([...sourcePaths, 'package-lock.json', ...(!engine ? ['.next/standalone/server.js', '.next/standalone/.next/BUILD_ID', ...(await files('.next/standalone/.next/server'))] : [])]);
 const runnerHash = await hash(['scripts/agent-local.mjs', 'scripts/agent-local-core.ts']);
 const old = resume && JSON.parse(await readFile(resume, 'utf8'));
+let resumeCompatibility;
 if (old) {
-  assert.equal(old.fingerprint, fingerprint, 'Source/build fingerprint changed');
-  assert.equal(old.runnerHash, runnerHash, 'Runner changed');
   assert.equal(old.model, model, 'Model changed');
   assert.equal(old.upstream, upstream.href, 'Local endpoint changed');
   assert.equal(old.execution, execution, 'Cannot reuse evidence from another execution mode');
+  assert.ok(Array.isArray(old.batches), 'Invalid resume batches');
+  if (!guardRevision) {
+    assert.equal(old.fingerprint, fingerprint, 'Source/build fingerprint changed');
+    assert.equal(old.runnerHash, runnerHash, 'Runner changed');
+  } else {
+    const guardPath='src/application/chat/query-language.ts';
+    const git=(...gitArgs)=>execFileSync('git',gitArgs,{cwd:root,maxBuffer:16*1024*1024});
+    git('cat-file','-e',`${guardRevision}^{commit}`);
+    const tracked=git('ls-tree','-r','--name-only','-z',guardRevision,'--','src').toString().split('\0').filter(Boolean);
+    assert.deepEqual([...tracked].sort(),[...sourcePaths].sort(),'Source paths differ from original revision');
+    const revisionContent=path=>git('show',`${guardRevision}:${path}`);
+    const framedHash=paths=>{const h=createHash('sha256'); for(const path of paths){const content=revisionContent(path);h.update(`${path.length}:${path}:${content.length}:`);h.update(content);} return h.digest('hex');};
+    assert.equal(framedHash([...sourcePaths,'package-lock.json']),old.fingerprint,'Original revision does not match artifact source fingerprint');
+    assert.equal(framedHash(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),old.runnerHash,'Original revision does not match artifact runner fingerprint');
+    assert.ok((await readFile(join(root,'scripts/agent-local-core.ts'))).equals(revisionContent('scripts/agent-local-core.ts')),'Engine helper changed from original revision');
+    const changed=[];
+    for(const path of [...sourcePaths,'package-lock.json']) if(!(await readFile(join(root,path))).equals(revisionContent(path))) changed.push(path);
+    assert.deepEqual(changed,[guardPath],'Only the query-language guard may differ from the original revision');
+    const passed=old.batches.filter(batch=>batch.passed===true);
+    assert.ok(passed.length>0,'No successful batches to reuse');
+    const queries=new Set(); let sawUndefined=false;
+    for(const batch of passed) {
+      assert.ok(Array.isArray(batch.turns) && batch.turns.length>0 && batch.turns.every(turn=>turn.validated===true && turn.checkpoint?.after?.criteria),`Incomplete successful batch ${batch.name}`);
+      for(const turn of batch.turns) for(const query of [turn.checkpoint.after.criteria.query,turn.result?.appliedCriteria?.query,turn.products?.appliedCriteria?.query]) {
+        if(query===undefined) sawUndefined=true; else {assert.equal(typeof query,'string','Recorded query must be a string');queries.add(query);}
+      }
+    }
+    const checkedQueries=[...queries].sort();
+    const probe=`import {queryLanguageError} from './src/application/chat/query-language'; (async()=>{let input=''; for await (const chunk of process.stdin) input+=chunk; const data=JSON.parse(input); for(const value of data.queries) if(queryLanguageError(value)!==undefined) throw new Error('A previously passing query is now rejected'); if(data.checkUndefined && queryLanguageError(undefined)!==undefined) throw new Error('Undefined query is now rejected');})()`;
+    try {execFileSync(join(root,'node_modules/.bin/tsx'),['-e',probe],{cwd:root,input:JSON.stringify({queries:checkedQueries,checkUndefined:sawUndefined}),stdio:['pipe','pipe','pipe']});}
+    catch {throw new Error('A previously passing query was rejected or the guard could not be evaluated');}
+    assert.equal(await hash([...sourcePaths,'package-lock.json']),fingerprint,'Source changed during resume verification');
+    resumeCompatibility={kind:'query-guard-only',originalRevision:guardRevision,originalFingerprint:old.fingerprint,currentFingerprint:fingerprint,originalRunnerHash:old.runnerHash,currentRunnerHash:runnerHash,changedPath:guardPath,checkedQueries,checkedUndefined:sawUndefined,sourceArtifact:resume,reusedBatches:passed.map(batch=>batch.name)};
+  }
 }
-const report = { fingerprint, runnerHash, mode, execution, model, upstream: upstream.href, note: engine ? 'ENGINE functional QA only, not production HTTP latency acceptance. Local Qwen is not equivalent to Groq; cart writes are simulated.' : 'Standalone HTTP QA; local Qwen is not equivalent to Groq; cart writes are simulated.', batches: [], failures: [], started: new Date().toISOString() };
+if (args.includes('--inspect-resume')) {console.log(JSON.stringify(resumeCompatibility)); process.exit(0);}
+const report = { fingerprint, runnerHash, mode, execution, model, upstream: upstream.href, ...(resumeCompatibility?{resumeCompatibility}:{}), note: engine ? 'ENGINE functional QA only, not production HTTP latency acceptance. Local Qwen is not equivalent to Groq; cart writes are simulated.' : 'Standalone HTTP QA; local Qwen is not equivalent to Groq; cart writes are simulated.', batches: [], failures: [], started: new Date().toISOString() };
 async function save() { const p = `${artifact}.${process.pid}.tmp`; await writeFile(p, JSON.stringify(report, null, 2), { mode: 0o600 }); await rename(p, artifact); }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 let modelCalls = 0, modelSuccesses = 0;
@@ -185,7 +223,7 @@ try {
   }
   async function batch(name, fn) {
     const prior=old?.batches?.find(x=>x.name===name && x.passed);
-    if (prior) { report.batches.push({...prior,reused:true}); await save(); console.log(`[RESUME] ${name}`); return; }
+    if (prior) { report.batches.push({...prior,reused:true,reusedFrom:{artifact:resume,...(guardRevision?{revision:guardRevision}:{}),fingerprint:old.fingerprint}}); await save(); console.log(`[RESUME] ${name}`); return; }
     const record={name,passed:false,turns:[]}; report.batches.push(record); activeBatch=record;
     const started=performance.now();
     try { await fn(); record.passed=true; console.log(`[PASS] ${name}`); } catch(e) { record.error=e.message; report.failures.push({name,error:e.message}); console.error(`[FAIL] ${name}: ${e.message}`); }

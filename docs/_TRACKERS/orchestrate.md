@@ -27,6 +27,8 @@ All four starters, ten examples, requested counts 4/5/10/20/all and comparisons 
 
 The final plain-advice Groq canary passed on `3531993`: 233 input and 72 output tokens, with the complete qualitative response manually checked against the canonical records. The unchanged first free-message path reuses its verified `68407fb` result. All attempts, including rejected intermediate advice, total 6,270 uncached input/output tokens in one root-release ledger; 1,730 remain for public runtime acceptance. An intermediate response that passed numeric-reference validation was rejected by human review for an unsupported size comparison; that case now has a regression guard.
 
+ABSORBED: the real local garden cases reproduced a pre-existing query-language false positive. The English vocabulary omitted canonical taxonomy/category labels, so `garden furniture` was misclassified as Polish. Regression tests fail before the fix and pass after it; Polish queries still require translation. Five already successful batches retain verified unchanged behavior: their saved queries were only `morning coffee` or empty. Reviewed resume checks the old source/runner hashes, permits only this one changed source file and revalidates every reused query.
+
 ## Acceptance boundaries
 
 The full local conversation suite also runs directly against the real engine through `scripts/agent-local-core.ts`, using a longer functional-test boundary. The production API retains its thirty-second timeout; its wire protocol, cancellation, browser storage and real Groq latency are separate acceptance evidence. Engine artifacts explicitly identify their mode and cannot reuse HTTP-mode batches. No functional conversation family is waived by this separation.
