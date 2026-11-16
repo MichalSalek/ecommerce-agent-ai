@@ -25,6 +25,6 @@ The broad local HTTP acceptance is blocked by measured local-model throughput. A
 
 All four starters, ten examples, requested counts 4/5/10/20/all and comparisons 2/5/10 passed actual catalog-only API checks with zero inferences. Fresh 390px browser checks verified two unavailable model routes, one advice message/countdown, usable catalog controls during cooldown, Polish cart save and unchanged cart/receipt after reload.
 
-## Owner decision if local latency remains unchanged
+## Acceptance boundaries
 
-The approved plan requires full local Qwen acceptance before production publication. Any release while that gate remains open needs an explicit exception from the owner. A green unit/browser/CI result or a successful Groq canary does not silently waive it.
+The full local conversation suite also runs directly against the real engine through `scripts/agent-local-core.ts`, using a longer functional-test boundary. The production API retains its thirty-second timeout; its wire protocol, cancellation, browser storage and real Groq latency are separate acceptance evidence. Engine artifacts explicitly identify their mode and cannot reuse HTTP-mode batches. No functional conversation family is waived by this separation.

@@ -125,3 +125,23 @@ test("an empty device cart is not treated as absent store inventory", async () =
   assert.equal(result.status.status, "complete");
   assert.equal(result.cart, undefined);
 });
+test("a cart unit count must match typed device quantities rather than another catalog number", async () => {
+  const mock = runtimeFor([
+    { text: "Your cart has 5 units.", productIds: ["carafe"] },
+    { text: "Your cart has 2 units.", productIds: ["carafe"] },
+  ]);
+  const result = await runAgent(
+    mock.runtime.model,
+    getShop().catalog,
+    {
+      text: "How many units are saved?",
+      userMessageId: crypto.randomUUID(),
+      state: initialAgentState(),
+      cart: [{ productId: "carafe", quantity: 2 }],
+    },
+    new AbortController().signal,
+    mock.runtime,
+  );
+  assert.match(result.answer, /2 units/);
+  assert.equal(mock.calls(), 2);
+});

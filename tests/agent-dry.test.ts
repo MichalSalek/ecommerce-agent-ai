@@ -77,9 +77,8 @@ const adviceContext = (messages: any[]) => {
   if (!user || typeof user.content !== "string") return undefined;
   try {
     const context = JSON.parse(user.content);
-    return Array.isArray(context.records) && Array.isArray(context.evidenceIds)
-      ? context
-      : undefined;
+    return Array.isArray(context.records) && typeof context.request === "string"
+      ? context : undefined;
   } catch {
     return undefined;
   }
@@ -89,7 +88,7 @@ const lastTool = (messages: any[]) => {
   if (!message) {
     const context = adviceContext(messages);
     assert.ok(context, "expected a tool result or compact advice context");
-    return { evidenceId: context.evidenceIds[0], products: context.records };
+    return { products: context.records };
   }
   return JSON.parse(message.content);
 };
@@ -99,13 +98,13 @@ const present = (
 ): Call => {
   const evidence = lastTool(messages);
   const context = adviceContext(messages);
-  const productIds = (evidence.products ?? []).map((p: { id: string }) => p.id);
+  const productIds = context ? [] : (evidence.products ?? []).map((p: { id: string }) => p.id);
   return call("presentAnswer", {
     text: "Here are the verified results.",
     language: "en",
-    evidenceIds: context?.evidenceIds ?? [evidence.evidenceId],
+    evidenceIds: context ? [] : [evidence.evidenceId],
     productIds,
-    view: context?.view ?? "products",
+    view: "products",
     ...overrides,
   });
 };
@@ -138,6 +137,7 @@ function scripted(steps: Step[]) {
       const next = steps[calls++];
       assert.ok(next, `unexpected model request ${calls}`);
       const action = typeof next === "function" ? next(body.messages) : next;
+      const plainAdvice = !body.tools?.length && action.name === "presentAnswer";
       return Response.json({
         id: `completion-${calls}`,
         model: "test",
@@ -146,7 +146,10 @@ function scripted(steps: Step[]) {
         choices: [
           {
             index: 0,
-            message: {
+            message: plainAdvice ? {
+              role: "assistant",
+              content: (action.input as { text: string }).text,
+            } : {
               role: "assistant",
               content: null,
               tool_calls: [
@@ -160,7 +163,7 @@ function scripted(steps: Step[]) {
                 },
               ],
             },
-            finish_reason: "tool_calls",
+            finish_reason: plainAdvice ? "stop" : "tool_calls",
           },
         ],
         usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
@@ -318,8 +321,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(inspected.status.status, "complete");
         assert.deepEqual(inspected.checkpoint.after.lastIds, [ids[0]]);
         assert.deepEqual(inspected.checkpoint.after.resultIds, ids);
-        assert.equal(detail.mock.requests[1].tool_choice, "auto");
-        assert.equal(detail.mock.requests[1].max_tokens, 256);
+        assert.equal(detail.mock.requests[1].tool_choice, undefined);
+        assert.ok(!detail.mock.requests[1].tools?.length);
+        assert.equal(detail.mock.requests[1].max_tokens, 192);
         const action = run(
           catalog,
           [
@@ -334,8 +338,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.count(), 2);
         assert.deepEqual(compared.comparison?.productIds, ids);
         assert.deepEqual(compared.checkpoint.after.resultIds, ids);
-        assert.equal(action.mock.requests[1].tool_choice, "auto");
-        assert.equal(action.mock.requests[1].max_tokens, 256);
+        assert.equal(action.mock.requests[1].tool_choice, undefined);
+        assert.ok(!action.mock.requests[1].tools?.length);
+        assert.equal(action.mock.requests[1].max_tokens, 192);
         assert.deepEqual(
           compared.evidence
             .filter(
@@ -601,12 +606,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         const result = await action.result;
         assert.equal(result.status.status, "complete");
         assert.equal(action.mock.count(), 2);
-        assert.equal(action.mock.requests[1].tool_choice, "auto");
-        assert.equal(action.mock.requests[1].max_tokens, 256);
-        assert.deepEqual(
-          action.mock.requests[1].tools.map((t: any) => t.function.name),
-          ["presentAnswer"],
-        );
+        assert.equal(action.mock.requests[1].tool_choice, undefined);
+        assert.ok(!action.mock.requests[1].tools?.length);
+        assert.equal(action.mock.requests[1].max_tokens, 192);
         assert.equal(result.search?.appliedCriteria.inStockOnly, true);
         assert.equal(result.presentation.language, "pl");
       },
@@ -685,8 +687,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       });
       const result = await runAgent(runtime.model, catalog, { text: "Show two products", state: initialAgentState(), userMessageId: `truncated-${++sequence}` }, new AbortController().signal, runtime);
       assert.equal(calls, 2);
-      assert.equal(requests[1].tool_choice, "auto");
-      assert.equal(requests[1].max_tokens, 256);
+      assert.equal(requests[1].tool_choice, undefined);
+        assert.ok(!requests[1].tools?.length);
+      assert.equal(requests[1].max_tokens, 192);
       assert.equal(result.operation.status, "completed");
       assert.equal(result.status.status, "complete");
       assert.equal(result.advice.status, "unavailable");
@@ -918,22 +921,22 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.count(), 4);
         assert.equal(action.mock.requests[1].tool_choice, "required");
         assert.equal(action.mock.requests[2].tool_choice, "required");
-        assert.equal(action.mock.requests[3].tool_choice, "auto");
-        assert.equal(action.mock.requests[3].max_tokens, 256);
+        assert.equal(action.mock.requests[3].tool_choice, undefined);
+        assert.ok(!action.mock.requests[3].tools?.length);
+        assert.equal(action.mock.requests[3].max_tokens, 192);
         const adviceMessages = action.mock.requests[3].messages;
         assert.ok(adviceMessages.every((message: any) => message.role !== "tool"));
         const context = adviceContext(adviceMessages);
         assert.ok(context);
-        assert.equal(context.view, "comparison");
-        assert.deepEqual(context.productIds, ["mugs", "carafe"]);
-        assert.deepEqual(context.records.map((record: any) => record.id), context.productIds);
+        assert.deepEqual(Object.keys(context).sort(), ["records", "request"]);
+        assert.deepEqual(context.records.map((record: any) => record.name),
+          ["mugs", "carafe"].map((id) => products.find((p) => p.id === id)?.name));
         for (const record of context.records) {
-          assert.equal(record.priceReference, `[[price:${record.id}]]`);
-          assert.equal(record.dimensionsReference, `[[dimensions:${record.id}]]`);
-          assert.equal(record.differenceReference, `[[difference:${record.id}]]`);
-          assert.ok(!("priceEUR" in record));
-          assert.ok(!("dimensions" in record));
-          assert.ok(!("differences" in record));
+          assert.ok(Object.keys(record).every((key) => ["name", "material", "features", "limitations"].includes(key)));
+          assert.ok(!("id" in record));
+          assert.ok(!("priceReference" in record));
+          assert.ok(!("dimensionsReference" in record));
+          assert.ok(!("differenceReference" in record));
         }
         assert.deepEqual(
           result.evidence
@@ -1198,12 +1201,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
               "searchProducts",
               nativeTransition("new", {}, { requestedCount: 5 }),
             ),
-            (m) =>
-              present(m, {
-                productIds: lastTool(m)
-                  .products.slice(0, 2)
-                  .map((p: any) => p.id),
-              }),
+            present,
           ],
           "Show five products",
         ).result;
@@ -1689,8 +1687,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(bodies.length, 2);
         assert.equal(result.operation.status, "completed");
         assert.equal(result.advice.status, "unavailable");
-        assert.equal(bodies[1].tool_choice, "auto");
-        assert.equal(bodies[1].max_tokens, 256);
+        assert.equal(bodies[1].tool_choice, undefined);
+        assert.ok(!bodies[1].tools?.length);
+        assert.equal(bodies[1].max_tokens, 192);
         assert.ok(
           bodies[0].messages.some(
             (m: any) =>
@@ -2259,13 +2258,6 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         });
         const badAnswers = [
           call("presentAnswer", {
-            text: "A product.",
-            language: "en",
-            evidenceIds: ["e1"],
-            productIds: ["invented-product"],
-            view: "products",
-          }),
-          call("presentAnswer", {
             text: "There are [[count:e1:madeUp]] products.",
             language: "en",
             evidenceIds: ["e1"],
@@ -2292,7 +2284,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           await inner.test(`reject ${JSON.stringify(bad.input)}`, async () => {
             const attempt = run(
               catalog,
-              [call("getCatalogOverview", { criteria: {} }), bad, good],
+              [call("searchProducts", nativeTransition("new", {}, { requestedCount: 2 })), bad, good],
               `adversarial ${JSON.stringify(bad)}`,
             );
             const result = await attempt.result;
@@ -2302,6 +2294,21 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
             assert.doesNotMatch(result.answer, /invented-product|999|no assortment|\[\[/i);
           });
         }
+        await inner.test("fixture metadata is not sent as model advice", async () => {
+          const action = run(catalog, [
+            call("searchProducts", nativeTransition("new", {}, { requestedCount: 2 })),
+            call("presentAnswer", {
+              text: "I can help you check.", language: "en",
+              evidenceIds: ["invented-evidence"], productIds: ["invented-product"], view: "products",
+            }),
+          ], "Help me choose.");
+          const result = await action.result;
+          assert.equal(action.mock.count(), 2);
+          assert.equal(result.operation.status, "completed");
+          assert.equal(result.advice.status, "included");
+          if (result.advice.status === "included")
+            assert.equal(result.advice.text, "I can help you check.");
+        });
         await inner.test("reject unknown tool", async () => {
           const unknown = await run(
             catalog,
@@ -2310,6 +2317,20 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           ).result;
           assert.equal(unknown.answer, "I can help you check.");
           assert.equal(unknown.evidence.length, 0);
+        });
+        await inner.test("reject invented product in initial tool metadata", async () => {
+          const action = run(catalog, [
+            call("presentAnswer", {
+              text: "A product.", language: "en", evidenceIds: [],
+              productIds: ["invented-product"], view: "products",
+            }),
+            good,
+          ], "Help me choose.");
+          const result = await action.result;
+          assert.equal(action.mock.count(), 2);
+          assert.equal(result.status.status, "complete");
+          assert.equal(result.answer, "I can help you check.");
+          assert.ok(!result.presentation.productIds.includes("invented-product"));
         });
       },
     );
@@ -2343,9 +2364,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           async (_input, init) => {
             const body = JSON.parse(String(init?.body));
             if (++n === 2) {
-              firstPage = lastTool(body.messages).products.map(
-                (p: { id: string }) => p.id,
-              );
+              const context = adviceContext(body.messages);
+              assert.ok(context);
+              firstPage = context.records.map((p: { name: string }) => p.name);
               throw new Error("simulated interruption after search");
             }
             return Response.json({
@@ -2395,7 +2416,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(interrupted.status.status, "complete");
         assert.equal(interrupted.operation.status, "completed");
         assert.equal(interrupted.advice.status, "unavailable");
-        assert.deepEqual(interrupted.search?.products.map((p) => p.id), firstPage);
+        assert.deepEqual(interrupted.search?.products.map((p) => products.find((item) => item.id === p.id)?.name), firstPage);
         const retry = scripted([
           call("searchProducts", nativeTransition("more")),
           present,
@@ -2408,10 +2429,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           retry.runtime,
         );
         assert.deepEqual(
-          result.search?.products.map((p) => p.id),
+          result.search?.products.map((p) => products.find((item) => item.id === p.id)?.name),
           firstPage,
         );
-        assert.ok(!firstPage.includes("outdoor-bistro-table"));
+        assert.ok(!result.search?.products.some((p) => p.id === "outdoor-bistro-table"));
         const partialTurn = {
           ...turn,
           userMessageId: `partial-response-${++sequence}`,

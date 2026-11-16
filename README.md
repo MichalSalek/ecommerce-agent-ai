@@ -39,7 +39,7 @@ Search combines category, product kind and type, environment, price, availabilit
 
 A typed checkpoint records language, criteria, preferences, shown products and selections across turns. The `shopping-v3` stream carries the checkpoint, result evidence, category cards, comparisons, an operation outcome and an independent advice outcome. Canonical summaries and data remain successful when optional advice is unavailable. Help me choose and Explain differences request advice for the existing result; retrying advice does not search, paginate or repeat a cart action. Older clients have adapters for the earlier result format. An explicit cart request can produce a proposal for one or more items; the browser validates and saves it before reporting success.
 
-The engine allows up to four model calls per turn, with up to 1,024 output tokens for interpretation and 256 for optional advice. Advice is buffered, limited to 400 characters and checked for completeness, language and grounded numeric references before display. The endpoint has a 30-second deadline, and invalid optional advice is omitted without automatic regeneration. The Groq adapter requests low reasoning effort for GPT-OSS and disables reasoning for the configured Qwen alternative. An unperformed operation has its own failure and retry; unavailable advice has an advice-only retry. These limits do not make model output infallible.
+The engine allows up to four model calls per turn, with up to 1,024 output tokens for interpretation and 192 for optional advice. Advice is buffered, limited to 400 characters and checked for completeness, language and grounded numeric references before display. The endpoint has a 30-second deadline, and invalid optional advice is omitted without automatic regeneration. The Groq adapter requests low reasoning effort for GPT-OSS and disables reasoning for the configured Qwen alternative. An unperformed operation has its own failure and retry; unavailable advice has an advice-only retry. These limits do not make model output infallible.
 
 The catalog's short purpose text and fuller product specifications are embedded separately, then their vectors are averaged with equal weight and normalized. Two CPU profiles are supported: pinned BGE small and MiniLM. The Docker/Render profile uses MiniLM. Each has a calibrated cutoff; a result must be within both its profile cutoff and 0.2 cosine distance of the best eligible neighbor. These are demo relevance rules, not a guarantee of accuracy.
 
@@ -103,10 +103,10 @@ A coding agent can also use [STARTER_PROMPT.md](STARTER_PROMPT.md) to inspect th
 
 ## Checks
 
-The isolated local runner explicitly selects llama/Qwen, scrubs Groq credentials and warms a full native request before measured calls. It covers six bilingual families, starters/examples, counts, comparisons, the original reported flow and twenty turns. Private artifacts support reuse only for identical source/build and runner inputs.
+The isolated local runner explicitly selects llama/Qwen, scrubs Groq credentials and warms a full native request before measured calls. Its `--engine` mode uses the real engine and index with a longer functional-test boundary; this is separate from the thirty-second production HTTP deadline. It covers six bilingual families, starters/examples, counts, comparisons, the original reported flow and twenty turns. Private artifacts support reuse only for identical source/build and runner inputs.
 
 ```bash
-EMBEDDING_MODEL=minilm npm run test:agent:local -- --artifact /tmp/aurelle-local.json
+EMBEDDING_MODEL=minilm npm run test:agent:local -- --engine --artifact /tmp/aurelle-local.json
 npm run test:agent:canary -- --release <full-HEAD-SHA>
 ```
 

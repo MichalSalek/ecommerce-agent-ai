@@ -40,7 +40,21 @@ function model(responses: unknown[] = []) {
     },
     async (_input, init) => {
       requests.push(JSON.parse(String(init?.body)));
-      const response = responses[calls++];
+      let response: any = responses[calls++];
+      if (
+        !requests.at(-1).tools?.length &&
+        response?.choices?.[0]?.message?.tool_calls?.[0]?.function?.name ===
+          "presentAnswer"
+      ) {
+        response = structuredClone(response);
+        const choice = response.choices[0];
+        choice.message.content = JSON.parse(
+          choice.message.tool_calls[0].function.arguments,
+        ).text;
+        delete choice.message.tool_calls;
+        if (choice.finish_reason === "tool_calls")
+          choice.finish_reason = "stop";
+      }
       if (!response) return new Response("unavailable", { status: 503 });
       return Response.json(response);
     },
@@ -429,7 +443,7 @@ test("expired cart choices require quantity again and a requested confirmation i
   });
   assert.equal(refused.cart, undefined);
 });
-test("stable local advice schema cannot execute a second catalog operation", async () => {
+test("plain advice cannot execute a second catalog operation", async () => {
   const original = await run("Compare", model(), {
     action: { type: "compare", productIds: ["mugs", "carafe"] },
   });
@@ -446,7 +460,7 @@ test("stable local advice schema cannot execute a second catalog operation", asy
       action: { type: "advice", operationId: original.operation.id },
     },
     new AbortController().signal,
-    { ...mock.runtime, stableAdviceTools: true },
+    mock.runtime,
   );
   assert.deepEqual(result.checkpoint.after, original.checkpoint.after);
   assert.deepEqual(result.comparison, original.comparison);
@@ -525,7 +539,7 @@ test("yes to a product-choice question preserves its quantity, expiry and source
   });
   assert.equal(chosen.cart?.quantity, 2);
 });
-test("optional advice receives canonical reference tags without raw prices or measurements", async () => {
+test("plain advice receives only qualitative facts without raw prices or measurements", async () => {
   const original = await run("Compare", model(), {
     action: { type: "compare", productIds: ["mugs", "carafe"] },
   });
@@ -546,13 +560,15 @@ test("optional advice receives canonical reference tags without raw prices or me
   const context = mock.requests[0].messages.find(
     (m: any) => m.role === "user",
   ).content;
-  assert.match(context, /\[\[price:mugs\]\]/);
-  assert.match(context, /\[\[dimensions:carafe\]\]/);
+  assert.match(context, /handles for hot drinks/);
+  assert.match(context, /Glass can break if dropped/);
+  assert.doesNotMatch(context, /priceReference|dimensionsReference/);
+  assert.equal(mock.requests[0].tools, undefined);
   assert.doesNotMatch(
     context,
     /priceEUR|25 cm high|9 cm high|differencesCents/,
   );
-  assert.equal(mock.requests[0].max_tokens, 256);
+  assert.equal(mock.requests[0].max_tokens, 192);
 });
 test("policy advice restores its completed read after process-cache loss without another catalog call", async () => {
   const policy = await run("Delivery", model(), {
@@ -598,4 +614,34 @@ test("policy advice restores its completed read after process-cache loss without
   assert.equal(result.advice.status, "included");
   assert.equal(result.operation.id, "restored-policy-operation");
   assert.equal(mock.calls(), 1);
+});
+test("canonical measurement references do not establish an unmeasured size comparison", async () => {
+  const source = await run("Compare", model(), {
+    action: { type: "compare", productIds: ["mugs", "carafe"] },
+  });
+  const mock = model([
+    response("presentAnswer", {
+      text: "The carafe occupies less space [[dimensions:carafe]] than the larger mugs [[dimensions:mugs]].",
+      language: "en",
+      view: "comparison",
+      evidenceIds: ["e1"],
+      productIds: ["mugs", "carafe"],
+    }),
+  ]);
+  const result = await run("Explain differences", mock, {
+    state: source.checkpoint.after,
+    action: { type: "advice", operationId: source.operation.id },
+  });
+  assert.equal(result.operation.status, "completed");
+  assert.equal(result.advice.status, "unavailable");
+  assert.equal(mock.calls(), 1);
+});
+test("a completed policy read survives a provider failure during adaptive continuation", async () => {
+  const mock = model([response("getPolicy", { topic: "delivery" })]);
+  const result = await run("How much is delivery?", mock);
+  assert.equal(result.operation.status, "completed");
+  assert.equal(result.operation.kind, "policy");
+  assert.equal(result.advice.status, "unavailable");
+  assert.match(result.answer, /delivery costs EUR 4/);
+  assert.equal(mock.calls(), 2);
 });

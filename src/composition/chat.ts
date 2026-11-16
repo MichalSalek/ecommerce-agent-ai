@@ -40,6 +40,5 @@ export async function resolveChatRuntime(
     currentRoute: () => ({ modelId: model.modelId, reason: "local" }),
     providerOptions: { [LLAMA_PROVIDER]: { parallel_tool_calls: false } },
     maxOutputTokens: 1024,
-    stableAdviceTools: true,
   };
 }

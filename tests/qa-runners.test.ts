@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +22,43 @@ test('local runner refuses public model endpoints before launching a server', ()
   const result = run('agent-local', ['--smoke'], { LLAMA_BASE_URL: 'https://api.groq.com/openai/v1' });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /private IPv4 or localhost/);
+});
+
+test('engine QA helper rejects unsafe providers, routes, keys and public bind before starting', () => {
+  const base={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,CHAT_PROVIDER:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
+  const invoke=(extra:Record<string,string>, args:string[]=[])=>spawnSync(process.execPath,['--import','tsx','scripts/agent-local-core.ts',...args],{encoding:'utf8',env:{...base,...extra},timeout:5000});
+  const help=invoke({},['--help']); assert.equal(help.status,0,help.stderr); assert.match(help.stdout,/ENGINE functional QA/);
+  for(const [override,pattern] of [
+    [{CHAT_PROVIDER:'groq'},/requires CHAT_PROVIDER=llama/],
+    [{LLAMA_MODEL:'other'},/requires LLAMA_MODEL/],
+    [{LLAMA_BASE_URL:'http://10.0.0.1:1/v1'},/requires a loopback llama proxy/],
+    [{GROQ_API_KEY:'fixture'},/refuses Groq keys and routes/],
+    [{HOSTNAME:'0.0.0.0'},/requires loopback binding/],
+  ] as [Record<string,string>,RegExp][]) {
+    const result=invoke(override); assert.notEqual(result.status,0); assert.match(result.stderr,pattern);
+  }
+});
+
+test('engine QA helper serves real deterministic comparison over loopback without a model call', async () => {
+  const env={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,CHAT_PROVIDER:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
+  const child=spawn(process.execPath,['--import','tsx','scripts/agent-local-core.ts'],{env,stdio:['ignore','pipe','pipe','ipc']});
+  let errors=''; child.stderr?.on('data',chunk=>{errors+=chunk.toString();});
+  try {
+    const info=await new Promise<{mode:string;port:number}>((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error('Engine server startup timed out')),5000);
+      child.once('message',value=>{clearTimeout(timer); resolve(value as {mode:string;port:number});});
+      child.once('exit',code=>{clearTimeout(timer); reject(new Error(`Engine exited ${code}: ${errors}`));});
+      child.once('error',reject);
+    });
+    assert.equal(info.mode,'engine-functional-QA');
+    const base=`http://127.0.0.1:${info.port}`;
+    const health=await (await fetch(`${base}/api/health`)).json() as {mode:string}; assert.equal(health.mode,'engine-functional-QA');
+    const response=await fetch(`${base}/api/chat`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contract:'shopping-v3',conversationId:'fixture',messages:[{id:'fixture',role:'user',parts:[{type:'text',text:'Compare mugs and carafe'}],metadata:{shoppingAction:{type:'compare',productIds:['mugs','carafe']}}}],cart:{lines:[]}}),signal:AbortSignal.timeout(5000)});
+    assert.equal(response.status,200,errors);
+    const events=(await response.text()).split(/\r?\n/).filter(s=>s.startsWith('data: ') && s!=='data: [DONE]').map(s=>JSON.parse(s.slice(6)));
+    assert.equal(events.find(e=>e.type==='data-operation')?.data.status,'completed');
+    assert.deepEqual(events.find(e=>e.type==='data-comparison')?.data.productIds,['mugs','carafe']);
+  } finally {child.kill('SIGTERM'); await new Promise<void>(resolve=>{if(child.exitCode!==null) resolve(); else child.once('exit',()=>resolve());});}
 });
 
 test('canary refuses malformed releases and missing caller credentials', () => {

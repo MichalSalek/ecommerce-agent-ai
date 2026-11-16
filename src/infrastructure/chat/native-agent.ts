@@ -233,6 +233,12 @@ function validatePresentation(
   if (answer.evidenceIds.some((id) => !evidence.some((e) => e.id === id)))
     throw new Error("Unknown evidence ID.");
   const cited = evidence.filter((e) => answer.evidenceIds.includes(e.id));
+  if (
+    /\b(?:smaller|larger|bigger|taller|shorter|lighter|heavier|faster|slower|(?:less|more)\s+space)\b|mniejsz|większ|wyższ|niższ|lżejsz|cięższ|szybsz|wolniejsz|mniej.{0,20}miejsc|więcej.{0,20}miejsc/i.test(
+      answer.text,
+    )
+  )
+    throw new Error("UNVERIFIED_PHYSICAL_COMPARISON");
   const foldedReply = answer.text
     .toLowerCase()
     .normalize("NFD")
@@ -290,7 +296,7 @@ function validatePresentation(
     answer.productIds = search.products.map((product) => product.id);
   }
   const absence =
-    /\b(?:no (?:products|items|stock|matches)|nothing (?:available|in stock)|we (?:do not|don't) (?:have|stock)|brak (?:produkt|asortyment|dopasowa)|nie (?:mamy|ma (?:produkt|takich)))/i.test(
+    /\b(?:no (?:products|items|stock|matches|assortment)|nothing (?:available|in stock)|we (?:do not|don't) (?:have|stock)|brak (?:produkt|asortyment|dopasowa)|nie (?:mamy|ma (?:produkt|takich)))/i.test(
       answer.text,
     );
   if (
@@ -308,7 +314,7 @@ function validatePresentation(
   )
     throw new Error("Check the exact catalog scope before claiming absence.");
   if (
-    /we (?:do not|don't) (?:have|stock)|nie mamy|brak asortymentu/i.test(
+    /we (?:do not|don't) (?:have|stock)|no assortment|nie mamy|brak asortymentu/i.test(
       answer.text,
     ) &&
     !/\bmore\b|additional|new options|kolejn|nowych/i.test(answer.text) &&
@@ -446,6 +452,24 @@ function validatePresentation(
       )
     )
       throw new Error("Unverified catalog count.");
+  const units = cited
+    .filter((e) => e.tool === "deviceCart" || e.tool === "proposeCart")
+    .flatMap((e) => {
+      const value = e.output as {
+        totalUnits?: number;
+        products?: { quantity?: number }[];
+        items?: { quantity?: number }[];
+      };
+      return [
+        value.totalUnits,
+        ...(value.products ?? value.items ?? []).map((row) => row.quantity),
+      ].filter((n): n is number => typeof n === "number");
+    });
+  for (const match of withoutReferences.matchAll(
+    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|jeden|dwa|trzy|cztery|pięć|sześć|siedem|osiem|dziewięć|dziesięć)\s+(?:units?|pieces?|sztuk\w*)\b/gi,
+  ))
+    if (!units.includes(countWords[match[1].toLowerCase()] ?? Number(match[1])))
+      throw new Error("Unverified cart unit count.");
   if (
     /\b\d+(?:[.,]\d+)?\s*(?:mm|cm|metres?|meters?|kg|grams?|kilograms?|litres?|liters?|ml|watts?|hours?)\b/i.test(
       withoutReferences,
@@ -1178,7 +1202,7 @@ async function executeAgent(
       ? "count"
       : /monetary|price|currency/i.test(reason)
         ? "price"
-        : /measurement/i.test(reason)
+        : /measurement|physical/i.test(reason)
           ? "dimensions"
           : /language/i.test(reason)
             ? "language"
@@ -1606,13 +1630,13 @@ async function executeAgent(
     const forceAnswer = step === 3 || terminalOnly;
     progress(forceAnswer ? "answer" : "understanding");
     const { proposeCart: _cartTool, ...readTools } = nativeTools;
-    const tools: ToolSet = forceAnswer
-      ? committed && options.stableAdviceTools
-        ? readTools
-        : { presentAnswer: nativeTools.presentAnswer }
-      : hasCartInstruction(turn.text)
-        ? nativeTools
-        : readTools;
+    const tools: ToolSet | undefined = committed
+      ? undefined
+      : forceAnswer
+        ? { presentAnswer: nativeTools.presentAnswer }
+        : hasCartInstruction(turn.text)
+          ? nativeTools
+          : readTools;
     if (terminalOnly) {
       finishCatalog();
       if (committed && (cart || (turn.action && turn.action.type !== "advice")))
@@ -1640,33 +1664,13 @@ async function executeAgent(
                   role: "user",
                   content: JSON.stringify({
                     request: turn.text,
-                    criteria: committed.checkpoint.after.criteria,
-                    evidenceIds: verifiedEvidence().map((e) => e.id),
-                    view: committed.presentation.view,
-                    productIds: committed.presentation.productIds,
-                    cheapestIds: committed.comparison?.cheapestIds,
-                    readResult: committed.checkpoint.readResult,
-                    ...(committed.checkpoint.readResult?.kind === "policy"
-                      ? {
-                          policy: getStorePolicy(
-                            committed.checkpoint.readResult.topic,
-                          ),
-                        }
-                      : {}),
                     records: committed.presentation.productIds
                       .flatMap((id) => products.filter((p) => p.id === id))
                       .map((p) => ({
-                        id: p.id,
                         name: p.name,
                         material: p.material,
                         features: p.features,
                         limitations: p.limitations,
-                        inStock: p.inStock,
-                        priceReference: `[[price:${p.id}]]`,
-                        dimensionsReference: `[[dimensions:${p.id}]]`,
-                        ...(committed!.comparison
-                          ? { differenceReference: `[[difference:${p.id}]]` }
-                          : {}),
                       })),
                   }),
                 },
@@ -1674,12 +1678,12 @@ async function executeAgent(
             : messages,
           tools,
           toolChoice: committed
-            ? "auto"
+            ? undefined
             : forceAnswer
               ? { type: "tool", toolName: "presentAnswer" }
               : "required",
           temperature: 0.1,
-          maxOutputTokens: committed ? 256 : 1024,
+          maxOutputTokens: committed ? 192 : 1024,
           maxRetries: 0,
           providerOptions: options.providerOptions,
           abortSignal: signal,
@@ -1687,7 +1691,7 @@ async function executeAgent(
       } catch (error) {
         accountUsage();
         if (
-          committed &&
+          (committed || finishCatalog()) &&
           (!signal.aborted || signal.reason?.name === "TimeoutError")
         )
           return unavailableAdvice(
@@ -1762,7 +1766,7 @@ async function executeAgent(
       }
     }
     const name = call.toolName;
-    // A stable local schema preserves the warmed prefix; optional advice can never execute its read tools.
+    // Optional advice can never execute a catalog or cart tool.
     if (committed && name !== "presentAnswer")
       return unavailableAdvice("UNEXPECTED_ADVICE_TOOL");
     console.log(
