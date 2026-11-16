@@ -185,6 +185,48 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     ),
   );
   try {
+    await t.test("direct comparison normalizes extra lookup matches and preserves request order", async () => {
+      for (const [text, expected] of [
+        ["Compare mugs and carafe", ["mugs", "carafe"]],
+        ["Compare carafe and mugs", ["carafe", "mugs"]],
+      ] as const) {
+        const action = run(catalog, [
+          call("searchProducts", { ...nativeTransition("new", { productTypes: ["mug", "carafe"] }), mode: "lookup" }),
+          call("compareProducts", { productIds: ["mugs", "carafe", "travel-mug"] }),
+          messages => present(messages, { view: "comparison", evidenceIds: ["e1", "e2"] }),
+        ], text);
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 3);
+        assert.ok(result.evidence[0].productIds.includes("travel-mug"));
+        assert.ok(result.evidence[0].productIds.includes("mugs"));
+        assert.ok(result.evidence[0].productIds.includes("carafe"));
+        assert.deepEqual(result.comparison?.productIds, expected);
+        assert.deepEqual(result.presentation.productIds, expected);
+        assert.deepEqual(result.checkpoint.after.comparisonIds, expected);
+      }
+    });
+    await t.test("comparison cannot fill in a missing requested product", async () => {
+      const action = run(catalog, [
+        call("searchProducts", { ...nativeTransition("new", { productTypes: ["mug", "carafe"] }), mode: "lookup" }),
+        call("compareProducts", { productIds: ["mugs", "travel-mug"] }),
+        call("compareProducts", { productIds: ["mugs", "carafe"] }),
+        messages => present(messages, { view: "comparison", evidenceIds: ["e1", "e3"] }),
+      ], "Compare mugs and carafe");
+      const result = await action.result;
+      assert.equal(result.status.status, "complete");
+      assert.equal(action.mock.count(), 4);
+      assert.ok(result.evidence.some(e => e.tool === "compareProducts" && typeof (e.output as any)?.error === "string"));
+      assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+    });
+    await t.test("non-list mentions do not override an explicit comparison later in the request", async () => {
+      const result = await run(catalog, [
+        call("compareProducts", { productIds: ["garden-bench", "patio-sofa"] }),
+        messages => present(messages, { view: "comparison" }),
+      ], "I have mugs and carafe at home; compare garden-bench with patio-sofa").result;
+      assert.equal(result.status.status, "complete");
+      assert.deepEqual(result.comparison?.productIds, ["garden-bench", "patio-sofa"]);
+    });
     await t.test(
       "independent product lookups compare without replacing the active garden search",
       async () => {

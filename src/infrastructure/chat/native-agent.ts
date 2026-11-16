@@ -1024,7 +1024,7 @@ async function executeAgent(
         }
         case "compareProducts": {
           const refs = (call.input as { productIds: string[] }).productIds;
-          const productIds = refs.map(
+          let productIds = refs.map(
             (ref) =>
               products.find(
                 (product) =>
@@ -1037,6 +1037,51 @@ async function executeAgent(
             productIds.some((id) => !products.some((p) => p.id === id))
           )
             throw new Error("Use distinct canonical product IDs.");
+          const current = turn.text.toLowerCase();
+          const named = products
+            .flatMap((product) => {
+              const positions = [product.id, product.name].flatMap((label) => {
+                const escaped = label
+                  .toLowerCase()
+                  .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                const match = new RegExp(
+                  `(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`,
+                ).exec(current);
+                return match ? [match.index] : [];
+              });
+              return positions.length
+                ? [{ id: product.id, position: Math.min(...positions) }]
+                : [];
+            })
+            .sort((a, b) => a.position - b.position)
+            .map((product) => product.id);
+          let unnamed = current;
+          for (const label of products
+            .filter((product) => named.includes(product.id))
+            .flatMap((product) => [product.id, product.name])
+            .sort((a, b) => b.length - a.length)) {
+            const escaped = label
+              .toLowerCase()
+              .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            unnamed = unnamed.replace(
+              new RegExp(`(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`, "g"),
+              " ",
+            );
+          }
+          const directList = !unnamed
+            .replace(
+              /\b(?:compare|and|with|vs|versus|to|please|could|can|you|the|products?|items?)\b/g,
+              "",
+            )
+            .replace(/[\s.,?!&:;'"/()-]+/g, "");
+          if (directList && named.length >= 2) {
+            if (named.some((id) => !productIds.includes(id)))
+              throw new Error(
+                `Include the explicitly named products: ${named.join(", ")}.`,
+              );
+            // Resolve a direct canonical list in source order; incidental lookup hits cannot expand it.
+            productIds = named;
+          }
           compared = comparison(productIds);
           after.comparisonIds = productIds;
           effectReferences = productIds;
