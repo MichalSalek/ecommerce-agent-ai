@@ -8,7 +8,7 @@ import type {
 import type { ChatRuntime } from "./runtime";
 import type { GroqConfig } from "./groq-model";
 
-type Circuit = { until: number; version: number; probe: boolean };
+type Circuit = { until: number; version: number; probe: boolean; reason?: string };
 const circuits = new WeakMap<typeof fetch, Map<string, Circuit>>();
 type Timing = { primaryTimeoutMs?: number; fallbackTimeoutMs?: number };
 
@@ -43,6 +43,17 @@ function circuitDuration(error: unknown): number {
       ? 600_000
       : 60_000;
   return retryMs(error, floor);
+}
+function failureReason(error: unknown): string {
+  if (APICallError.isInstance(error) && error.statusCode === 429) {
+    const window = error.responseHeaders?.["x-aurelle-quota-window"];
+    return window === "day" || window === "minute"
+      ? `rate-limit-${window}`
+      : "rate-limit";
+  }
+  return error instanceof Error && error.name === "TimeoutError"
+    ? "timeout"
+    : "transient";
 }
 async function attempt(
   model: LanguageModelV4,
@@ -125,17 +136,17 @@ export function makeGroqFailover(
   const first = primary.model as LanguageModelV4,
     second = alternative.model as LanguageModelV4;
   let listener: ((modelId: string) => void) | undefined;
-  let selected = config.modelId;
-  const notify = (modelId: string) => {
-    if (selected !== modelId) {
-      selected = modelId;
+  let route = { modelId: config.modelId, reason: "primary" };
+  const notify = (modelId: string, reason: string, switched = false) => {
+    route = { modelId, reason };
+    if (switched) {
       try {
         listener?.(modelId);
       } catch {
         /* UI progress is optional. */
       }
     }
-    console.info("[GROQ] model route", JSON.stringify({ modelId }));
+    console.info("[GROQ] model route", JSON.stringify({ modelId, reason, switched }));
   };
   const model: LanguageModelV4 = {
     specificationVersion: "v4",
@@ -146,13 +157,14 @@ export function makeGroqFailover(
       params.abortSignal?.throwIfAborted();
       let useFallback = circuit.probe || circuit.until > now();
       let probe = false;
+      let justFailedPrimary = false;
       if (!useFallback && circuit.until > 0) {
         circuit.probe = true;
         probe = true;
       }
       const version = circuit.version;
       if (!useFallback) {
-        notify(config.modelId);
+        notify(config.modelId, probe ? "primary-recovery-probe" : "primary");
         try {
           const result = await attempt(
             first,
@@ -163,6 +175,7 @@ export function makeGroqFailover(
           if (circuit.version === version) {
             circuit.until = 0;
             if (probe) circuit.probe = false;
+            if (probe) notify(config.modelId, "primary-recovered", true);
           }
           return result;
         } catch (error) {
@@ -174,18 +187,23 @@ export function makeGroqFailover(
             if (probe && circuit.version === version) circuit.probe = false;
             throw error;
           }
+          const switched = circuit.until <= now() && !circuit.probe && !probe;
           circuit.version++;
           circuit.until = Math.max(
             circuit.until,
             now() + circuitDuration(error),
           );
           circuit.probe = false;
+          circuit.reason = failureReason(error);
+          notify(fallbackId, circuit.reason, switched);
+          justFailedPrimary = true;
           useFallback = true;
         }
       }
       if (useFallback) {
         params.abortSignal?.throwIfAborted();
-        notify(fallbackId);
+        if (!justFailedPrimary)
+          notify(fallbackId, "fallback-active");
         try {
           return await attempt(
             second,
@@ -220,6 +238,7 @@ export function makeGroqFailover(
   return {
     ...primary,
     model,
+    currentRoute: () => ({ ...route }),
     takeUsage: () => [
       ...(primary.takeUsage?.() ?? []),
       ...(alternative.takeUsage?.() ?? []),

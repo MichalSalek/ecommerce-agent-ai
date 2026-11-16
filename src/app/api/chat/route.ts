@@ -9,11 +9,13 @@ import { chatAdmission } from "@/composition/admission";
 import { z } from "zod";
 import { getShop } from "@/composition/shop";
 import { products } from "@/data/products";
-import { resolveChatRuntime } from "@/composition/chat";
+import { resolveChatRuntime, catalogOnlyRuntime } from "@/composition/chat";
 import { legacyButtonAction } from "@/application/chat/shopping-v3";
 import {
   createNativeAgentStream,
   stateFromMessages,
+  adviceResultFromMessages,
+  needsModel,
 } from "@/infrastructure/chat/native-agent";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
@@ -106,14 +108,18 @@ export async function POST(request: Request) {
     release = admission?.allowed ? admission.release : undefined;
     const signal = AbortSignal.any([
       request.signal,
-      AbortSignal.timeout(90000),
+      AbortSignal.timeout(30000),
     ]);
-    const runtime = await resolveChatRuntime(signal);
     const text = user.parts
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join(" ");
     const state = stateFromMessages(normalized, user.id);
+    const action =
+      user.metadata?.shoppingAction ?? legacyButtonAction(text, state);
+    const runtime = needsModel({ text, action })
+      ? await resolveChatRuntime(signal)
+      : catalogOnlyRuntime;
     return createUIMessageStreamResponse({
       stream: createNativeAgentStream(
         runtime,
@@ -123,8 +129,11 @@ export async function POST(request: Request) {
           userMessageId: user.id,
           conversationId: body.conversationId,
           state,
-          action:
-            user.metadata?.shoppingAction ?? legacyButtonAction(text, state),
+          action,
+          adviceFor:
+            action?.type === "advice"
+              ? adviceResultFromMessages(normalized, action.operationId)
+              : undefined,
           cart: body.cart?.lines,
           history: normalized
             .slice(0, -1)

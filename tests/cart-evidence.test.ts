@@ -57,7 +57,7 @@ function runtimeFor(answers: { text: string; productIds: string[] }[]) {
 test("device cart quantities and current catalog totals are verified application evidence", async () => {
   const mock = runtimeFor([
     {
-      text: "Your cart has 2 units of Glass carafe, with a total of EUR 38.",
+      text: "Your cart has [[count:cart:totalUnits]] units of Glass carafe, with a total of [[amount:cart:totalEUR]].",
       productIds: ["carafe"],
     },
   ]);

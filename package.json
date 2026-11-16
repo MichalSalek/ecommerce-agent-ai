@@ -14,7 +14,9 @@
     "test:e2e": "playwright test",
     "container:smoke": "node scripts/container-smoke.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
-    "test:agent:live": "node scripts/agent-live.mjs"
+    "test:agent:live": "node scripts/agent-live.mjs",
+    "test:agent:local": "node scripts/agent-local.mjs --suite",
+    "test:agent:canary": "node scripts/groq-canary.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.91",

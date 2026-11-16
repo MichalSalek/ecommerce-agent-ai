@@ -5,6 +5,23 @@ import {
 } from "@/infrastructure/chat/llama-model";
 import { createGroqRuntime } from "@/infrastructure/chat/groq-model";
 import type { ChatRuntime } from "@/infrastructure/chat/runtime";
+export const catalogOnlyRuntime: ChatRuntime = {
+  model: {
+    specificationVersion: "v4",
+    provider: "catalog",
+    modelId: "catalog-only",
+    supportedUrls: {},
+    doGenerate: async () => {
+      throw new Error("Unexpected inference for a catalog action.");
+    },
+    doStream: async () => {
+      throw new Error("Unexpected inference for a catalog action.");
+    },
+  },
+  label: "Catalog",
+  providerOptions: {},
+  maxOutputTokens: 0,
+};
 export async function resolveChatRuntime(
   signal: AbortSignal,
 ): Promise<ChatRuntime> {
@@ -16,10 +33,13 @@ export async function resolveChatRuntime(
   }
   if (config.provider !== "llama")
     throw new Error("Unknown CHAT_PROVIDER. Use llama or groq.");
+  const model = await resolveLlamaModel(config, signal);
   return {
-    model: await resolveLlamaModel(config, signal),
+    model,
     label: config.modelId ?? "Local llama.cpp",
+    currentRoute: () => ({ modelId: model.modelId, reason: "local" }),
     providerOptions: { [LLAMA_PROVIDER]: { parallel_tool_calls: false } },
     maxOutputTokens: 1024,
+    stableAdviceTools: true,
   };
 }

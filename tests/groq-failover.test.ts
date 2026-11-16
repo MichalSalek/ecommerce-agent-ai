@@ -429,3 +429,19 @@ test("fallback may wait more than three seconds and up to ten seconds for known 
   assert.equal(waits.length, 1);
   assert.ok(waits[0] > 3000 && waits[0] <= 10_000);
 });
+
+test("recreated runtime reports active fallback without announcing another switch", async () => {
+  const fetcher: typeof fetch = async (_input, init) =>
+    body(init).model === config.modelId ? limited("minute", 1) : completion(config.fallback.modelId);
+  const first = createGroqRuntime(config, fetcher, () => 1000);
+  const switches: string[] = [];
+  first.setSwitchListener?.((id) => switches.push(id));
+  await run(first);
+  assert.deepEqual(switches, [config.fallback.modelId]);
+  const next = createGroqRuntime(config, fetcher, () => 1000);
+  next.setSwitchListener?.((id) => switches.push(id));
+  await run(next);
+  assert.deepEqual(switches, [config.fallback.modelId]);
+  assert.equal(next.currentRoute?.().modelId, config.fallback.modelId);
+  assert.equal(next.currentRoute?.().reason, "fallback-active");
+});

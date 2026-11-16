@@ -19,6 +19,7 @@ import { useCart } from "@/components/CartProvider";
 import type { ChatMessage } from "@/types/shop";
 import {
   chatProgressSchema,
+  adviceSchema,
   turnStatusSchema,
   type ChatProgress,
   type TurnStatus,
@@ -177,6 +178,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               if (
                 chunk.type === "data-cartAction" ||
                 chunk.type === "data-progress" ||
+                chunk.type === "data-advice" ||
                 chunk.type === "data-turnStatus"
               )
                 chunkGenerations.current.set(chunk, token);
@@ -212,6 +214,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           const parsed = turnStatusSchema.safeParse(part.data);
           if (parsed.success && parsed.data.status !== "complete")
             rememberCooldown(parsed.data);
+          return;
+        }
+        if (part.type === "data-advice") {
+          const parsed = adviceSchema.safeParse(part.data);
+          if (parsed.success && parsed.data.status === "unavailable" && parsed.data.retryAt)
+            rememberCooldown({ status: "provider-limit", retryAt: parsed.data.retryAt });
           return;
         }
         if (part.type !== "data-cartAction") return;
@@ -303,10 +311,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               i !== helpers.messages.length - 1 || m.role !== "assistant",
           )
         : helpers.messages;
+    // A pre-stream 429 has no assistant message from the SDK. Persist its typed
+    // failure against this user turn so reload keeps the reason and retry path.
+    const last = messages.at(-1);
+    const savedMessages: ChatMessage[] = httpFailure && last?.role === "user" && last.id === active.current?.userMessageId
+      ? [...messages, { id: `http-failure:${last.id}`.slice(0, 150), role: "assistant", parts: [{ type: "data-turnStatus", data: httpFailure }] }]
+      : messages;
     latest.current = {
       version: 1,
       id: chat.id,
-      messages: settledMessages(messages),
+      messages: settledMessages(savedMessages),
       draft,
     };
     const save = () => {
@@ -324,7 +338,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       clearTimeout(timer);
       window.removeEventListener("pagehide", save);
     };
-  }, [ready, chat.id, helpers.messages, helpers.status, draft]);
+  }, [ready, chat.id, helpers.messages, helpers.status, draft, httpFailure]);
   const newConversation = async () => {
     active.current = null;
     generation.current++;

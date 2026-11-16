@@ -196,7 +196,7 @@ test("cancelling a quota wait prevents the next upstream request", async () => {
     const response = completion();
     response.headers.set("x-ratelimit-limit-tokens", "2000");
     response.headers.set("x-ratelimit-remaining-tokens", "1");
-    response.headers.set("x-ratelimit-reset-tokens", "20s");
+    response.headers.set("x-ratelimit-reset-tokens", "10s");
     return response;
   };
   let started!: () => void;
@@ -572,4 +572,60 @@ test("classifies each supported provider metric and window", async () => {
   } finally {
     console.info = original;
   }
+});
+
+test("lower minute token limit learned from 429 persists across generic success headers", async () => {
+  let time = 1000, calls = 0;
+  const waits: number[] = [];
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) return Response.json(
+      { error: { message: "tokens per minute: Limit 7000, Used 7000, Requested 1200" } },
+      { status: 429 },
+    );
+    const response = completion();
+    response.headers.set("x-ratelimit-limit-tokens", "8000");
+    response.headers.set("x-ratelimit-remaining-tokens", "7999");
+    response.headers.set("x-ratelimit-reset-tokens", "1s");
+    return response;
+  };
+  const wait = async (ms: number) => { waits.push(ms); time += ms; };
+  const runtime = () => createGroqRuntime(config, fetcher, () => time, wait, { quotaWaitMaxMs: 0 });
+  await expectLimited(run(runtime()));
+  await assert.rejects(run(runtime()), (error: unknown) => {
+    assert.ok(APICallError.isInstance(error));
+    assert.equal(error.responseHeaders?.["x-aurelle-quota-limit"], "7000");
+    return true;
+  });
+  assert.equal(calls, 1);
+  time += 60_000;
+  await run(runtime());
+  for (let i = 0; i < 5; i++) await run(runtime());
+  await assert.rejects(run(runtime()), (error: unknown) => {
+    assert.ok(APICallError.isInstance(error));
+    assert.equal(error.responseHeaders?.["x-aurelle-quota-limit"], "7000");
+    return true;
+  });
+  assert.deepEqual(waits, []);
+});
+
+test("standalone Groq does not wait for multi-minute token recovery", async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    const response = completion();
+    response.headers.set("x-ratelimit-limit-tokens", "2000");
+    response.headers.set("x-ratelimit-remaining-tokens", "1");
+    response.headers.set("x-ratelimit-reset-tokens", "10m");
+    return response;
+  };
+  const runtime = createGroqRuntime(config, fetcher, () => 1000, async () => {
+    throw new Error("must not wait");
+  });
+  await run(runtime);
+  await assert.rejects(run(runtime), (error: unknown) =>
+    APICallError.isInstance(error) && error.statusCode === 429 &&
+    error.responseHeaders?.["x-aurelle-local-capacity"] === "1",
+  );
+  assert.equal(calls, 1);
 });

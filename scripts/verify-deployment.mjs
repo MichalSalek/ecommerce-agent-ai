@@ -47,6 +47,7 @@ const response = await fetch(`${base}/api/chat`, {
       {
         id: crypto.randomUUID(),
         role: "user",
+        metadata: { shoppingAction: { type: "search", preset: "budget", requestedCount: 10 } },
         parts: [
           { type: "text", text: "Show me ten products from the collection" },
         ],

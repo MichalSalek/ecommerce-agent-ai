@@ -10,7 +10,16 @@ export function createLlamaModel(
     name: LLAMA_PROVIDER,
     baseURL,
     apiKey: "not-needed",
-    fetch: fetchImplementation,
+    fetch: (input, init) => {
+      if (typeof init?.body !== "string")
+        return fetchImplementation(input, init);
+      const body = JSON.parse(init.body);
+      body.chat_template_kwargs = {
+        ...body.chat_template_kwargs,
+        enable_thinking: false,
+      };
+      return fetchImplementation(input, { ...init, body: JSON.stringify(body) });
+    },
   })(modelId);
 }
 export async function resolveLlamaModel(

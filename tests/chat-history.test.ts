@@ -382,3 +382,47 @@ test("v3 catalog counter extensions reject impossible client facts without clear
     ]);
   }
 });
+
+test("legacy completed comparison survives failed presentation with canonical summary", () => {
+  const state = initialAgentState();
+  state.language = "pl";
+  state.resultIds = ["mugs", "carafe"];
+  const snapshot = restoreConversation(JSON.stringify({ version: 1, id: "old", draft: "draft", messages: [
+    { id: "u", role: "user", parts: [{ type: "text", text: "Porównaj" }] },
+    { id: "a", role: "assistant", parts: [
+      { type: "text", text: "The lowest price is at €" },
+      { type: "data-shoppingState", data: { userMessageId: "u", text: "Porównaj", before: state, after: state, presentedIds: ["mugs", "carafe"] } },
+      { type: "data-comparison", data: { productIds: ["mugs", "carafe"], cheapestIds: ["mugs"], differencesCents: [] } },
+      { type: "data-turnStatus", data: { status: "partial", code: "MODEL_RESPONSE_INCOMPLETE" } },
+    ] },
+  ] }));
+  assert.ok(snapshot);
+  assert.equal(snapshot.draft, "draft");
+  assert.equal(snapshot.messages[0].id, "u");
+  const parts = snapshot.messages[1].parts;
+  assert.ok(parts.some((part) => part.type === "text" && part.text.includes("Najniższa cena") && !part.text.includes("at €")));
+  assert.ok(parts.some((part) => part.type === "data-operation" && part.data.status === "completed" && part.data.kind === "comparison"));
+  assert.ok(parts.some((part) => part.type === "data-turnStatus" && part.data.status === "complete"));
+  assert.ok(parts.some((part) => part.type === "data-shoppingState" && part.data.after.resultIds.length === 2));
+});
+
+test("history retains validated outcomes and advice while removing incomplete assistant text", () => {
+  const longReply = `${"A useful complete sentence. ".repeat(20)}A complete ending.`;
+  const messages = settledMessages([
+    { id: "u", role: "user", parts: [{ type: "text", text: "Keep my incomplete message" }] },
+    { id: "a", role: "assistant", parts: [
+      { type: "text", text: "The price is at €" },
+      { type: "data-operation", data: { id: "op", kind: "search", status: "completed" } },
+      { type: "data-advice", data: { status: "unavailable", reason: "quota", retryAt: 123456 } },
+    ] },
+    { id: "long", role: "assistant", parts: [{ type: "text", text: longReply }] },
+    { id: "advice", role: "assistant", parts: [{ type: "data-advice", data: { status: "included", text: "This is" } }] },
+  ]);
+  assert.equal(messages[0].parts[0].type, "text");
+  assert.ok(!messages[1].parts.some((part) => part.type === "text"));
+  assert.ok(messages[1].parts.some((part) => part.type === "data-advice" && part.data.status === "unavailable"));
+  assert.ok(messages[1].parts.some((part) => part.type === "data-operation" && part.data.status === "completed"));
+  assert.ok(messages.some((message) => message.id === "long"));
+  assert.ok(!messages.some((message) => message.id === "advice"));
+  assert.deepEqual(requestMessages(messages)[1].parts, messages[1].parts);
+});

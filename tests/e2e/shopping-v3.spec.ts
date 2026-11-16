@@ -171,7 +171,7 @@ test("comparison after details names the original five displayed products", asyn
   expect(prompts[3]).toBe(`Add ${products[0].name} to my cart`);
 });
 
-test("restored legacy failure shows one panel without stale reply text and keeps cards", async ({
+test("restored legacy results replace a presentation failure with a canonical summary", async ({
   page,
 }) => {
   await page.addInitScript(
@@ -216,14 +216,12 @@ test("restored legacy failure shows one panel without stale reply text and keeps
     { savedEvidence: evidence(1) },
   );
   await page.goto("/chat");
-  await expect(page.locator(".chat-error")).toHaveCount(1);
-  await expect(
-    page.getByText("The connection was interrupted. Please try again."),
-  ).toHaveCount(1);
+  await expect(page.locator(".chat-error")).toHaveCount(0);
+  await expect(page.getByText(/Showing 1 products from 86 matching your criteria/)).toBeVisible();
   await expect(
     page.getByText(/OLD GENERIC FAILURE|secret-provider-detail/),
   ).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Copy reply" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry last message" })).toHaveCount(0);
   await expect(page.locator(".product-results .product.compact")).toHaveCount(
     1,
   );
@@ -249,7 +247,7 @@ test("unknown HTTP error details are never shown in the conversation", async ({
   await expect(page.getByText(/raw-secret-provider-error/)).toHaveCount(0);
 });
 
-test("provider cooldown blocks retry and sending across reload and new chat", async ({
+test("provider cooldown blocks retry while new requests and catalog starters remain available", async ({
   page,
 }) => {
   const now = Date.now();
@@ -296,8 +294,7 @@ test("provider cooldown blocks retry and sending across reload and new chat", as
   await page.getByRole("textbox").fill("Keep this draft");
   await expect(
     page.getByRole("button", { name: "Send message" }),
-  ).toBeDisabled();
-  await page.getByRole("textbox").press("Enter");
+  ).toBeEnabled();
   expect(calls).toBe(1);
   const firstCountdown = await page.getByText(/^Retry in /).textContent();
   await page.clock.fastForward("00:02");
@@ -319,12 +316,11 @@ test("provider cooldown blocks retry and sending across reload and new chat", as
   await expect(page.getByRole("textbox")).toHaveValue("Keep this draft");
   await expect(
     page.getByRole("button", { name: "Send message" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByRole("button", { name: "New conversation" }).click();
-  await expect(page.getByText(/daily token limit/)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "My morning coffee", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.clock.fastForward("03:01");
   await expect(
     page.getByRole("button", { name: "My morning coffee", exact: true }),
@@ -447,7 +443,6 @@ test("pre-stream request limit uses one disabled failure panel", async ({
     page.getByRole("button", { name: "Retry last message" }),
   ).toBeDisabled();
   await page.getByRole("textbox").fill("Keep this text");
-  await page.getByRole("textbox").press("Enter");
   expect(calls).toBe(1);
   await page.reload();
   await expect(
@@ -455,7 +450,7 @@ test("pre-stream request limit uses one disabled failure panel", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Send message" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   expect(calls).toBe(1);
 });
 

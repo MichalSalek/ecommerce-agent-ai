@@ -24,3 +24,9 @@ npm run verify:deployment -- https://your-service.example <commit>
 ```
 
 The deployment check reads health and the prepared-index fingerprint, checks public routes and requests one `shopping-v3` response. A healthy endpoint or one completed response does not prove the complete shopping flow. For real-model acceptance, run `npm run test:agent:live -- <built-app-url>` against the configured service and verify the provider and model from runtime configuration or logs. The live runner records transcripts and simulated cart writes; separately verify actual browser storage and user-facing flows. Keep these results and their revision distinct in [verification evidence](VERIFICATION.md).
+
+## Reliable operation/advice release
+
+Use `npm run test:agent:local` against the isolated existing Qwen endpoint for broad bilingual QA, after its full-schema warm probe. The runner scrubs Groq credentials and propagates cancellation upstream. Local Qwen is not a substitute for the small real-Groq canary. The release canary measures actual uncached input and output with an 8,000-token release ledger; public model probes must use the remaining allowance. Catalog-only deployment verification uses structural actions and consumes no model tokens.
+
+The thirty-second AI deadline does not discard already committed catalog results. Both source and constrained-container jobs must pass for the same release SHA before the existing Render service is updated. Preserve the service plan, Groq route and device storage. The final evidence record must include public cart/reload behavior and ten minutes of metrics, events and the existing monitor.

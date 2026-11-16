@@ -8,6 +8,8 @@ import type {
   TurnStatus,
   ChatProgress,
   ChatMetadata,
+  Operation,
+  Advice,
 } from "@/application/chat/shopping-v3";
 export type { Product } from "@/domain/catalog/product";
 export type ChatMessage = UIMessage<
@@ -20,5 +22,7 @@ export type ChatMessage = UIMessage<
     comparison: Comparison;
     turnStatus: TurnStatus;
     progress: ChatProgress;
+    operation: Operation;
+    advice: Advice;
   }
 >;

@@ -20,6 +20,7 @@ export const agentStateSchema = z.object({
   resultIds: ids.max(10).default([]),
   comparisonIds: ids.max(10),
   selectedIds: ids.max(10),
+  pendingCartIntent: z.string().min(1).max(100).optional(),
 });
 export type AgentState = z.infer<typeof agentStateSchema>;
 export const initialAgentState = (): AgentState => ({
@@ -204,6 +205,73 @@ export const turnStatusSchema = z.object({
     .optional(),
 });
 export type TurnStatus = z.infer<typeof turnStatusSchema>;
+const operationFields = {
+  id: z.string().min(1).max(200),
+  kind: z.enum([
+    "search",
+    "details",
+    "comparison",
+    "categories",
+    "overview",
+    "policy",
+    "cart",
+    "conversation",
+  ]),
+};
+export const operationSchema = z.discriminatedUnion("status", [
+  z.object({ ...operationFields, status: z.literal("completed") }).strict(),
+  z
+    .object({
+      ...operationFields,
+      status: z.literal("needs-input"),
+      question: z.string().min(1).max(1000),
+      choices: ids.max(10).optional(),
+      input: z.enum(["selection", "quantity", "confirm"]).optional(),
+      quantity: z.number().int().min(1).max(99).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...operationFields,
+      status: z.literal("awaiting-device"),
+      cartOperationId: z.string().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      ...operationFields,
+      status: z.literal("failed"),
+      error: turnStatusSchema,
+    })
+    .strict(),
+]);
+export type Operation = z.infer<typeof operationSchema>;
+export const adviceSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("not-requested") }).strict(),
+  z
+    .object({ status: z.literal("included"), text: z.string().min(1).max(400) })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      reason: z.string().min(1).max(100),
+      retryAt: z.number().int().nonnegative().optional(),
+    })
+    .strict(),
+]);
+export type Advice = z.infer<typeof adviceSchema>;
+/** Legacy status is an adapter of the operation, never of optional advice. */
+export function operationTurnStatus(
+  operation: Operation,
+  usage?: TurnStatus["usage"],
+): TurnStatus {
+  return {
+    ...(operation.status === "failed"
+      ? operation.error
+      : { status: "complete" as const }),
+    ...(usage ? { usage } : {}),
+  };
+}
 export const chatProgressSchema = z.object({
   phase: z.enum([
     "understanding",
@@ -238,8 +306,113 @@ export const shoppingActionSchema = z.discriminatedUnion("type", [
       ),
   }),
   z.object({ type: z.literal("details"), productId: catalogId }),
+  z.object({
+    type: z.literal("search"),
+    preset: z.enum([
+      "coffee",
+      "garden",
+      "seating",
+      "outdoor",
+      "budget",
+      "gift",
+    ]),
+    requestedCount: z.number().int().min(1).max(1000).optional(),
+  }),
+  z.object({
+    type: z.literal("category"),
+    name: z
+      .string()
+      .refine((name) => products.some((product) => product.category === name)),
+  }),
+  z.object({ type: z.literal("categories") }),
+  z.object({ type: z.literal("more") }),
+  z.object({ type: z.literal("availability") }),
+  z.object({
+    type: z.literal("policy"),
+    topic: z.enum(["delivery", "returns", "payments"]),
+  }),
+  z.object({
+    type: z.literal("cart"),
+    productId: catalogId.optional(),
+    selection: z.enum(["selected", "first", "cheapest"]).default("selected"),
+    quantity: z.number().int().min(1).max(99).default(1),
+  }),
+  z.object({
+    type: z.literal("advice"),
+    operationId: z.string().min(1).max(200),
+  }),
 ]);
 export type ShoppingAction = z.infer<typeof shoppingActionSchema>;
+export const shoppingStarters: {
+  label: string;
+  text: string;
+  action: ShoppingAction;
+}[] = [
+  {
+    label: "My morning coffee",
+    text: "I need something for my morning coffee",
+    action: { type: "search", preset: "coffee" },
+  },
+  {
+    label: "Garden furniture",
+    text: "Show me garden furniture under EUR 150",
+    action: { type: "search", preset: "garden" },
+  },
+  {
+    label: "Finds under €25",
+    text: "What can I buy under EUR 25?",
+    action: { type: "search", preset: "budget" },
+  },
+  {
+    label: "Delivery & returns",
+    text: "How much is delivery?",
+    action: { type: "policy", topic: "delivery" },
+  },
+];
+export const shoppingExamples: {
+  label: string;
+  text: string;
+  action: ShoppingAction;
+}[] = [
+  { ...shoppingStarters[1], label: "Garden budget" },
+  {
+    label: "Refine",
+    text: "I need something to sit on",
+    action: { type: "search", preset: "seating" },
+  },
+  {
+    label: "Alternatives",
+    text: "Show me different options",
+    action: { type: "more" },
+  },
+  {
+    label: "Correction",
+    text: "A plant pot is not furniture. Show me outdoor furniture",
+    action: { type: "search", preset: "outdoor" },
+  },
+  {
+    label: "Compare",
+    text: "Compare mugs and carafe",
+    action: { type: "compare", productIds: ["mugs", "carafe"] },
+  },
+  {
+    label: "Add",
+    text: "Add two of the cheaper option to my cart",
+    action: { type: "cart", selection: "cheapest", quantity: 2 },
+  },
+  { ...shoppingStarters[0], label: "Coffee" },
+  {
+    label: "Availability",
+    text: "Show only in-stock products",
+    action: { type: "availability" },
+  },
+  {
+    label: "Gift",
+    text: "Find a gift under EUR 25",
+    action: { type: "search", preset: "gift" },
+  },
+  { ...shoppingStarters[3], label: "Delivery" },
+];
 export const chatMetadataSchema = z.object({
   shoppingAction: shoppingActionSchema.optional(),
 });

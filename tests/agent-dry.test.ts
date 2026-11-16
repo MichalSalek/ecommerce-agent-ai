@@ -186,151 +186,48 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     ),
   );
   try {
-    await t.test("429 after a UI comparison keeps verified comparison cards and one failed status", async () => {
+    await t.test("UI comparison and details use canonical data without inference", async () => {
       const ids = ["mugs", "carafe", "travel-mug", "coffee-grinder", "pour-over-dripper"];
-      let calls = 0;
-      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", balancer: true, windowsTransport: false }, async () => {
-        calls++;
-        return Response.json({ error: { message: "tokens per minute: Limit 1000, Used 900, Requested 200" } }, { status: 429, headers: { "retry-after": "8" } });
-      });
-      const state = { ...initialAgentState(), criteria: { functionalGroup: "coffee" as const }, resultIds: ids, lastIds: [ids[0]], shownIds: ids };
-      const events = await collect(createNativeAgentStream(runtime, catalog, {
-        text: "Compare the five coffee products", userMessageId: `compare-limit-${++sequence}`, conversationId: `visitor-${sequence}`, state,
+      const state = { ...initialAgentState(), criteria: { functionalGroup: "coffee" as const, maxPrice: 150 }, resultIds: ids, lastIds: ids, shownIds: ids };
+      const mock = scripted([]);
+      const detail = await runAgent(mock.runtime.model, catalog, {
+        text: "Tell me more about Ceramic mugs", userMessageId: `ui-detail-${++sequence}`, state,
+        action: { type: "details", productId: ids[0] },
+      }, new AbortController().signal, mock.runtime);
+      assert.equal(mock.count(), 0);
+      assert.equal(detail.operation.status, "completed");
+      assert.equal(detail.advice.status, "not-requested");
+      assert.match(detail.answer, /Ceramic mugs/);
+      assert.deepEqual(detail.presentation.productIds, [ids[0]]);
+      assert.deepEqual(detail.checkpoint.after.criteria, state.criteria);
+      assert.deepEqual(detail.checkpoint.after.resultIds, ids);
+      assert.deepEqual(detail.checkpoint.after.lastIds, [ids[0]]);
+      const events = await collect(createNativeAgentStream(mock.runtime, catalog, {
+        text: "Compare the five coffee products", userMessageId: `ui-compare-${++sequence}`, state: detail.checkpoint.after,
         action: { type: "compare", productIds: ids },
       }, new AbortController().signal, { contract: "shopping-v3" }));
-      assert.equal(calls, 1);
-      const comparisons = events.filter(event => event.type === "data-comparison");
-      assert.equal(comparisons.length, 1);
-      assert.ok(comparisons[0].type === "data-comparison");
-      assert.deepEqual(comparisons[0].data.productIds, ids);
-      const statuses = events.filter(event => event.type === "data-turnStatus");
-      assert.equal(statuses.length, 1);
-      assert.ok(statuses[0].type === "data-turnStatus");
-      assert.equal(statuses[0].data.status, "provider-limit");
-      assert.equal(statuses[0].data.code, "PROVIDER_RATE_LIMIT");
-      assert.equal(statuses[0].data.retryAfter, 8);
+      assert.equal(mock.count(), 0);
+      const comparison = events.find(event => event.type === "data-comparison");
+      assert.ok(comparison?.type === "data-comparison");
+      assert.deepEqual(comparison.data.productIds, ids);
+      const operation = events.find(event => event.type === "data-operation");
+      assert.ok(operation?.type === "data-operation");
+      assert.equal(operation.data.status, "completed");
+      const advice = events.find(event => event.type === "data-advice");
+      assert.ok(advice?.type === "data-advice");
+      assert.equal(advice.data.status, "not-requested");
+      const status = events.find(event => event.type === "data-turnStatus");
+      assert.ok(status?.type === "data-turnStatus");
+      assert.equal(status.data.status, "complete");
+      const summary = events.filter(event => event.type === "text-delta").map(event => event.type === "text-delta" ? event.delta : "").join("");
+      assert.match(summary, /5/);
+      assert.match(summary, /(?:EUR|€)/);
       assert.ok(!events.some(event => event.type === "error" || event.type === "data-cartAction"));
-      assert.equal(events.at(-1)?.type, "finish");
       const checkpoint = events.find(event => event.type === "data-shoppingState");
       assert.ok(checkpoint?.type === "data-shoppingState");
       assert.deepEqual(checkpoint.data.after.resultIds, ids);
       assert.deepEqual(checkpoint.data.after.criteria, state.criteria);
     });
-    await t.test("exhausted presentation corrections retain the loaded comparison as partial", async () => {
-      const ids = ["mugs", "carafe", "travel-mug", "coffee-grinder", "pour-over-dripper"];
-      const bad = call("presentAnswer", { text: "[[price:invented]]", language: "en", evidenceIds: ["e1"], productIds: [], view: "comparison" });
-      const mock = scripted([bad, bad]);
-      const events = await collect(createNativeAgentStream(mock.runtime, catalog, {
-        text: "Compare the five coffee products", userMessageId: `compare-partial-${++sequence}`, state: { ...initialAgentState(), resultIds: ids },
-        action: { type: "compare", productIds: ids },
-      }, new AbortController().signal, { contract: "shopping-v3" }));
-      assert.equal(mock.count(), 2);
-      const comparison = events.find(event => event.type === "data-comparison");
-      assert.ok(comparison?.type === "data-comparison");
-      assert.deepEqual(comparison.data.productIds, ids);
-      const statuses = events.filter(event => event.type === "data-turnStatus");
-      assert.equal(statuses.length, 1);
-      assert.ok(statuses[0].type === "data-turnStatus");
-      assert.equal(statuses[0].data.status, "partial");
-      assert.equal(statuses[0].data.code, "MODEL_RESPONSE_INCOMPLETE");
-      assert.ok(!events.some(event => event.type === "error" || event.type === "data-cartAction"));
-      assert.equal(events.at(-1)?.type, "finish");
-    });
-    await t.test(
-      "validated UI detail and comparison actions use canonical preload and one model inference",
-      async () => {
-        const ids = [
-          "mugs",
-          "carafe",
-          "travel-mug",
-          "coffee-grinder",
-          "pour-over-dripper",
-        ];
-        const state = {
-          ...initialAgentState(),
-          criteria: { functionalGroup: "coffee" as const, maxPrice: 150 },
-          resultIds: ids,
-          lastIds: ids,
-          shownIds: ids,
-        };
-        const detailModel = scripted([
-          (m) =>
-            present(m, {
-              evidenceIds: ["e1"],
-              productIds: [ids[0]],
-              view: "products",
-            }),
-        ]);
-        const detailTurn = {
-          text: "Tell me more about Ceramic mugs",
-          userMessageId: `ui-detail-${++sequence}`,
-          state,
-          action: { type: "details" as const, productId: ids[0] },
-        };
-        const detail = await runAgent(
-          detailModel.runtime.model,
-          catalog,
-          detailTurn,
-          new AbortController().signal,
-          detailModel.runtime,
-        );
-        assert.equal(detail.status.status, "complete");
-        assert.equal(detailModel.count(), 1);
-        assert.deepEqual(detailModel.requests[0].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
-        assert.equal(lastTool(detailModel.requests[0].messages).id, ids[0]);
-        assert.equal(
-          lastTool(detailModel.requests[0].messages).priceEUR,
-          products.find((p) => p.id === ids[0])?.price,
-        );
-        assert.ok(
-          detailModel.requests[0].messages.some(
-            (m: any) => m.role === "user" && m.content.includes("Ceramic mugs"),
-          ),
-        );
-        assert.deepEqual(detail.checkpoint.after.criteria, state.criteria);
-        assert.deepEqual(detail.checkpoint.after.resultIds, ids);
-        assert.deepEqual(detail.checkpoint.after.lastIds, [ids[0]]);
-        const compareModel = scripted([
-          (m) => present(m, { evidenceIds: ["e1"], view: "comparison" }),
-        ]);
-        const compareTurn = {
-          text: "Compare Ceramic mugs, Glass carafe, Travel mug, Coffee grinder and Pour-over dripper",
-          userMessageId: `ui-compare-${++sequence}`,
-          state: detail.checkpoint.after,
-          action: { type: "compare" as const, productIds: ids },
-        };
-        const compared = await runAgent(
-          compareModel.runtime.model,
-          catalog,
-          compareTurn,
-          new AbortController().signal,
-          compareModel.runtime,
-        );
-        assert.equal(compared.status.status, "complete");
-        assert.equal(compareModel.count(), 1);
-        assert.deepEqual(compareModel.requests[0].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
-        assert.deepEqual(
-          lastTool(compareModel.requests[0].messages).products.map(
-            (p: { id: string }) => p.id,
-          ),
-          ids,
-        );
-        assert.ok(
-          compareModel.requests[0].messages.some(
-            (m: any) => m.role === "user" && m.content.includes("Ceramic mugs"),
-          ),
-        );
-        assert.deepEqual(compared.comparison?.productIds, ids);
-        assert.deepEqual(compared.checkpoint.after.criteria, state.criteria);
-        assert.deepEqual(compared.checkpoint.after.resultIds, ids);
-      },
-    );
     await t.test(
       "invalid UI action IDs and comparison lengths fail before model inference",
       async () => {
@@ -403,10 +300,8 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(inspected.status.status, "complete");
         assert.deepEqual(inspected.checkpoint.after.lastIds, [ids[0]]);
         assert.deepEqual(inspected.checkpoint.after.resultIds, ids);
-        assert.deepEqual(detail.mock.requests[1].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
+        assert.equal(detail.mock.requests[1].tool_choice, "auto");
+        assert.equal(detail.mock.requests[1].max_tokens, 256);
         const action = run(
           catalog,
           [
@@ -421,10 +316,8 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.count(), 2);
         assert.deepEqual(compared.comparison?.productIds, ids);
         assert.deepEqual(compared.checkpoint.after.resultIds, ids);
-        assert.deepEqual(action.mock.requests[1].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
+        assert.equal(action.mock.requests[1].tool_choice, "auto");
+        assert.equal(action.mock.requests[1].max_tokens, 256);
         assert.deepEqual(
           compared.evidence
             .filter(
@@ -690,10 +583,8 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         const result = await action.result;
         assert.equal(result.status.status, "complete");
         assert.equal(action.mock.count(), 2);
-        assert.deepEqual(action.mock.requests[1].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
+        assert.equal(action.mock.requests[1].tool_choice, "auto");
+        assert.equal(action.mock.requests[1].max_tokens, 256);
         assert.deepEqual(
           action.mock.requests[1].tools.map((t: any) => t.function.name),
           ["presentAnswer"],
@@ -703,7 +594,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       },
     );
     await t.test(
-      "repeated provider tool-choice violations produce a partial turn, not a connection error",
+      "invalid optional advice leaves the search complete without regeneration",
       async () => {
         const search = call(
           "searchProducts",
@@ -726,11 +617,64 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         );
         const status = events.find((event) => event.type === "data-turnStatus");
         assert.ok(status?.type === "data-turnStatus");
-        assert.equal(status.data.status, "partial");
+        assert.equal(status.data.status, "complete");
+        const operation = events.find((event) => event.type === "data-operation");
+        const advice = events.find((event) => event.type === "data-advice");
+        assert.ok(operation?.type === "data-operation" && operation.data.status === "completed");
+        assert.ok(advice?.type === "data-advice" && advice.data.status === "unavailable");
         assert.ok(!events.some((event) => event.type === "error"));
-        assert.equal(mock.count(), 3);
+        assert.equal(mock.count(), 2);
       },
     );
+    await t.test("provider 429 during optional advice keeps a completed detail", async () => {
+      let calls = 0;
+      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", balancer: true, windowsTransport: false }, async () => {
+        calls++;
+        if (calls === 2) return Response.json({ error: { message: "tokens per minute: Limit 1000, Used 900, Requested 200" } }, { status: 429, headers: { "retry-after": "8" } });
+        return Response.json({
+          id: "detail", model: "test", created: 0, object: "chat.completion",
+          choices: [{ index: 0, message: { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "getProductDetails", arguments: JSON.stringify({ productId: "mugs" }) } }] }, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+        });
+      });
+      const events = await collect(createNativeAgentStream(runtime, catalog, { text: "Tell me about the mugs", state: initialAgentState(), userMessageId: `detail-quota-${++sequence}` }, new AbortController().signal, { contract: "shopping-v3" }));
+      assert.equal(calls, 2);
+      const operation = events.find(event => event.type === "data-operation");
+      const advice = events.find(event => event.type === "data-advice");
+      const status = events.find(event => event.type === "data-turnStatus");
+      assert.ok(operation?.type === "data-operation" && operation.data.status === "completed");
+      assert.ok(advice?.type === "data-advice" && advice.data.status === "unavailable");
+      assert.ok(status?.type === "data-turnStatus" && status.data.status === "complete");
+      assert.ok(!events.some(event => event.type === "error"));
+      assert.match(events.filter(event => event.type === "text-delta").map(event => event.type === "text-delta" ? event.delta : "").join(""), /Ceramic mugs/);
+    });
+    await t.test("truncated optional advice is discarded after one attempt", async () => {
+      let calls = 0;
+      const requests: any[] = [];
+      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", balancer: true, windowsTransport: false }, async (_input, init) => {
+        const request = JSON.parse(String(init?.body));
+        requests.push(request);
+        calls++;
+        const search = call("searchProducts", nativeTransition("new", {}, { requestedCount: 2 }));
+        return Response.json({
+          id: `truncated-${calls}`, model: "test", created: 0, object: "chat.completion",
+          choices: [{ index: 0, message: calls === 1
+            ? { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: search.name, arguments: JSON.stringify(search.input) } }] }
+            : { role: "assistant", content: "The best choice is" },
+            finish_reason: calls === 1 ? "tool_calls" : "length" }],
+          usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+        });
+      });
+      const result = await runAgent(runtime.model, catalog, { text: "Show two products", state: initialAgentState(), userMessageId: `truncated-${++sequence}` }, new AbortController().signal, runtime);
+      assert.equal(calls, 2);
+      assert.equal(requests[1].tool_choice, "auto");
+      assert.equal(requests[1].max_tokens, 256);
+      assert.equal(result.operation.status, "completed");
+      assert.equal(result.status.status, "complete");
+      assert.equal(result.advice.status, "unavailable");
+      assert.equal(result.search?.products.length, 2);
+      assert.doesNotMatch(result.answer, /best choice is/i);
+    });
     await t.test("foreign currency cannot become catalog advice", async () => {
       const action = run(
         catalog,
@@ -755,8 +699,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       );
       const result = await action.result;
       assert.equal(result.status.status, "complete");
-      assert.equal(action.mock.count(), 3);
-      assert.match(result.answer, /22\.00 EUR/);
+      assert.equal(action.mock.count(), 2);
+      assert.equal(result.operation.status, "completed");
+      assert.equal(result.advice.status, "unavailable");
+      assert.match(result.answer, /Ceramic mugs/);
       assert.doesNotMatch(result.answer, /£/);
     });
     await t.test(
@@ -954,10 +900,8 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.count(), 4);
         assert.equal(action.mock.requests[1].tool_choice, "required");
         assert.equal(action.mock.requests[2].tool_choice, "required");
-        assert.deepEqual(action.mock.requests[3].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
+        assert.equal(action.mock.requests[3].tool_choice, "auto");
+        assert.equal(action.mock.requests[3].max_tokens, 256);
         assert.deepEqual(
           result.evidence
             .filter(
@@ -1150,7 +1094,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     await t.test(
       "cart proposal is not a browser-confirmed addition",
       async () => {
-        const result = await run(
+        const attempt = run(
           catalog,
           [
             call("proposeCart", {
@@ -1174,14 +1118,18 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           ],
           "Add the first item to my cart",
           { ...initialAgentState(), lastIds: ["mugs", "carafe"] },
-        ).result;
+        );
+        const result = await attempt.result;
+        assert.equal(attempt.mock.count(), 0);
         assert.equal(result.status.status, "complete");
-        assert.equal(result.answer, "Your device will confirm after saving.");
+        assert.match(result.answer, /device.*save/i);
+        assert.equal(result.operation.status, "awaiting-device");
+        assert.equal(result.advice.status, "not-requested");
         assert.equal(result.cart?.productId, "mugs");
       },
     );
     await t.test(
-      "valid model confirmation keeps its text without forcing repeated cards",
+      "canonical search results remain visible alongside optional advice",
       async () => {
         const action = await run(
           catalog,
@@ -1205,8 +1153,11 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           },
         ).result;
         assert.equal(action.status.status, "complete");
-        assert.equal(action.answer, "These products are in stock.");
-        assert.equal(action.presentation.view, "none");
+        assert.equal(action.operation.status, "completed");
+        assert.match(action.answer, /products/);
+        assert.equal(action.advice.status, "included");
+        if (action.advice.status === "included") assert.equal(action.advice.text, "These products are in stock.");
+        assert.equal(action.presentation.view, "products");
         const page = await run(
           catalog,
           [
@@ -1310,7 +1261,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
             "Invent a special offer",
           ).result;
           assert.equal(action.status.status, "complete");
-          assert.equal(action.answer, "Delivery costs EUR 4.");
+          assert.match(action.answer, /delivery costs EUR 4/i);
+          assert.equal(action.operation.status, "completed");
+          assert.equal(action.advice.status, "unavailable");
         }
       },
     );
@@ -1613,7 +1566,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       },
     );
     await t.test(
-      "provider tool_use_failed 400 gets one forced terminal correction",
+      "provider tool_use_failed during advice preserves completed search without regeneration",
       async () => {
         const bodies: any[] = [];
         const runtime = createGroqRuntime(
@@ -1700,15 +1653,11 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           runtime,
         );
         assert.equal(result.status.status, "complete");
-        assert.equal(bodies.length, 3);
-        assert.deepEqual(bodies[1].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
-        assert.deepEqual(bodies[2].tool_choice, {
-          type: "function",
-          function: { name: "presentAnswer" },
-        });
+        assert.equal(bodies.length, 2);
+        assert.equal(result.operation.status, "completed");
+        assert.equal(result.advice.status, "unavailable");
+        assert.equal(bodies[1].tool_choice, "auto");
+        assert.equal(bodies[1].max_tokens, 256);
         assert.ok(
           bodies[0].messages.some(
             (m: any) =>
@@ -1800,7 +1749,8 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         "how many",
         exhausted.checkpoint.after,
       ).result;
-      assert.equal(overview.answer, "There are 6 products.");
+      assert.match(overview.answer, /\b6 products\b/);
+      assert.equal(overview.operation.status, "completed");
     });
     await t.test(
       "hard and approximate budgets, negation and soft preferences",
@@ -2168,7 +2118,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           action.mock.runtime,
         );
         assert.equal(retry.cart?.operationId, added.cart?.operationId);
-        assert.equal(action.mock.count(), 2);
+        assert.equal(action.mock.count(), 0);
+        assert.equal(added.operation.status, "awaiting-device");
+        assert.equal(added.advice.status, "not-requested");
+        assert.equal(retry.operation.id, added.operation.id);
         const rejected = await run(
           catalog,
           [
@@ -2208,7 +2161,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       },
     );
     await t.test(
-      "fake references and malformed inputs are corrected, not emitted",
+      "fake advice references are rejected and malformed initial calls are corrected",
       async () => {
         const result = await run(
           catalog,
@@ -2232,9 +2185,11 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           "mug price",
         ).result;
         assert.equal(result.status.status, "complete");
-        assert.match(result.answer, /22\.00 EUR/);
+        assert.match(result.answer, /Ceramic mugs/);
+        assert.equal(result.operation.status, "completed");
+        assert.equal(result.advice.status, "unavailable");
         assert.doesNotMatch(result.answer, /\[\[/);
-        const invalid = await run(
+        const invalidAttempt = run(
           catalog,
           [
             call("searchProducts", {
@@ -2252,7 +2207,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
             }),
           ],
           "invalid",
-        ).result;
+        );
+        const invalid = await invalidAttempt.result;
+        assert.equal(invalidAttempt.mock.count(), 2);
         assert.equal(invalid.status.status, "complete");
         assert.equal(invalid.search, undefined);
       },
@@ -2300,12 +2257,16 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         ];
         for (const bad of badAnswers) {
           await inner.test(`reject ${JSON.stringify(bad.input)}`, async () => {
-            const result = await run(
+            const attempt = run(
               catalog,
               [call("getCatalogOverview", { criteria: {} }), bad, good],
               `adversarial ${JSON.stringify(bad)}`,
-            ).result;
-            assert.equal(result.answer, "I can help you check.");
+            );
+            const result = await attempt.result;
+            assert.equal(result.operation.status, "completed");
+            assert.equal(result.advice.status, "unavailable");
+            assert.equal(attempt.mock.count(), 2);
+            assert.doesNotMatch(result.answer, /invented-product|999|no assortment|\[\[/i);
           });
         }
         await inner.test("reject unknown tool", async () => {
@@ -2320,7 +2281,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       },
     );
     await t.test(
-      "retry after transport failure reuses the resolved page",
+      "advice failure preserves the resolved page and stable operation on retry",
       async () => {
         const state = {
           ...initialAgentState(),
@@ -2398,7 +2359,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           failed,
         );
         assert.equal(firstPage.length, 2);
-        assert.equal(interrupted.status.status, "connection-error");
+        assert.equal(interrupted.status.status, "complete");
+        assert.equal(interrupted.operation.status, "completed");
+        assert.equal(interrupted.advice.status, "unavailable");
         assert.deepEqual(interrupted.search?.products.map((p) => p.id), firstPage);
         const retry = scripted([
           call("searchProducts", nativeTransition("more")),
@@ -2439,7 +2402,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           new AbortController().signal,
           partialModel.runtime,
         );
-        assert.equal(partial.status.status, "partial");
+        assert.equal(partial.status.status, "complete");
+        assert.equal(partial.operation.status, "completed");
+        assert.equal(partial.advice.status, "unavailable");
+        assert.equal(partialModel.count(), 2);
         const correctedModel = scripted([
           call("searchProducts", nativeTransition("more")),
           present,
@@ -2452,6 +2418,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           correctedModel.runtime,
         );
         assert.equal(corrected.status.status, "complete");
+        assert.equal(corrected.operation.id, partial.operation.id);
         assert.deepEqual(corrected.search?.products, partial.search?.products);
       },
     );

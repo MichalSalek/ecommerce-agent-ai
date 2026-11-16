@@ -10,6 +10,8 @@ import { ComparisonResults } from "@/components/chat/ComparisonResults";
 import { useCart, type ActionResult } from "@/components/CartProvider";
 import { products } from "@/data/products";
 import { WELCOME_ID } from "@/application/chat/history";
+import { shoppingStarters, shoppingExamples } from "@/application/chat/shopping-v3";
+import { assistantTextError, resolveLanguage, type Language } from "@/application/chat/assistant-text";
 import type {
   TurnStatus,
   ChatProgress,
@@ -17,6 +19,8 @@ import type {
 } from "@/application/chat/shopping-v3";
 import type { ChatMessage } from "@/types/shop";
 function isFailedMessage(message: ChatMessage): boolean {
+  const operation = message.parts.findLast((part) => part.type === "data-operation");
+  if (operation?.type === "data-operation") return operation.data.status === "failed";
   return (
     message.role === "assistant" &&
     message.parts.some(
@@ -60,15 +64,6 @@ function waitLabel(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
 }
-const starters = [
-  {
-    label: "My morning coffee",
-    text: "I need something for my morning coffee",
-  },
-  { label: "Garden furniture", text: "Show me garden furniture under EUR 150" },
-  { label: "Finds under €25", text: "What can I buy under EUR 25?" },
-  { label: "Delivery & returns", text: "How much is delivery?" },
-];
 export default function ChatView() {
   const {
     id: conversationId,
@@ -194,13 +189,13 @@ export default function ChatView() {
       !ready ||
       busy ||
       conversationClosed ||
-      (cooldown?.retryAt ?? 0) > Date.now() ||
+      (shoppingAction?.type === "advice" && (cooldown?.retryAt ?? 0) > Date.now()) ||
       !text.trim()
     )
       return;
     nearBottom.current = true;
     threadPosition.current.follow = true;
-    setDraft("");
+    if (!shoppingAction) setDraft("");
     void sendMessage({
       text: text.trim(),
       ...(shoppingAction ? { metadata: { shoppingAction } } : {}),
@@ -231,6 +226,8 @@ export default function ChatView() {
           p.type === "data-products" ||
           p.type === "data-categories" ||
           p.type === "data-comparison" ||
+          p.type === "data-operation" ||
+          p.type === "data-advice" ||
           p.type === "data-turnStatus" ||
           (p.type.startsWith("tool-") &&
             "state" in p &&
@@ -243,12 +240,30 @@ export default function ChatView() {
   );
   const latestTypedFailure = messages
     .slice(lastUserIndex + 1)
+    .filter((message) => isFailedMessage(message))
     .flatMap((message) => (message.role === "assistant" ? message.parts : []))
     .findLast(
       (part) =>
         part.type === "data-turnStatus" && part.data.status !== "complete",
     );
-  const latestFailed = Boolean(latestTypedFailure || error || httpFailure);
+  const latestCompleted = messages.slice(lastUserIndex + 1).some((message) => message.parts.some((part) => part.type === "data-operation" && part.data.status !== "failed"));
+  const latestFailed = Boolean(latestTypedFailure || messages.slice(lastUserIndex + 1).some(isFailedMessage) || (!latestCompleted && (error || httpFailure)));
+  let language: Language = "en";
+  const languages = new Map<string, Language>();
+  for (const message of messages) {
+    if (message.role === "user") {
+      const text = message.parts.filter((part) => part.type === "text").map((part) => part.text).join(" ");
+      language = resolveLanguage(text, language, Boolean(message.metadata?.shoppingAction));
+    }
+    const state = message.parts.findLast((part) => part.type === "data-shoppingState");
+    if (state?.type === "data-shoppingState") language = state.data.after.language;
+    languages.set(message.id, language);
+  }
+  const latestRead = messages.flatMap((message) => message.parts)
+    .findLast((part) => part.type === "data-operation" && part.data.status === "completed" && ["search", "details", "comparison", "categories", "overview", "policy"].includes(part.data.kind));
+  const lastAdvice = messages.flatMap((message) => message.parts).findLast((part) => part.type === "data-advice");
+  const latestReadIndex = messages.findLastIndex((message) => message.parts.some((part) => part === latestRead));
+  const lastAdviceIndex = messages.findLastIndex((message) => message.parts.some((part) => part === lastAdvice));
   const candidates = [...visible]
     .reverse()
     .filter((message) => message.role === "assistant")
@@ -455,18 +470,50 @@ export default function ChatView() {
                         key={i}
                         categories={part.data}
                         disabled={
-                          !ready || busy || conversationClosed || limited
+                          !ready || busy || conversationClosed
                         }
                         onSelect={(name) =>
-                          send(`Show me products in category ${name}`)
+                          send(`Show me products in category ${name}`, { type: "category", name })
                         }
                       />
                     );
                   if (part.type === "data-comparison")
                     return <ComparisonResults key={i} comparison={part.data} />;
+                  if (part.type === "data-operation" && part.data.status === "needs-input" && part.data.kind === "cart" && part.data.input !== "quantity" && part.data.choices?.length && message.id === visible.at(-1)?.id) {
+                    const choice = part.data;
+                    return <div className="chat-followups" key={i} aria-label="Choose a product">
+                      {choice.choices!.flatMap((id) => products.filter((product) => product.id === id)).map((product) => <button key={product.id} disabled={busy || conversationClosed} onClick={() => send(`Add ${choice.quantity ?? 1} × ${product.name} to my cart`, { type: "cart", productId: product.id, selection: "selected", quantity: choice.quantity ?? 1 })}>{choice.input ? `Add ${choice.quantity ?? 1} × ${product.name}` : product.name}</button>)}
+                    </div>;
+                  }
+                  if (part.type === "data-advice") {
+                    if (part !== message.parts.findLast((item) => item.type === "data-advice")) return null;
+                    if (part.data.status === "included")
+                      return assistantTextError(part.data.text, undefined, languages.get(message.id)) ? null : <p key={i}>{part.data.text}</p>;
+                    if (part.data.status !== "unavailable") return null;
+                    const operation = message.parts.findLast((item) => item.type === "data-operation");
+                    const ownIndex = messages.findIndex((item) => item.id === message.id);
+                    const priorRequest = messages.slice(0, ownIndex).findLast((item) => item.role === "user");
+                    const target = priorRequest?.metadata?.shoppingAction?.type === "advice"
+                      ? priorRequest.metadata.shoppingAction.operationId
+                      : operation?.type === "data-operation" ? operation.data.id : undefined;
+                    if (target && messages.slice(ownIndex + 1).some((item) => item.role === "user" && item.metadata?.shoppingAction?.type === "advice" && item.metadata.shoppingAction.operationId === target)) return null;
+                    const seconds = Math.max(0, Math.ceil((Math.max(part.data.retryAt ?? 0, cooldown?.retryAt ?? 0) - clock) / 1000));
+                    return <div className="chat-error" role="status" key={i}>
+                      <p>{languages.get(message.id) === "pl" ? "Porada jest teraz niedostępna." : "Advice is unavailable right now."}</p>
+                      {seconds > 0 && <p>{languages.get(message.id) === "pl" ? `Spróbuj ponownie za ${waitLabel(seconds)}.` : `Try again in ${waitLabel(seconds)}.`}</p>}
+                      {target && !conversationClosed && <button disabled={busy || seconds > 0} onClick={() => send("Help me choose", { type: "advice", operationId: target })}>Retry advice</button>}
+                    </div>;
+                  }
+                  if (part.type === "data-operation" && part.data.status === "failed" && !message.parts.some((item) => item.type === "data-turnStatus" && item.data.status !== "complete")) {
+                    return <div className="chat-error" role="status" key={i}>
+                      <p>{failureMessage(part.data.error)}</p>
+                      {message.id === visible.at(-1)?.id && limited && <p>Retry in {waitLabel(retrySeconds)}.</p>}
+                      {message.id === visible.at(-1)?.id && <button disabled={busy || limited} onClick={() => { if ((cooldown?.retryAt ?? 0) <= Date.now()) void regenerate(); }}>Retry last message</button>}
+                    </div>;
+                  }
                   if (
                     part.type === "data-turnStatus" &&
-                    part.data.status !== "complete"
+                    part.data.status !== "complete" && isFailedMessage(message)
                   ) {
                     if (
                       part !==
@@ -519,6 +566,7 @@ export default function ChatView() {
             ))
           )}
           {cartFeedback.map(({ action, status }) => {
+            const pl = languages.get(action.userMessageId) === "pl";
             const effectiveStatus =
               status === "added" || status === "duplicate"
                 ? status
@@ -537,7 +585,7 @@ export default function ChatView() {
                   <>
                     {effectiveStatus === "added" && items.length > 1 ? (
                       <>
-                        <p>Added to your cart:</p>
+                        <p>{pl ? "Dodano do koszyka:" : "Added to your cart:"}</p>
                         <ul>
                           {items.map((item) => (
                             <li key={item.productId}>
@@ -552,8 +600,8 @@ export default function ChatView() {
                     ) : (
                       <p>
                         {effectiveStatus === "added"
-                          ? `Added ${items[0].quantity} × ${products.find((product) => product.id === items[0].productId)?.name ?? "product"} to your cart.`
-                          : "This request was already processed."}
+                          ? pl ? `Dodano do koszyka: ${items[0].quantity} × ${products.find((product) => product.id === items[0].productId)?.name ?? "produkt"}.` : `Added ${items[0].quantity} × ${products.find((product) => product.id === items[0].productId)?.name ?? "product"} to your cart.`
+                          : pl ? "Ta prośba została już wykonana." : "This request was already processed."}
                       </p>
                     )}
                     <Link href="/cart">Open cart ↗</Link>
@@ -562,10 +610,10 @@ export default function ChatView() {
                   <>
                     <p>
                       {effectiveStatus === "limit"
-                        ? "The cart cannot hold more than 99 of this item."
+                        ? pl ? "W koszyku nie może być więcej niż 99 sztuk tego produktu." : "The cart cannot hold more than 99 of this item."
                         : effectiveStatus === "unavailable"
-                          ? "This item is unavailable and was not added."
-                          : "The cart could not be saved, so this item was not added. Please try again."}
+                          ? pl ? "Ten produkt jest niedostępny i nie został dodany." : "This item is unavailable and was not added."
+                          : pl ? "Nie udało się zapisać koszyka. Produkt nie został dodany. Spróbuj ponownie." : "The cart could not be saved, so this item was not added. Please try again."}
                     </p>
                     {(effectiveStatus === "storage-error" ||
                       effectiveStatus === "not-ready") && (
@@ -599,8 +647,7 @@ export default function ChatView() {
           {resultCount > 0 &&
             !busy &&
             !conversationClosed &&
-            !latestFailed &&
-            !limited && (
+            !latestFailed && (
               <div
                 className="chat-followups"
                 aria-label="Suggested follow-up questions"
@@ -618,7 +665,7 @@ export default function ChatView() {
                   </button>
                 )}
                 {remaining > 0 && (
-                  <button onClick={() => send("Show me other options")}>
+                  <button onClick={() => send("Show me other options", { type: "more" })}>
                     Show other options
                   </button>
                 )}
@@ -633,19 +680,26 @@ export default function ChatView() {
                   More details
                 </button>
                 <button
-                  onClick={() => send(`Add ${resultNames[0]} to my cart`)}
+                  onClick={() => send(`Add ${resultNames[0]} to my cart`, { type: "cart", productId: resultIds[0], selection: "selected", quantity: 1 })}
                 >
                   Add the first to cart
                 </button>
               </div>
             )}
+          {latestRead?.type === "data-operation" && !(lastAdviceIndex >= latestReadIndex && lastAdvice?.type === "data-advice" && lastAdvice.data.status === "unavailable") && !busy && !conversationClosed && !latestFailed && (
+            <div className="chat-followups" aria-label="Advice">
+              <button disabled={limited} onClick={() => send(latestRead.data.kind === "comparison" ? "Explain differences" : "Help me choose", { type: "advice", operationId: latestRead.data.id })}>
+                {latestRead.data.kind === "comparison" ? "Explain differences" : "Help me choose"}
+              </button>
+            </div>
+          )}
           {!started && ready && (
             <div className="chat-starters" aria-label="Conversation starters">
-              {starters.map((s) => (
+              {shoppingStarters.map((s) => (
                 <button
                   key={s.label}
-                  onClick={() => send(s.text)}
-                  disabled={busy || conversationClosed || limited}
+                  onClick={() => send(s.text, s.action)}
+                  disabled={busy || conversationClosed}
                 >
                   {s.label}
                 </button>
@@ -664,7 +718,7 @@ export default function ChatView() {
                   : "Putting your response together…"}
             </div>
           )}
-          {error && !latestTypedFailure && (
+          {error && !latestTypedFailure && !latestCompleted && (
             <div role="alert" className="chat-error">
               <strong>Let's try that again.</strong>
               <p>
@@ -682,12 +736,6 @@ export default function ChatView() {
               >
                 Retry last message
               </button>
-            </div>
-          )}
-          {limited && !latestTypedFailure && !error && cooldown && (
-            <div role="status" className="chat-error">
-              <p>{failureMessage(cooldown)}</p>
-              <p>Retry in {waitLabel(retrySeconds)}.</p>
             </div>
           )}
           {unanswered && !error && !limited && ready && !conversationClosed && (
@@ -773,7 +821,7 @@ export default function ChatView() {
               <button
                 className="send-message"
                 disabled={
-                  !ready || conversationClosed || limited || !draft.trim()
+                  !ready || conversationClosed || !draft.trim()
                 }
                 aria-label="Send message"
                 type="submit"
@@ -795,33 +843,19 @@ export default function ChatView() {
       <section className="demo-capabilities" aria-label="Shopping examples">
         <h2>Explore with the assistant</h2>
         <div className="capability-grid">
-          {[
-            ["Garden budget", "Show me garden furniture under EUR 150"],
-            ["Refine", "I need something to sit on"],
-            ["Alternatives", "Show me different options"],
-            [
-              "Correction",
-              "A plant pot is not furniture. Show me outdoor furniture",
-            ],
-            ["Compare", "Compare mugs and carafe"],
-            ["Add", "Add two of the cheaper option to my cart"],
-            ["Coffee", "I need something for my morning coffee"],
-            ["Availability", "Show only in-stock products"],
-            ["Gift", "Find a gift under EUR 25"],
-            ["Delivery", "How much is delivery?"],
-          ].map(([title, prompt]) => (
+          {shoppingExamples.map(({ label, text, action }) => (
             <button
-              key={title}
-              disabled={!ready || busy || conversationClosed || limited}
+              key={label}
+              disabled={!ready || busy || conversationClosed}
               onClick={() => {
-                send(prompt);
+                send(text, action);
                 thread.current?.scrollIntoView({
                   behavior: "smooth",
                   block: "center",
                 });
               }}
             >
-              {prompt}
+              {text}
             </button>
           ))}
         </div>

@@ -55,7 +55,7 @@ The native engine replaces the earlier planner. Release the integrated source on
 
 Deploy that exact commit to the existing service with auto-deploy off. Verify `live`, revision, 86 records, MiniLM and the prepared fingerprint; purge only the demo hostname prefix and run the warming script. Run `npm run verify:deployment -- URL FULL_SHA`, a fresh semantic conversation and a real browser cart save/reload. Observe provider memory, CPU and events for at least ten minutes and confirm the existing liveness monitor. Roll back only this deployment if acceptance fails; retain device storage. Earlier v1 cart and conversation formats remain compatible with the previous artifact.
 
-`npm run test:agent:live -- URL` records bilingual conversation evidence and actual usage. Set its pacing to the current provider quota, shared with other users of that organization. Successful Groq headers also pace subsequent inferences inside a request; provider cooldowns remain visible and do not trigger model switching or automatic retry. The live runner's simulated cart is separate from the required browser-storage acceptance.
+`npm run test:agent:live -- URL` records bilingual conversation evidence and actual usage. Set its pacing to the current provider quota, shared with other users of that organization. Successful Groq headers also pace subsequent inferences inside a request; provider cooldowns remain visible; the configured failover can switch the model for a failed inference, and completed catalog operations are not replayed. The live runner's simulated cart is separate from the required browser-storage acceptance.
 
 ### Publication for owner evaluation - 2026-11-16
 

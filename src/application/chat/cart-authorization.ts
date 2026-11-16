@@ -21,7 +21,7 @@ const unquoted = (value: string) =>
 export function hasCartInstruction(text: string) {
   const value = unquoted(normalize(text));
   return (
-    !/\b(?:example|examples|quote|quoted|repeat|story|fiction|simulate|hypothetical|suppose|przyklad\w*|cytuj\w*|powtorz\w*|opowiedz\w*|histori\w*)\b/.test(
+    !/\b(?:example|examples|quote|quoted|repeat|story|fiction|simulate|hypothetical|suppose|if|gdyby|gdybym|przyklad\w*|cytuj\w*|powtorz\w*|opowiedz\w*|histori\w*)\b/.test(
       value,
     ) &&
     !/\b(?:never|not|don't|do not|nie|nigdy)\s+(?:(?:actually|really|ever|wcale|faktycznie|naprawde)\s+)*(?:add|buy|take|dodawaj|dodaj|kupuj)\b/.test(
@@ -242,7 +242,9 @@ export function authorizeCart(
           : /\ball\b|wszystk|\beach\b|kazd\w*/.test(value)
             ? "all"
             : proposal.selection;
-  let remainder = value;
+  // Parse the purchase operand independently of harmless commentary after a comma.
+  // Quantity parsing still uses the whole instruction ("both, two each").
+  let remainder = value.split(/[,;.!?]/, 1)[0];
   for (const item of items) {
     const product = products.find((p) => p.id === item.productId);
     if (!product)

@@ -23,6 +23,7 @@ type TokenBucket = {
   inFlight: number;
 };
 const tokenBuckets = new WeakMap<typeof fetch, Map<string, TokenBucket>>();
+const learnedMinuteLimits = new WeakMap<typeof fetch, Map<string, number>>();
 type Waiter = (
   milliseconds: number,
   signal?: AbortSignal | null,
@@ -327,6 +328,12 @@ export function createGroqRuntime(
     tokenBuckets.set(fetchImplementation, transportBuckets);
   }
   const buckets = transportBuckets;
+  let transportLimits = learnedMinuteLimits.get(fetchImplementation);
+  if (!transportLimits) {
+    transportLimits = new Map();
+    learnedMinuteLimits.set(fetchImplementation, transportLimits);
+  }
+  const limits = transportLimits;
   const key = JSON.stringify([
     config.baseURL.replace(/\/+$/, ""),
     config.modelId,
@@ -336,6 +343,13 @@ export function createGroqRuntime(
       .digest("hex"),
   ]);
   const transport: typeof fetch = async (input, init) => {
+    const attemptSignal = AbortSignal.timeout(15_000);
+    init = {
+      ...init,
+      signal: init?.signal
+        ? AbortSignal.any([init.signal, attemptSignal])
+        : attemptSignal,
+    };
     init?.signal?.throwIfAborted();
     const cooldown = deadlines.get(key);
     const remaining = (cooldown?.deadline ?? 0) - now();
@@ -365,8 +379,7 @@ export function createGroqRuntime(
       }
       const delay = Math.ceil((needed - bucket.remaining) / bucket.refillPerMs);
       if (
-        options?.quotaWaitMaxMs !== undefined &&
-        waited + delay > options.quotaWaitMaxMs
+        waited + delay > (options?.quotaWaitMaxMs ?? 10_000)
       ) {
         return Response.json(
           {
@@ -427,8 +440,15 @@ export function createGroqRuntime(
       const quota = readTokenQuota(response.headers, now());
       if (quota) {
         const current = buckets.get(key);
+        const learned = limits.get(key);
+        if (learned !== undefined) {
+          const consumed = quota.limit - quota.remaining;
+          quota.limit = Math.min(quota.limit, learned);
+          quota.remaining = Math.max(0, quota.limit - consumed);
+          quota.refillPerMs = Math.min(quota.refillPerMs, learned / 60_000);
+        }
         if (current) {
-          if (current.inFlight > 0) {
+          if (current.inFlight > 0 || learned !== undefined) {
             refill(current, now());
             quota.remaining = Math.min(quota.remaining, current.remaining);
           }
@@ -512,6 +532,30 @@ export function createGroqRuntime(
     }
     const diagnostic = await quotaDiagnostic(response);
     if (diagnostic) {
+      if (
+        diagnostic.metric === "tokens" &&
+        diagnostic.window === "minute" &&
+        diagnostic.limit > 0
+      ) {
+        const limit = Math.min(limits.get(key) ?? diagnostic.limit, diagnostic.limit);
+        limits.set(key, limit);
+        const current = buckets.get(key);
+        const available = Math.max(0, limit - diagnostic.used);
+        if (current) {
+          refill(current, now());
+          current.limit = Math.min(current.limit, limit);
+          current.remaining = Math.min(current.remaining, available, current.limit);
+          current.refillPerMs = Math.min(current.refillPerMs, limit / 60_000);
+        } else {
+          buckets.set(key, {
+            limit,
+            remaining: available,
+            refillPerMs: limit / 60_000,
+            updatedAt: now(),
+            inFlight: 0,
+          });
+        }
+      }
       if (ownCooldown && deadlines.get(key) === ownCooldown) {
         ownCooldown.diagnostic = diagnostic;
       }
@@ -552,6 +596,7 @@ export function createGroqRuntime(
       },
     },
     maxOutputTokens: 1024,
+    currentRoute: () => ({ modelId: config.modelId, reason: "primary" }),
     takeUsage: () => capturedUsage.splice(0),
     setWaitListener: (listener) => {
       waitListener = listener;

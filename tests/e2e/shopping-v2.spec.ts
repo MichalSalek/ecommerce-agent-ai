@@ -99,7 +99,7 @@ test("old history and a response cancelled by reset cannot mutate the cart", asy
             id: "a-old",
             role: "assistant",
             parts: [
-              { type: "text", text: "Earlier conversation" },
+              { type: "text", text: "Earlier conversation." },
               {
                 type: "data-cartAction",
                 data: {
@@ -132,7 +132,7 @@ test("old history and a response cancelled by reset cannot mutate the cart", asy
       .catch(() => undefined);
   });
   await page.goto("/chat");
-  await expect(page.getByText("Earlier conversation")).toBeVisible();
+  await expect(page.getByText("Earlier conversation.")).toBeVisible();
   expect(
     await page.evaluate(() => localStorage.getItem("aurelle.cart.v1")),
   ).toBeNull();
