@@ -1096,11 +1096,6 @@ async function executeAgent(
                   product.name.toLowerCase() === ref.toLowerCase(),
               )?.id ?? ref,
           );
-          if (
-            new Set(productIds).size !== productIds.length ||
-            productIds.some((id) => !products.some((p) => p.id === id))
-          )
-            throw new Error("Use distinct canonical product IDs.");
           const current = turn.text.toLowerCase();
           const named = products
             .flatMap((product) => {
@@ -1139,13 +1134,16 @@ async function executeAgent(
             )
             .replace(/[\s.,?!&:;'"/()-]+/g, "");
           if (directList && named.length >= 2) {
-            if (named.some((id) => !productIds.includes(id)))
-              throw new Error(
-                `Include the explicitly named products: ${named.join(", ")}.`,
-              );
-            // Resolve a direct canonical list in source order; incidental lookup hits cannot expand it.
+            if (named.length > 10)
+              throw new Error("Choose up to ten products for one comparison.");
+            // Exact canonical names from CURRENT own this read, including missing or substituted model references.
             productIds = named;
           }
+          if (
+            new Set(productIds).size !== productIds.length ||
+            productIds.some((id) => !products.some((p) => p.id === id))
+          )
+            throw new Error("Use distinct canonical product IDs.");
           compared = comparison(productIds);
           after.comparisonIds = productIds;
           effectReferences = productIds;

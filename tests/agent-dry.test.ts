@@ -470,36 +470,68 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       },
     );
     await t.test(
-      "comparison cannot fill in a missing requested product",
+      "direct canonical comparison resolves missing or substituted model references without another inference",
+      async () => {
+        for (const productIds of [
+          ["mugs", "travel-mug"],
+          ["carafe", "travel-mug"],
+          ["garden-bench", "patio-sofa"],
+          ["unknown-model-reference", "travel-mug"],
+          ["carafe", "carafe"],
+        ]) {
+          const action = run(
+            catalog,
+            [
+              call("searchProducts", {
+                ...nativeTransition("new", { productTypes: ["mug", "carafe"] }),
+                mode: "lookup",
+              }),
+              call("compareProducts", { productIds }),
+              (messages) =>
+                present(messages, {
+                  view: "comparison",
+                  evidenceIds: ["e1", "e2"],
+                }),
+            ],
+            "Compare mugs and carafe",
+          );
+          const result = await action.result;
+          assert.equal(result.status.status, "complete");
+          assert.equal(action.mock.count(), 3);
+          assert.ok(
+            !result.evidence.some(
+              (e) =>
+                e.tool === "compareProducts" &&
+                typeof (e.output as any)?.error === "string",
+            ),
+          );
+          assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+        }
+      },
+    );
+    await t.test(
+      "an explicit canonical list cannot expand comparison past ten products",
       async () => {
         const action = run(
           catalog,
           [
-            call("searchProducts", {
-              ...nativeTransition("new", { productTypes: ["mug", "carafe"] }),
-              mode: "lookup",
-            }),
-            call("compareProducts", { productIds: ["mugs", "travel-mug"] }),
             call("compareProducts", { productIds: ["mugs", "carafe"] }),
             (messages) =>
               present(messages, {
-                view: "comparison",
-                evidenceIds: ["e1", "e3"],
+                text: "Please choose up to ten products for one comparison.",
+                view: "none",
+                productIds: [],
               }),
           ],
-          "Compare mugs and carafe",
+          `Compare ${products
+            .slice(0, 11)
+            .map((product) => product.id)
+            .join(" and ")}`,
         );
         const result = await action.result;
         assert.equal(result.status.status, "complete");
-        assert.equal(action.mock.count(), 4);
-        assert.ok(
-          result.evidence.some(
-            (e) =>
-              e.tool === "compareProducts" &&
-              typeof (e.output as any)?.error === "string",
-          ),
-        );
-        assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+        assert.equal(result.comparison, undefined);
+        assert.equal(result.presentation.view, "none");
       },
     );
     await t.test(
