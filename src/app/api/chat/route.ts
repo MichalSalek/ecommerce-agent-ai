@@ -157,7 +157,10 @@ export async function POST(request: Request) {
     release?.();
     console.error(
       "[AGENT] failed:",
-      error instanceof Error ? error.message : "Unknown error",
+      JSON.stringify({
+        stage: "request",
+        kind: error instanceof Error ? error.name : "UnknownError",
+      }),
     );
     return Response.json(
       {

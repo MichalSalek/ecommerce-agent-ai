@@ -88,6 +88,9 @@ assert.ok(/^[a-f0-9]{40}$/.test(values.release ?? ''), 'Provide --release follow
 const release = values.release;
 assert.equal(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(), release, 'Release must be the current checkout HEAD');
 const rootRelease = values['continue-release'] ?? release;
+const publicAction = values['reserve-public'] || values['settle-public'];
+const key = process.env.GROQ_API_KEY;
+if (!publicAction) assert.ok(key, 'GROQ_API_KEY must be present in caller environment');
 assert.ok(/^[a-f0-9]{40}$/.test(rootRelease), 'Invalid root release SHA');
 const isAncestor = (ancestor, descendant) => { try { execFileSync('git',['merge-base','--is-ancestor',ancestor,descendant],{cwd:root,stdio:'ignore'}); return true; } catch { return false; } };
 assert.ok(isAncestor(rootRelease, release), 'Root release must be an ancestor of current HEAD');
@@ -95,11 +98,8 @@ const ancestors = readdirSync(releaseDir).map(name=>name.match(/^aurelle-groq-ca
 if (!values['continue-release']) assert.ok(ancestors.every(sha=>sha===release),'Existing ancestor release ledger found; use --continue-release to preserve its budget');
 else assert.ok(ancestors.every(sha=>sha===rootRelease), 'Multiple ancestor ledgers exist; reconcile their spending before continuing');
 assert.ok(!(values['reserve-public'] && values['settle-public']), 'Choose one public ledger action');
-const publicAction = values['reserve-public'] || values['settle-public'];
 assert.ok(!publicAction || (values['continue-release'] && !values['advice-only']), 'Public accounting requires --continue-release and no --advice-only');
 assert.ok(publicAction || Boolean(values['continue-release']) === Boolean(values['advice-only']), 'Continuation requires both --continue-release and --advice-only');
-const key = process.env.GROQ_API_KEY;
-if (!publicAction) assert.ok(key, 'GROQ_API_KEY must be present in caller environment');
 assert.ok(!process.env.GROQ_MODEL || process.env.GROQ_MODEL === MODEL, `Canary supports ${MODEL} only`);
 const ledgerPath = join(releaseDir, `aurelle-groq-canary-${rootRelease}.json`);
 const lockPath = join(releaseDir, `aurelle-groq-canary-${rootRelease}.lock`);

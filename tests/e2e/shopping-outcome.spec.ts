@@ -21,7 +21,7 @@ test("catalog actions work during advice cooldown and retry targets the existing
     await route.fulfill({ status: 200, contentType: "text/event-stream", headers, body: answer(parts) });
   });
   await page.goto("/chat");
-  await page.getByRole("button", { name: "My morning coffee" }).click();
+  await page.getByRole("button", { name: "My morning coffee", exact: true }).click();
   await expect(page.getByText("Advice is unavailable right now.")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Retry last message" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry advice" })).toBeDisabled();

@@ -7,6 +7,7 @@ import {
   runAgent,
   createNativeAgentStream,
   stateFromMessages,
+  adviceResultFromMessages,
 } from "../src/infrastructure/chat/native-agent";
 import type { CatalogService } from "../src/application/catalog/catalog-service";
 import {
@@ -29,6 +30,7 @@ const catalog = {
 } as CatalogService;
 function model(responses: unknown[] = []) {
   let calls = 0;
+  const requests: any[] = [];
   const runtime = createGroqRuntime(
     {
       baseURL: "http://fixture/v1",
@@ -36,13 +38,14 @@ function model(responses: unknown[] = []) {
       balancer: true,
       windowsTransport: false,
     },
-    async () => {
+    async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)));
       const response = responses[calls++];
       if (!response) return new Response("unavailable", { status: 503 });
       return Response.json(response);
     },
   );
-  return { runtime, calls: () => calls };
+  return { runtime, calls: () => calls, requests };
 }
 const response = (
   name: string,
@@ -319,6 +322,8 @@ test("advice retry targets the committed snapshot and never replays cart or cata
 });
 test("an advice deadline preserves the already committed operation in the UI stream", async () => {
   let calls = 0;
+  const deadline = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const runtime = createGroqRuntime(
     {
       baseURL: "http://timeout/v1",
@@ -331,6 +336,10 @@ test("an advice deadline preserves the already committed operation in the UI str
         return Response.json(
           response("compareProducts", { productIds: ["mugs", "carafe"] }),
         );
+      timer = setTimeout(
+        () => deadline.abort(new DOMException("Test deadline", "TimeoutError")),
+        20,
+      );
       return new Promise<Response>((_resolve, reject) => {
         if (init?.signal?.aborted) reject(init.signal.reason);
         else
@@ -350,15 +359,19 @@ test("an advice deadline preserves the already committed operation in the UI str
       userMessageId: `deadline-${++sequence}`,
       state: initialAgentState(),
     },
-    AbortSignal.timeout(80),
+    deadline.signal,
     { contract: "shopping-v3" },
   );
   const reader = stream.getReader(),
     events: any[] = [];
-  for (;;) {
-    const next = await reader.read();
-    if (next.done) break;
-    events.push(next.value);
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      events.push(next.value);
+    }
+  } finally {
+    clearTimeout(timer);
   }
   assert.equal(
     events.find((e) => e.type === "data-operation")?.data.status,
@@ -511,4 +524,78 @@ test("yes to a product-choice question preserves its quantity, expiry and source
     },
   });
   assert.equal(chosen.cart?.quantity, 2);
+});
+test("optional advice receives canonical reference tags without raw prices or measurements", async () => {
+  const original = await run("Compare", model(), {
+    action: { type: "compare", productIds: ["mugs", "carafe"] },
+  });
+  const mock = model([
+    response("presentAnswer", {
+      text: "The mugs suit hot drinks, while the carafe serves cold brew.",
+      language: "en",
+      view: "comparison",
+      evidenceIds: ["e1"],
+      productIds: ["mugs", "carafe"],
+    }),
+  ]);
+  const advised = await run("Explain differences", mock, {
+    state: original.checkpoint.after,
+    action: { type: "advice", operationId: original.operation.id },
+  });
+  assert.equal(advised.advice.status, "included");
+  const context = mock.requests[0].messages.find(
+    (m: any) => m.role === "user",
+  ).content;
+  assert.match(context, /\[\[price:mugs\]\]/);
+  assert.match(context, /\[\[dimensions:carafe\]\]/);
+  assert.doesNotMatch(
+    context,
+    /priceEUR|25 cm high|9 cm high|differencesCents/,
+  );
+  assert.equal(mock.requests[0].max_tokens, 256);
+});
+test("policy advice restores its completed read after process-cache loss without another catalog call", async () => {
+  const policy = await run("Delivery", model(), {
+    action: { type: "policy", topic: "delivery" },
+  });
+  assert.deepEqual(policy.checkpoint.readResult, {
+    kind: "policy",
+    topic: "delivery",
+  });
+  const restored = adviceResultFromMessages(
+    [
+      {
+        id: "stored-policy",
+        role: "assistant",
+        parts: [
+          { type: "text", text: policy.answer },
+          {
+            type: "data-operation",
+            data: { ...policy.operation, id: "restored-policy-operation" },
+          },
+          { type: "data-shoppingState", data: policy.checkpoint },
+        ],
+      },
+    ],
+    "restored-policy-operation",
+  );
+  assert.ok(restored);
+  assert.equal(restored.presentation.view, "none");
+  const mock = model([
+    response("presentAnswer", {
+      text: "The delivery policy applies to this demo collection.",
+      language: "en",
+      view: "none",
+      evidenceIds: ["restored"],
+      productIds: [],
+    }),
+  ]);
+  const result = await run("Explain the policy", mock, {
+    adviceFor: restored,
+    action: { type: "advice", operationId: restored.operation.id },
+    state: policy.checkpoint.after,
+  });
+  assert.equal(result.advice.status, "included");
+  assert.equal(result.operation.id, "restored-policy-operation");
+  assert.equal(mock.calls(), 1);
 });

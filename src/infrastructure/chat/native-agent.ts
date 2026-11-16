@@ -22,6 +22,7 @@ import { getStorePolicy } from "@/domain/catalog/policies";
 import {
   nativeTools,
   agentInstructions,
+  adviceInstructions,
   answerSchema,
   cartProposalSchema,
   type PresentedAnswer,
@@ -111,6 +112,18 @@ interface Resolution {
 type AgentOptions = Partial<ChatRuntime> & {
   onProgress?: (progress: ChatProgress) => void;
 };
+function rejectionCode(reason: string) {
+  if (/^[A-Z_]{1,80}$/.test(reason)) return reason;
+  if (/count/i.test(reason)) return "UNVERIFIED_COUNT";
+  if (/monetary|price|currency|currencies/i.test(reason))
+    return "UNVERIFIED_PRICE";
+  if (/measurement|dimension/i.test(reason)) return "UNVERIFIED_MEASUREMENT";
+  if (/language/i.test(reason)) return "WRONG_LANGUAGE";
+  if (/stock|available/i.test(reason)) return "UNVERIFIED_AVAILABILITY";
+  if (/duration|policy/i.test(reason)) return "UNVERIFIED_POLICY";
+  if (/reference|evidence/i.test(reason)) return "UNVERIFIED_REFERENCE";
+  return "INVALID_MODEL_OUTPUT";
+}
 // Bounded, per-process retry resolution. The serialized checkpoint covers reload/server replacement.
 const resolutions = new Map<
   string,
@@ -616,6 +629,7 @@ export function adviceResultFromMessages(
     search?.products.map((p) => p.id) ??
     checkpoint.data.presentedIds;
   const language = checkpoint.data.after.language;
+  const readResult = checkpoint.data.readResult;
   const text = compared
     ? comparisonSummary(compared, language)
     : operation.data.kind === "details" && ids[0]
@@ -624,9 +638,20 @@ export function adviceResultFromMessages(
         ? searchSummary(search, language)
         : categories
           ? categoriesSummary(categories, language)
-          : undefined;
+          : readResult?.kind === "policy"
+            ? policySummary(readResult.topic, language)
+            : readResult?.kind === "overview"
+              ? language === "pl"
+                ? `Liczba produktów w wybranym zakresie: ${readResult.total}.`
+                : `There are ${readResult.total} products in this part of the collection.`
+              : undefined;
   if (!text) return;
   const output = {
+    ...(readResult?.kind === "policy"
+      ? { policy: getStorePolicy(readResult.topic) }
+      : readResult?.kind === "overview"
+        ? { total: readResult.total }
+        : {}),
     ...(compared ?? search ?? {}),
     ...(categories ? { categories } : {}),
     products: ids
@@ -643,7 +668,13 @@ export function adviceResultFromMessages(
       language,
       productIds: ids,
       evidenceIds: ["restored"],
-      view: compared ? "comparison" : categories ? "categories" : "products",
+      view: compared
+        ? "comparison"
+        : categories
+          ? "categories"
+          : readResult
+            ? "none"
+            : "products",
     },
     checkpoint: checkpoint.data,
     search,
@@ -658,8 +689,12 @@ export function adviceResultFromMessages(
             ? "getProductDetails"
             : categories
               ? "getCategories"
-              : "searchProducts",
-        input: {},
+              : readResult?.kind === "policy"
+                ? "getPolicy"
+                : readResult?.kind === "overview"
+                  ? "getCatalogOverview"
+                  : "searchProducts",
+        input: readResult?.kind === "policy" ? { topic: readResult.topic } : {},
         output,
         productIds: ids,
       },
@@ -1016,6 +1051,28 @@ async function executeAgent(
         after: { ...after, language },
         transition: change,
         presentedIds: presentation.productIds,
+        ...(kind === "policy"
+          ? {
+              readResult: {
+                kind: "policy" as const,
+                topic: (
+                  evidence.findLast((e) => e.tool === "getPolicy")!.input as {
+                    topic: string;
+                  }
+                ).topic,
+              },
+            }
+          : kind === "overview"
+            ? {
+                readResult: {
+                  kind: "overview" as const,
+                  total: (
+                    evidence.findLast((e) => e.tool === "getCatalogOverview")!
+                      .output as { total: number }
+                  ).total,
+                },
+              }
+            : {}),
       },
       status: operationTurnStatus(operation, usage),
     };
@@ -1132,7 +1189,7 @@ async function executeAgent(
         operationId: ready.operation.id,
         ...options.currentRoute?.(),
         stage: "advice",
-        rejection: reason,
+        rejection: rejectionCode(reason),
         field,
         finish: providerFinish,
         length: adviceLength,
@@ -1143,7 +1200,7 @@ async function executeAgent(
       ...ready,
       advice: {
         status: "unavailable",
-        reason,
+        reason: rejectionCode(reason),
         ...(failure?.retryAt ? { retryAt: failure.retryAt } : {}),
       },
       status: operationTurnStatus(ready.operation, usage),
@@ -1576,8 +1633,45 @@ async function executeAgent(
       try {
         generated = await generateText({
           model,
-          system: `${agentInstructions}\nApplication-resolved response language: ${language}. Always use this language. ${committed ? "The catalog operation is already committed. Give optional qualitative advice only, 1-2 complete sentences, at most 400 characters. Explain a useful feature or limitation without listing products, quoting prices or giving measurements. The displayed result already contains those facts. Plain text is allowed. If a numerical fact is essential, copy the exact supported reference, such as [[price:carafe]] or [[difference:carafe]]; even a correct literal monetary amount will be rejected. Do not execute another operation." : ""}`,
-          messages,
+          system: `${committed ? adviceInstructions : agentInstructions}\nApplication-resolved response language: ${language}. Always use this language.`,
+          messages: committed
+            ? [
+                {
+                  role: "user",
+                  content: JSON.stringify({
+                    request: turn.text,
+                    criteria: committed.checkpoint.after.criteria,
+                    evidenceIds: verifiedEvidence().map((e) => e.id),
+                    view: committed.presentation.view,
+                    productIds: committed.presentation.productIds,
+                    cheapestIds: committed.comparison?.cheapestIds,
+                    readResult: committed.checkpoint.readResult,
+                    ...(committed.checkpoint.readResult?.kind === "policy"
+                      ? {
+                          policy: getStorePolicy(
+                            committed.checkpoint.readResult.topic,
+                          ),
+                        }
+                      : {}),
+                    records: committed.presentation.productIds
+                      .flatMap((id) => products.filter((p) => p.id === id))
+                      .map((p) => ({
+                        id: p.id,
+                        name: p.name,
+                        material: p.material,
+                        features: p.features,
+                        limitations: p.limitations,
+                        inStock: p.inStock,
+                        priceReference: `[[price:${p.id}]]`,
+                        dimensionsReference: `[[dimensions:${p.id}]]`,
+                        ...(committed!.comparison
+                          ? { differenceReference: `[[difference:${p.id}]]` }
+                          : {}),
+                      })),
+                  }),
+                },
+              ]
+            : messages,
           tools,
           toolChoice: committed
             ? "auto"
@@ -1733,6 +1827,12 @@ async function executeAgent(
         )
           answer.view = "products";
         const text = validatePresentation(answer, verifiedEvidence(), search);
+        const expandedError = assistantTextError(
+          text,
+          providerFinish,
+          language,
+        );
+        if (expandedError) throw new Error(expandedError);
         if (committed)
           return {
             ...committed,
@@ -2262,7 +2362,9 @@ async function executeAgent(
         "[AGENT] rejected tool",
         JSON.stringify({
           tool: name,
-          error: error instanceof Error ? error.message : "Invalid input",
+          rejection: rejectionCode(
+            error instanceof Error ? error.message : "Invalid input",
+          ),
         }),
       );
       if (correction) break;

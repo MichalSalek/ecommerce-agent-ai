@@ -16,7 +16,11 @@ import {
   adviceSchema,
 } from "./shopping-v3";
 import { assistantTextError } from "./assistant-text";
-import { comparisonSummary, searchSummary } from "./operation-summary";
+import {
+  comparisonSummary,
+  searchSummary,
+  detailsSummary,
+} from "./operation-summary";
 import {
   searchInput,
   detailsInput,
@@ -135,8 +139,16 @@ const comparisonPart = z
     },
   }));
 const partSchema = z.union([
-  z.object({ type: z.literal("data-operation"), id: z.string().optional(), data: operationSchema }),
-  z.object({ type: z.literal("data-advice"), id: z.string().optional(), data: adviceSchema }),
+  z.object({
+    type: z.literal("data-operation"),
+    id: z.string().optional(),
+    data: operationSchema,
+  }),
+  z.object({
+    type: z.literal("data-advice"),
+    id: z.string().optional(),
+    data: adviceSchema,
+  }),
   z.object({
     type: z.literal("data-shoppingState"),
     id: z.string().optional(),
@@ -244,28 +256,71 @@ export function settledMessages(values: readonly unknown[]): ChatMessage[] {
     }
     if (parsed.data.role === "assistant" && parsed.data.id !== WELCOME_ID) {
       const hasOperation = parts.some((part) => part.type === "data-operation");
-      const failed = parts.some((part) => part.type === "data-turnStatus" && part.data.status !== "complete");
+      const failed = parts.some(
+        (part) =>
+          part.type === "data-turnStatus" && part.data.status !== "complete",
+      );
       const compared = parts.find((part) => part.type === "data-comparison");
       const found = parts.find((part) => part.type === "data-products");
+      const detailId =
+        found?.type === "data-products" &&
+        found.data.evidenceKind === "selection" &&
+        found.data.products.length === 1
+          ? found.data.products[0].id
+          : undefined;
       // Old v3 responses could contain verified results plus a failed optional presentation.
       if (!hasOperation && failed && (compared || found)) {
         const state = parts.find((part) => part.type === "data-shoppingState");
-        const pl = state?.type === "data-shoppingState" && state.data.after.language === "pl";
+        const pl =
+          state?.type === "data-shoppingState" &&
+          state.data.after.language === "pl";
         const language = pl ? "pl" : "en";
-        const summary = compared?.type === "data-comparison" && compared.data.productIds.length >= 2
-          ? comparisonSummary(compared.data, language)
-          : found?.type === "data-products" ? searchSummary(found.data, language)
-          : pl ? "Nie można odtworzyć porównania produktów." : "The product comparison could not be restored.";
-        const keep = parts.filter((part) => part.type !== "text" && part.type !== "data-turnStatus");
-        parts.splice(0, parts.length, { type: "text", text: summary }, ...keep,
-          { type: "data-operation", data: { id: `legacy:${parsed.data.id}`, kind: compared ? "comparison" : "search", status: "completed" } },
-          { type: "data-turnStatus", data: { status: "complete" } });
+        const summary =
+          compared?.type === "data-comparison" &&
+          compared.data.productIds.length >= 2
+            ? comparisonSummary(compared.data, language)
+            : detailId
+              ? detailsSummary(detailId, language)
+              : found?.type === "data-products"
+                ? searchSummary(found.data, language)
+                : pl
+                  ? "Nie można odtworzyć porównania produktów."
+                  : "The product comparison could not be restored.";
+        const keep = parts.filter(
+          (part) => part.type !== "text" && part.type !== "data-turnStatus",
+        );
+        parts.splice(
+          0,
+          parts.length,
+          { type: "text", text: summary },
+          ...keep,
+          {
+            type: "data-operation",
+            data: {
+              id: `legacy:${parsed.data.id}`,
+              kind: compared ? "comparison" : detailId ? "details" : "search",
+              status: "completed",
+            },
+          },
+          { type: "data-turnStatus", data: { status: "complete" } },
+        );
       } else {
         for (let i = parts.length - 1; i >= 0; i--) {
           const part = parts[i];
           // Legacy replies can exceed the new advice limit. Check their ending separately.
-          if (part.type === "text" && assistantTextError(part.text.length > 400 ? part.text.slice(-400) : part.text)) parts.splice(i, 1);
-          if (part.type === "data-advice" && part.data.status === "included" && assistantTextError(part.data.text)) parts.splice(i, 1);
+          if (
+            part.type === "text" &&
+            assistantTextError(
+              part.text.length > 400 ? part.text.slice(-400) : part.text,
+            )
+          )
+            parts.splice(i, 1);
+          if (
+            part.type === "data-advice" &&
+            part.data.status === "included" &&
+            assistantTextError(part.data.text)
+          )
+            parts.splice(i, 1);
         }
       }
     }

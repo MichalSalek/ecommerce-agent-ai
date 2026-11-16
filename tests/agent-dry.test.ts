@@ -72,8 +72,25 @@ const call = (name: string, input: unknown): Call => ({
       ? { mode: "recommend", ...input }
       : input,
 });
+const adviceContext = (messages: any[]) => {
+  const user = messages.find((m) => m.role === "user");
+  if (!user || typeof user.content !== "string") return undefined;
+  try {
+    const context = JSON.parse(user.content);
+    return Array.isArray(context.records) && Array.isArray(context.evidenceIds)
+      ? context
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
 const lastTool = (messages: any[]) => {
   const message = [...messages].reverse().find((m) => m.role === "tool");
+  if (!message) {
+    const context = adviceContext(messages);
+    assert.ok(context, "expected a tool result or compact advice context");
+    return { evidenceId: context.evidenceIds[0], products: context.records };
+  }
   return JSON.parse(message.content);
 };
 const present = (
@@ -81,13 +98,14 @@ const present = (
   overrides: Record<string, unknown> = {},
 ): Call => {
   const evidence = lastTool(messages);
+  const context = adviceContext(messages);
   const productIds = (evidence.products ?? []).map((p: { id: string }) => p.id);
   return call("presentAnswer", {
     text: "Here are the verified results.",
     language: "en",
-    evidenceIds: [evidence.evidenceId],
+    evidenceIds: context?.evidenceIds ?? [evidence.evidenceId],
     productIds,
-    view: "products",
+    view: context?.view ?? "products",
     ...overrides,
   });
 };
@@ -902,6 +920,21 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.requests[2].tool_choice, "required");
         assert.equal(action.mock.requests[3].tool_choice, "auto");
         assert.equal(action.mock.requests[3].max_tokens, 256);
+        const adviceMessages = action.mock.requests[3].messages;
+        assert.ok(adviceMessages.every((message: any) => message.role !== "tool"));
+        const context = adviceContext(adviceMessages);
+        assert.ok(context);
+        assert.equal(context.view, "comparison");
+        assert.deepEqual(context.productIds, ["mugs", "carafe"]);
+        assert.deepEqual(context.records.map((record: any) => record.id), context.productIds);
+        for (const record of context.records) {
+          assert.equal(record.priceReference, `[[price:${record.id}]]`);
+          assert.equal(record.dimensionsReference, `[[dimensions:${record.id}]]`);
+          assert.equal(record.differenceReference, `[[difference:${record.id}]]`);
+          assert.ok(!("priceEUR" in record));
+          assert.ok(!("dimensions" in record));
+          assert.ok(!("differences" in record));
+        }
         assert.deepEqual(
           result.evidence
             .filter(

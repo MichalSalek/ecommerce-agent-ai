@@ -387,42 +387,185 @@ test("legacy completed comparison survives failed presentation with canonical su
   const state = initialAgentState();
   state.language = "pl";
   state.resultIds = ["mugs", "carafe"];
-  const snapshot = restoreConversation(JSON.stringify({ version: 1, id: "old", draft: "draft", messages: [
-    { id: "u", role: "user", parts: [{ type: "text", text: "Porównaj" }] },
-    { id: "a", role: "assistant", parts: [
-      { type: "text", text: "The lowest price is at €" },
-      { type: "data-shoppingState", data: { userMessageId: "u", text: "Porównaj", before: state, after: state, presentedIds: ["mugs", "carafe"] } },
-      { type: "data-comparison", data: { productIds: ["mugs", "carafe"], cheapestIds: ["mugs"], differencesCents: [] } },
-      { type: "data-turnStatus", data: { status: "partial", code: "MODEL_RESPONSE_INCOMPLETE" } },
-    ] },
-  ] }));
+  const snapshot = restoreConversation(
+    JSON.stringify({
+      version: 1,
+      id: "old",
+      draft: "draft",
+      messages: [
+        { id: "u", role: "user", parts: [{ type: "text", text: "Porównaj" }] },
+        {
+          id: "a",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "The lowest price is at €" },
+            {
+              type: "data-shoppingState",
+              data: {
+                userMessageId: "u",
+                text: "Porównaj",
+                before: state,
+                after: state,
+                presentedIds: ["mugs", "carafe"],
+              },
+            },
+            {
+              type: "data-comparison",
+              data: {
+                productIds: ["mugs", "carafe"],
+                cheapestIds: ["mugs"],
+                differencesCents: [],
+              },
+            },
+            {
+              type: "data-turnStatus",
+              data: { status: "partial", code: "MODEL_RESPONSE_INCOMPLETE" },
+            },
+          ],
+        },
+      ],
+    }),
+  );
   assert.ok(snapshot);
   assert.equal(snapshot.draft, "draft");
   assert.equal(snapshot.messages[0].id, "u");
   const parts = snapshot.messages[1].parts;
-  assert.ok(parts.some((part) => part.type === "text" && part.text.includes("Najniższa cena") && !part.text.includes("at €")));
-  assert.ok(parts.some((part) => part.type === "data-operation" && part.data.status === "completed" && part.data.kind === "comparison"));
-  assert.ok(parts.some((part) => part.type === "data-turnStatus" && part.data.status === "complete"));
-  assert.ok(parts.some((part) => part.type === "data-shoppingState" && part.data.after.resultIds.length === 2));
+  assert.ok(
+    parts.some(
+      (part) =>
+        part.type === "text" &&
+        part.text.includes("Najniższa cena") &&
+        !part.text.includes("at €"),
+    ),
+  );
+  assert.ok(
+    parts.some(
+      (part) =>
+        part.type === "data-operation" &&
+        part.data.status === "completed" &&
+        part.data.kind === "comparison",
+    ),
+  );
+  assert.ok(
+    parts.some(
+      (part) =>
+        part.type === "data-turnStatus" && part.data.status === "complete",
+    ),
+  );
+  assert.ok(
+    parts.some(
+      (part) =>
+        part.type === "data-shoppingState" &&
+        part.data.after.resultIds.length === 2,
+    ),
+  );
 });
 
 test("history retains validated outcomes and advice while removing incomplete assistant text", () => {
   const longReply = `${"A useful complete sentence. ".repeat(20)}A complete ending.`;
   const messages = settledMessages([
-    { id: "u", role: "user", parts: [{ type: "text", text: "Keep my incomplete message" }] },
-    { id: "a", role: "assistant", parts: [
-      { type: "text", text: "The price is at €" },
-      { type: "data-operation", data: { id: "op", kind: "search", status: "completed" } },
-      { type: "data-advice", data: { status: "unavailable", reason: "quota", retryAt: 123456 } },
-    ] },
-    { id: "long", role: "assistant", parts: [{ type: "text", text: longReply }] },
-    { id: "advice", role: "assistant", parts: [{ type: "data-advice", data: { status: "included", text: "This is" } }] },
+    {
+      id: "u",
+      role: "user",
+      parts: [{ type: "text", text: "Keep my incomplete message" }],
+    },
+    {
+      id: "a",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "The price is at €" },
+        {
+          type: "data-operation",
+          data: { id: "op", kind: "search", status: "completed" },
+        },
+        {
+          type: "data-advice",
+          data: { status: "unavailable", reason: "quota", retryAt: 123456 },
+        },
+      ],
+    },
+    {
+      id: "long",
+      role: "assistant",
+      parts: [{ type: "text", text: longReply }],
+    },
+    {
+      id: "advice",
+      role: "assistant",
+      parts: [
+        { type: "data-advice", data: { status: "included", text: "This is" } },
+      ],
+    },
   ]);
   assert.equal(messages[0].parts[0].type, "text");
   assert.ok(!messages[1].parts.some((part) => part.type === "text"));
-  assert.ok(messages[1].parts.some((part) => part.type === "data-advice" && part.data.status === "unavailable"));
-  assert.ok(messages[1].parts.some((part) => part.type === "data-operation" && part.data.status === "completed"));
+  assert.ok(
+    messages[1].parts.some(
+      (part) =>
+        part.type === "data-advice" && part.data.status === "unavailable",
+    ),
+  );
+  assert.ok(
+    messages[1].parts.some(
+      (part) =>
+        part.type === "data-operation" && part.data.status === "completed",
+    ),
+  );
   assert.ok(messages.some((message) => message.id === "long"));
   assert.ok(!messages.some((message) => message.id === "advice"));
   assert.deepEqual(requestMessages(messages)[1].parts, messages[1].parts);
+});
+test("legacy failed product inspection restores details rather than catalog-search narration", () => {
+  const restored = restoreConversation(
+    JSON.stringify({
+      version: 1,
+      id: "legacy-details",
+      draft: "",
+      messages: [
+        {
+          id: "detail-user",
+          role: "user",
+          parts: [{ type: "text", text: "Tell me more about Ceramic mugs" }],
+        },
+        {
+          id: "detail-assistant",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "The mugs are at €" },
+            {
+              type: "data-products",
+              data: {
+                evidenceKind: "selection",
+                evidenceId: "e1",
+                products: [{ id: "mugs" }],
+                appliedCriteria: {},
+                outcome: "matches",
+                requestedCount: 1,
+                scopeTotal: 1,
+                totalMatches: 1,
+                unseenMatches: 1,
+                remainingMatches: 0,
+              },
+            },
+            {
+              type: "data-turnStatus",
+              data: { status: "partial", code: "MODEL_RESPONSE_INCOMPLETE" },
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const reply = restored!.messages.at(-1)!;
+  assert.equal(
+    reply.parts.find((p) => p.type === "data-operation")?.data.kind,
+    "details",
+  );
+  assert.match(
+    reply.parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join(" "),
+    /Recorded feature:.*Limitation:/,
+  );
 });

@@ -168,6 +168,15 @@ export const checkpointSchema = z.object({
   after: agentStateSchema,
   transition: transitionSchema.optional(),
   presentedIds: ids.max(10),
+  readResult: z
+    .discriminatedUnion("kind", [
+      z.object({ kind: z.literal("policy"), topic: z.string().max(200) }),
+      z.object({
+        kind: z.literal("overview"),
+        total: z.number().int().min(0).max(products.length),
+      }),
+    ])
+    .optional(),
 });
 export type TurnCheckpoint = z.infer<typeof checkpointSchema>;
 export const turnStatusSchema = z.object({
