@@ -645,3 +645,58 @@ test("a completed policy read survives a provider failure during adaptive contin
   assert.match(result.answer, /delivery costs EUR 4/);
   assert.equal(mock.calls(), 2);
 });
+test("cheapest cart selection still uses its retained group after inspecting one item", async () => {
+  const result = await run(
+    "Add two of the cheaper option to my cart",
+    model(),
+    {
+      state: {
+        ...initialAgentState(),
+        lastIds: ["mugs"],
+        selectedIds: ["mugs"],
+        resultIds: ["mugs", "carafe"],
+        comparisonIds: ["mugs", "carafe"],
+      },
+    },
+  );
+  assert.equal(result.cart?.productId, "carafe");
+  assert.equal(result.cart?.quantity, 2);
+});
+test("an unknown operand with invalid units creates a selection question, not a quantity authorization", async () => {
+  const conversationId = `unknown-units-${++sequence}`;
+  const first = await run("Add 0 unicorns to my cart", model(), {
+    conversationId,
+    state: { ...initialAgentState(), lastIds: ["mugs"], selectedIds: ["mugs"] },
+  });
+  assert.equal(first.cart, undefined);
+  assert.equal(
+    pendingCartIntent(conversationId, first.checkpoint.after.pendingCartIntent)
+      ?.kind,
+    "selection",
+  );
+});
+test("a new untrusted confirmation clears the prior server question", async () => {
+  const conversationId = `missing-ref-${++sequence}`;
+  const old = rememberCartIntent({
+    conversationId,
+    sourceMessageId: "old-request",
+    sourceText: "Add mugs",
+    kind: "confirm",
+    productIds: ["mugs"],
+    quantity: 2,
+    language: "en",
+  });
+  const result = await run("Yes", model(), {
+    conversationId,
+    state: initialAgentState(),
+  });
+  assert.equal(result.cart, undefined);
+  assert.equal(pendingCartIntent(conversationId, old.nonce), undefined);
+});
+test("an unavailable cart item offers available choices from the retained group",async()=>{
+  const unavailable=products.find((p)=>!p.inStock)!;
+  const result=await run("Add this product to my cart",model(),{state:{...initialAgentState(),lastIds:[unavailable.id],selectedIds:[unavailable.id],resultIds:[unavailable.id,"mugs","carafe"]}});
+  assert.equal(result.cart,undefined);
+  assert.equal(result.operation.status,"needs-input");
+  if(result.operation.status==="needs-input")assert.deepEqual(result.operation.choices,["mugs","carafe"]);
+});

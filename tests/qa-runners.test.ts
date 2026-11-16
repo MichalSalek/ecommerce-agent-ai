@@ -1,15 +1,66 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { validateGardenConversation, validateGardenTurn, revalidateGarden } from '../scripts/revalidate-local-qa.mjs';
 
 const run = (script: string, args: string[], extra: Record<string, string> = {}) => {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/groq|llama|proxy/i.test(key)));
   return spawnSync(process.execPath, [`scripts/${script}.mjs`, ...args], { encoding: 'utf8', env: { ...env, NODE_ENV: process.env.NODE_ENV, ...extra }, timeout: 5000 });
 };
+
+test('garden revalidation accepts closed furniture seating but rejects weaker or unsafe evidence', () => {
+  const seating=['chair','bench','lounger','sofa','stool'];
+  const types=Object.fromEntries([...seating.map(name=>[name,{kind:'furniture'}]),['garden-tool',{kind:'gardening'}]]);
+  const groups={seating:{types:seating}};
+  const products=new Map([
+    ['chair',{id:'chair',productKind:'furniture',productType:'chair',useEnvironment:'outdoor',currency:'EUR',price:100}],
+    ['bench',{id:'bench',productKind:'furniture',productType:'bench',useEnvironment:'both',currency:'EUR',price:150}],
+    ['expensive',{id:'expensive',productKind:'furniture',productType:'chair',useEnvironment:'outdoor',currency:'EUR',price:151}],
+    ['indoor',{id:'indoor',productKind:'furniture',productType:'chair',useEnvironment:'indoor',currency:'EUR',price:10}],
+    ['trowel',{id:'trowel',productKind:'gardening',productType:'garden-tool',useEnvironment:'outdoor',currency:'EUR',price:10}],
+  ]);
+  const first={language:'pl',criteria:{productKind:'furniture',maxPrice:150,useEnvironment:'outdoor'}};
+  const second={language:'pl',criteria:{functionalGroup:'seating',maxPrice:150,useEnvironment:'outdoor'}};
+  const batch={name:'garden-pl',passed:false,error:"Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'furniture'\n",turns:[
+    {text:'Pokaż meble ogrodowe do 150 EUR',httpStatus:200,validated:true,operation:{status:'completed',kind:'search'},checkpoint:{after:first},result:{products:[{id:'chair'}]}},
+    {text:'Szukam czegoś do siedzenia',httpStatus:200,validated:true,operation:{status:'completed',kind:'search'},checkpoint:{before:first,after:second},result:{products:[{id:'chair'},{id:'bench'}]}},
+  ]};
+  validateGardenConversation(batch,'pl',products,types,groups);
+  const fullTypes=structuredClone(batch.turns[1]); delete (fullTypes.checkpoint.after.criteria as {functionalGroup?:string}).functionalGroup; Object.assign(fullTypes.checkpoint.after.criteria,{productTypes:seating}); validateGardenTurn(fullTypes,1,products,types,groups);
+  const mutate=(fn:(row:any)=>void)=>{const copy=structuredClone(batch);fn(copy);assert.throws(()=>validateGardenConversation(copy,'pl',products,types,groups));};
+  mutate(copy=>{copy.turns[1].checkpoint.after.criteria.productTypes=['chair','garden-tool'];});
+  mutate(copy=>{copy.turns[1].checkpoint.after.criteria.productTypes=['made-up'];});
+  mutate(copy=>{delete copy.turns[1].checkpoint.after.criteria.functionalGroup;copy.turns[1].checkpoint.after.criteria.productTypes=['chair'];});
+  mutate(copy=>{copy.turns[1].checkpoint.after.criteria.productKind='gardening';});
+  mutate(copy=>{copy.turns[1].checkpoint.after.criteria.maxPrice=151;});
+  mutate(copy=>{copy.turns[1].checkpoint.after.criteria.useEnvironment='indoor';});
+  mutate(copy=>{copy.turns[1].result.products=[{id:'trowel'}];});
+  mutate(copy=>{copy.turns[1].result.products=[{id:'expensive'}];});
+  mutate(copy=>{copy.turns[1].result.products=[{id:'indoor'}];});
+  mutate(copy=>{copy.turns[1].result.products=[{id:'unknown'}];});
+  mutate(copy=>{copy.turns.pop();});
+  mutate(copy=>{copy.turns[1].validated=false;});
+  mutate(copy=>{copy.turns[1].operation.status='failed';});
+  assert.throws(()=>validateGardenTurn(batch.turns[1],1,products,types,{seating:{types:['chair']}}));
+  const report={batches:[{name:'garden-en',passed:false},batch],failures:[{name:'garden-pl',error:batch.error},{name:'comparison-pl',error:'independent failure'}]};
+  const revised=revalidateGarden(report,products,types,groups,'/tmp/fixture.json',{sourceFingerprint:'fixture'});
+  assert.equal(revised.batches[1].passed,true); assert.equal(revised.batches[1].originalError,batch.error); assert.deepEqual(revised.failures,[{name:'comparison-pl',error:'independent failure'}]); assert.equal(report.batches[1].passed,false);
+  assert.throws(()=>revalidateGarden({...report,batches:[report.batches[0],{...batch,error:'Operation failed'}]},products,types,groups,'/tmp/fixture.json',{}));
+});
+
+test('garden revalidation cannot write from an unfinished run', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-garden-unfinished-'));
+  const input=join(dir,'input.json'),output=join(dir,'output.json');
+  try {
+    writeFileSync(input,JSON.stringify({execution:'engine-functional-QA'}));
+    const result=spawnSync(process.execPath,['scripts/revalidate-local-qa.mjs','--input',input,'--output',output],{encoding:'utf8',timeout:5000});
+    assert.notEqual(result.status,0); assert.match(result.stderr,/original run must be finished/); assert.equal(existsSync(output),false);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
 
 test('QA runners expose help without credentials or network traffic', () => {
   for (const script of ['agent-local', 'groq-canary']) {
@@ -45,7 +96,7 @@ test('guard-only resume proves historical source, runner and previously accepted
   const digest=(paths:string[])=>{const h=createHash('sha256'); for(const path of paths){const content=readFileSync(join(dir,path));h.update(`${path.length}:${path}:${content.length}:`);h.update(content);} return h.digest('hex');};
   try {
     git('init'); mkdirSync(join(dir,'scripts')); mkdirSync(join(dir,'src/application/chat'),{recursive:true});
-    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs'));
+    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs')); copyFileSync('scripts/revalidate-local-qa.mjs',join(dir,'scripts/revalidate-local-qa.mjs'));
     write('scripts/agent-local-core.ts','export {};\n');
     const originalGuard='export function queryLanguageError(query: string | undefined) { return query === "bad" ? {code:"QUERY_LANGUAGE"} : undefined; }\n';
     write('src/application/chat/query-language.ts',originalGuard); write('src/other.ts','export const value=1;\n'); write('package-lock.json','{}\n');
@@ -54,7 +105,7 @@ test('guard-only resume proves historical source, runner and previously accepted
     git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
     const revision=git('rev-parse','HEAD');
     const artifact=join(dir,'prior.json');
-    const prior={fingerprint:digest(['src/application/chat/query-language.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches:[{name:'passed',passed:true,turns:[{validated:true,checkpoint:{after:{criteria:{query:'morning coffee'}}},result:{appliedCriteria:{query:'morning coffee'}}}]},{name:'failed',passed:false,turns:[]}]};
+    const prior={fingerprint:digest(['src/application/chat/query-language.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts','scripts/revalidate-local-qa.mjs']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches:[{name:'passed',passed:true,turns:[{validated:true,checkpoint:{after:{criteria:{query:'morning coffee'}}},result:{appliedCriteria:{query:'morning coffee'}}}]},{name:'failed',passed:false,turns:[]}]};
     writeFileSync(artifact,JSON.stringify(prior));
     const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--query-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
     const unchanged=invoke(); assert.notEqual(unchanged.status,0); assert.match(unchanged.stderr,/Only the query-language guard may differ/);
@@ -82,14 +133,14 @@ test('facet-only resume rejects any prior search naming a canonical kind and unr
   const digest=(paths:string[])=>{const h=createHash('sha256'); for(const path of paths){const content=readFileSync(join(dir,path));h.update(`${path.length}:${path}:${content.length}:`);h.update(content);} return h.digest('hex');};
   try {
     git('init'); mkdirSync(join(dir,'scripts')); mkdirSync(join(dir,'src/application/chat'),{recursive:true}); mkdirSync(join(dir,'src/domain/catalog'),{recursive:true});
-    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs')); write('scripts/agent-local-core.ts','export {};\n');
+    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs')); copyFileSync('scripts/revalidate-local-qa.mjs',join(dir,'scripts/revalidate-local-qa.mjs')); write('scripts/agent-local-core.ts','export {};\n');
     const facets='export function resolveExplicitFacets(_text: string, _before: unknown, change: unknown, _filters: unknown[]) { return {change}; }\n', taxonomy='export const productKinds={furniture:{en:"furniture",pl:"meble",aliases:["furnishing","mebl"]},lighting:{en:"lighting",pl:"oświetlenie",aliases:["lampy"]}};\n';
     write('src/application/chat/explicit-facets.ts',facets); write('src/application/chat/query-language.ts','export function queryLanguageError(q: string | undefined) { return q === "bad" ? {error:"invalid"} : undefined; }\n'); write('src/domain/catalog/taxonomy.ts',taxonomy); write('src/other.ts','export const value=1;\n'); write('package-lock.json','{}\n');
     symlinkSync(join(process.cwd(),'node_modules'),join(dir,'node_modules'),'dir');
     git('add','scripts','src','package-lock.json'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
     const revision=git('rev-parse','HEAD'), artifact=join(dir,'prior.json');
     const turn={text:'I need something for my morning coffee',validated:true,operation:{kind:'search'},checkpoint:{before:{criteria:{}},transition:{operation:'new',language:'en',criteria:{query:'morning coffee'}},after:{criteria:{query:'morning coffee'}}}};
-    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/application/chat/query-language.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
+    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/application/chat/query-language.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts','scripts/revalidate-local-qa.mjs']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
     writeFileSync(artifact,JSON.stringify(prior)); write('src/application/chat/explicit-facets.ts',`${facets}// bounded fix\n`);
     const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--facet-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
     const accepted=invoke(); assert.equal(accepted.status,0,accepted.stderr);
@@ -114,6 +165,61 @@ test('facet-only resume rejects any prior search naming a canonical kind and unr
     write('package-lock.json','{"changed":true}\n'); const lock=invoke(); assert.notEqual(lock.status,0); assert.match(lock.stderr,/Only the explicit-facets guard may differ/); write('package-lock.json','{}\n');
     write('src/added.ts','export const added=1;\n'); const added=invoke(); assert.notEqual(added.status,0); assert.match(added.stderr,/Source paths differ/); rmSync(join(dir,'src/added.ts'));
     writeFileSync(artifact,JSON.stringify({...prior,runnerHash:'0'.repeat(64)})); const forged=invoke(); assert.notEqual(forged.status,0); assert.match(forged.stderr,/Original revision does not match artifact runner fingerprint/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test('contract resume selectively excludes changed parsing, prior copy, comparisons, carts and actions', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-contract-resume-'));
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  const write=(path:string,value:string)=>writeFileSync(join(dir,path),value);
+  const digest=(paths:string[])=>{const h=createHash('sha256');for(const path of paths){const content=readFileSync(join(dir,path));h.update(`${path.length}:${path}:${content.length}:`);h.update(content);}return h.digest('hex');};
+  try {
+    git('init'); for(const p of ['scripts','src/application/catalog','src/application/chat','src/infrastructure/chat']) mkdirSync(join(dir,p),{recursive:true});
+    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs')); copyFileSync('scripts/revalidate-local-qa.mjs',join(dir,'scripts/revalidate-local-qa.mjs')); write('scripts/agent-local-core.ts','export {};\n');
+    const parser='export function parseSearchIntent(c: any) { return {...c}; }\n';
+    const native='for (let step = 0; step < 4; step++) {\nconst forceAnswer = step === 3 || terminalOnly;\nconst { proposeCart: _cartTool, ...readTools } = nativeTools;\nif (terminalOnly) {\n}\ngenerated = await generateText({\n model,\n        });\nif (correction || step === 3) break;\n}\n';
+    const reviewedNative='let productComparisonPending = false;\nif (!turn.action && !hasCartInstruction(turn.text) && directComparisonRequest(turn.text)) { productComparisonPending = true; }\nif (productComparisonPending && usage.calls >= 4) break;\n'+native.replace('for (let step = 0; step < 4; step++)','for (let step = 0; step < (productComparisonPending ? 5 : 4); step++)').replace('const forceAnswer = step === 3 || terminalOnly;','const forceAnswer = (productComparisonPending ? usage.calls >= 3 && expectedRead !== "compareProducts" : step === 3) || terminalOnly;').replace('if (correction || step === 3) break;','if (correction || (productComparisonPending ? usage.calls >= 4 : step === 3)) break;');
+    write('src/application/catalog/search-intent.ts',parser);
+    write('src/application/chat/cart-authorization.ts','export function hasCartInstruction(t: string) { return /add|dodaj/i.test(t); }\n');
+    write('src/application/chat/cart-intent.ts','export const unchanged=1;\n');
+    write('src/application/chat/operation-summary.ts','export const searchSummary=(v: any)=>v.summary; export const detailsSummary=()=>"detail"; export const categoriesSummary=()=>"categories"; export const comparisonSummary=()=>"compare";\n');
+    write('src/infrastructure/chat/native-agent.ts',native); write('src/other.ts','export const other=1;\n'); write('package-lock.json','{}\n');
+    symlinkSync(join(process.cwd(),'node_modules'),join(dir,'node_modules'),'dir');
+    git('add','scripts','src','package-lock.json'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
+    const revision=git('rev-parse','HEAD'), artifact=join(dir,'prior.json');
+    const turn=(text:string,query:string,answer:string,summary:string,lang='en')=>({text,answer,validated:true,operation:{kind:'search',status:'completed'},checkpoint:{before:{criteria:{query}},transition:{criteria:{query}},after:{language:lang,criteria:{query}}},result:{appliedCriteria:{query},summary}});
+    const a=turn('morning coffee','coffee','stable','stable'),last=turn('available','coffee','old last','new last');
+    const batches=[
+      {name:'compatible',passed:true,turns:[a,last]},
+      {name:'parser',passed:true,turns:[turn('ordinary','generic','stable','stable')]},
+      {name:'copy',passed:true,turns:[turn('morning coffee','coffee','old first','new first'),last]},
+      {name:'polish-copy',passed:true,turns:[turn('poranna kawa','coffee','dawne podsumowanie','nowe podsumowanie','pl'),turn('inne','coffee','stare','nowe','pl')]},
+      {name:'comparison',passed:true,turns:[turn('Porównaj kubki','coffee','stable','stable')]},
+      {name:'implicit-comparison',passed:true,turns:[{...a,text:'Which is better?',operation:{kind:'comparison'},comparison:{productIds:['mugs','carafe']}}]},
+      {name:'cart',passed:true,turns:[turn('Add one to cart','coffee','stable','stable')]},
+      {name:'implicit-cart',passed:true,turns:[{...a,text:'Yes',operation:{kind:'cart'}}]},
+      {name:'pending-context',passed:true,turns:[{...a,checkpoint:{...a.checkpoint,before:{...a.checkpoint.before,pendingCartIntent:'fixture'}}}]},
+      {name:'action',passed:true,turns:[{...a,action:{type:'search'}}]},
+      {name:'failed',passed:false,turns:[]},
+    ];
+    const paths=['src/application/catalog/search-intent.ts','src/application/chat/cart-authorization.ts','src/application/chat/cart-intent.ts','src/application/chat/operation-summary.ts','src/infrastructure/chat/native-agent.ts','src/other.ts','package-lock.json'];
+    const prior={fingerprint:digest(paths),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts','scripts/revalidate-local-qa.mjs']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches};
+    writeFileSync(artifact,JSON.stringify(prior));
+    write('src/application/catalog/search-intent.ts','export function parseSearchIntent(c: any) { return {...c,query:c.query === "generic" ? "" : c.query}; }\n');
+    write('src/infrastructure/chat/native-agent.ts',`${reviewedNative}// reviewed comparison branch\n`);
+    const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--contract-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
+    const result=invoke(); assert.equal(result.status,0,result.stderr);
+    const proof=JSON.parse(result.stdout); assert.equal(proof.kind,'reviewed-contract'); assert.deepEqual(proof.reusedBatches,['compatible']);
+    const decisions=new Map(proof.decisions.map((row:{name:string})=>[row.name,row]));
+    for(const [name,reason] of [['parser','search-parser-changed'],['copy','history-summary-changed'],['polish-copy','history-summary-changed'],['comparison','comparison-instruction'],['implicit-comparison','comparison-operation'],['cart','cart-instruction'],['implicit-cart','cart-operation'],['pending-context','pending-cart-context'],['action','structural-action']] as const) assert.ok((decisions.get(name) as {reasons:string[]}).reasons.includes(reason));
+    assert.equal((decisions.get('compatible') as {lastSummary:{recomputedAnswer:string;identical:boolean}}).lastSummary.recomputedAnswer,'new last');
+    assert.equal((decisions.get('compatible') as {lastSummary:{identical:boolean}}).lastSummary.identical,false);
+    assert.deepEqual((decisions.get('failed') as {reasons:string[]}).reasons,['previously-failed-or-unfinished']);
+    write('src/other.ts','export const other=2;\n'); const unrelated=invoke(); assert.notEqual(unrelated.status,0); assert.match(unrelated.stderr,/only the five reviewed application files/); write('src/other.ts','export const other=1;\n');
+    write('src/infrastructure/chat/native-agent.ts',reviewedNative.replace(' model,',' changedModel,')); const prompt=invoke(); assert.notEqual(prompt.status,0); assert.match(prompt.stderr,/Model prompt, tool selection or call options changed/);
+    write('src/infrastructure/chat/native-agent.ts',reviewedNative.replace('productComparisonPending ? 5 : 4','5')); const ungated=invoke(); assert.notEqual(ungated.status,0); assert.match(ungated.stderr,/Non-comparison execution controls are not the reviewed gated version/);
+    write('src/infrastructure/chat/native-agent.ts',`${reviewedNative}\nproductComparisonPending = true;`); const extraGate=invoke(); assert.notEqual(extraGate.status,0); assert.match(extraGate.stderr,/Comparison pending state is not exclusively set/);
+    const mixed=invoke(['--facet-guard-revision',revision]); assert.notEqual(mixed.status,0); assert.match(mixed.stderr,/exceptions cannot be combined/);
   } finally {rmSync(dir,{recursive:true,force:true});}
 });
 

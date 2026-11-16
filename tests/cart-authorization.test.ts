@@ -328,3 +328,56 @@ test("invalid and ambiguous quantities fail and people counts do not become unit
     "error" in prepareCartProposal("Add two of both to my cart", state, both),
   );
 });
+test("operand authorization is independent of an invalid quantity", () => {
+  const selected = { ...state, lastIds: ["mugs"], selectedIds: ["mugs"] };
+  const proposal = {
+    selection: "selected" as const,
+    items: [{ productId: "mugs", quantity: 1 }],
+  };
+  const unknown = prepareCartProposal(
+    "Add 0 unicorns to my cart",
+    selected,
+    proposal,
+  );
+  assert.ok("error" in unknown);
+  assert.doesNotMatch(unknown.error, /number of units/);
+  for (const noun of [
+    "mugicorn",
+    "producticorn",
+    "produkticorn",
+    "koszykicorn",
+    "pierwszunicorn",
+  ])
+    assert.ok(
+      "error" in
+        prepareCartProposal(`Add ${noun} to my cart`, selected, proposal),
+      noun,
+    );
+  assert.ok(
+    authorizeCart("Add drug to my cart", state, {
+      selection: "second",
+      items: [{ productId: "carafe", quantity: 1 }],
+    }),
+  );
+  assert.ok(
+    "error" in
+      prepareCartProposal("Add mugs, unicorn", selected, {
+        ...proposal,
+        selection: "named",
+      }),
+  );
+});
+test("known operand accepts a natural predicate without treating comment counts as units", () => {
+  const selected = { ...state, lastIds: ["mugs"], selectedIds: ["mugs"] };
+  for (const text of [
+    "Dodaj do koszyka ten produkt fajny jest",
+    "Add this product, it has 2 pieces in the set",
+  ]) {
+    const result = prepareCartProposal(text, selected, {
+      selection: "selected",
+      items: [{ productId: "mugs", quantity: 1 }],
+    });
+    assert.ok("proposal" in result, text);
+    assert.equal(result.proposal.items[0].quantity, 1, text);
+  }
+});

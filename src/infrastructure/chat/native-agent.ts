@@ -15,6 +15,7 @@ import {
   type ExplicitFacet,
 } from "@/application/chat/explicit-facets";
 import { expandFunctionalGroup } from "@/domain/catalog/functional-groups";
+import { productTypes } from "@/domain/catalog/taxonomy";
 import { type CatalogService } from "@/application/catalog/catalog-service";
 import { criteriaError, meetsFeature } from "@/domain/catalog/requirements";
 import type { Product, ProductSearch } from "@/domain/catalog/product";
@@ -150,6 +151,86 @@ const compactProduct = (p: Product, detail = false) => ({
       }
     : {}),
 });
+const foldComparison = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replaceAll("ł", "l");
+function literalProductList(text: string): string[] {
+  const current = foldComparison(text);
+  const named = products
+    .flatMap((product) => {
+      const positions = [product.id, product.name].flatMap((label) => {
+        const escaped = foldComparison(label).replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&",
+        );
+        const match = new RegExp(
+          `(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`,
+        ).exec(current);
+        return match ? [match.index] : [];
+      });
+      return positions.length
+        ? [{ id: product.id, position: Math.min(...positions) }]
+        : [];
+    })
+    .sort((a, b) => a.position - b.position)
+    .map((product) => product.id);
+  let remaining = current;
+  for (const label of products
+    .filter((product) => named.includes(product.id))
+    .flatMap((product) => [product.id, product.name])
+    .sort((a, b) => b.length - a.length)) {
+    const escaped = foldComparison(label).replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&",
+    );
+    remaining = remaining.replace(
+      new RegExp(`(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`, "g"),
+      " ",
+    );
+  }
+  const residue = remaining
+    .replace(
+      /\b(?:compare|porownaj|and|i|oraz|with|vs|versus|to|z|please|prosze|could|can|you|czy|mozesz|the|products?|items?|produkty|produktow)\b/g,
+      "",
+    )
+    .replace(/[\s.,?!&:;'"/()-]+/g, "");
+  return !residue && named.length >= 2 ? named : [];
+}
+function queryListGrounded(ids: string[], text: string): boolean {
+  const current = foldComparison(text);
+  if (
+    /["'“”„]/.test(current) ||
+    /\b(?:not|no|without|except|excluding|nie|bez|oprocz|poza)\b/.test(current)
+  )
+    return false;
+  const used = new Set<number>();
+  return ids.every((id) => {
+    const product = products.find((p) => p.id === id)!;
+    const type = productTypes[product.productType];
+    return [
+      product.id,
+      product.name,
+      ...(type ? [type.en, type.pl, ...type.aliases] : []),
+    ].some((label) => {
+      const escaped = foldComparison(label).replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      const match = new RegExp(`\\b${escaped}`).exec(current);
+      if (!match || used.has(match.index)) return false;
+      used.add(match.index);
+      return true;
+    });
+  });
+}
+function directComparisonRequest(text: string): boolean {
+  return /^(?:(?:please|prosze|could you|can you|czy mozesz)\s+)*(?:compare|porownaj)\b/.test(
+    foldComparison(text).trim(),
+  );
+}
 function cleanCaches() {
   for (const map of [resolutions, completed, operationResults]) {
     for (const [key, value] of map)
@@ -989,6 +1070,7 @@ async function executeAgent(
   let effectReferences: string[] = [];
   let committed: AgentResult | undefined;
   let expectedRead: "compareProducts" | "getProductDetails" | undefined;
+  let productComparisonPending = false;
   const addEvidence = (
     tool: string,
     input: unknown,
@@ -1023,17 +1105,19 @@ async function executeAgent(
       ? "cart"
       : compared
         ? "comparison"
-        : search
-          ? "search"
-          : categories
-            ? "categories"
-            : evidence.some((e) => e.tool === "getProductDetails")
-              ? "details"
-              : evidence.some((e) => e.tool === "getPolicy")
-                ? "policy"
-                : evidence.some((e) => e.tool === "getCatalogOverview")
-                  ? "overview"
-                  : "conversation";
+        : productComparisonPending
+          ? "comparison"
+          : search
+            ? "search"
+            : categories
+              ? "categories"
+              : evidence.some((e) => e.tool === "getProductDetails")
+                ? "details"
+                : evidence.some((e) => e.tool === "getPolicy")
+                  ? "policy"
+                  : evidence.some((e) => e.tool === "getCatalogOverview")
+                    ? "overview"
+                    : "conversation";
     const failure: TurnStatus = {
       status,
       usage,
@@ -1237,8 +1321,24 @@ async function executeAgent(
     quantity?: number,
     reuseIntent?: PendingCartIntent,
   ): AgentResult => {
+    const actionType = turn.action?.type;
+    const operationKind: Operation["kind"] =
+      actionType === "advice"
+        ? "conversation"
+        : actionType &&
+            [
+              "search",
+              "category",
+              "categories",
+              "more",
+              "availability",
+            ].includes(actionType)
+          ? "search"
+          : "cart";
     delete after.pendingCartIntent;
-    if (reuseIntent) after.pendingCartIntent = reuseIntent.nonce;
+    if (!reuseIntent) forgetCartIntent(turn.conversationId);
+    if (operationKind !== "cart") forgetCartIntent(turn.conversationId);
+    else if (reuseIntent) after.pendingCartIntent = reuseIntent.nonce;
     else if (turn.conversationId && choices.length) {
       const intent = rememberCartIntent({
         conversationId: turn.conversationId,
@@ -1258,12 +1358,13 @@ async function executeAgent(
     );
     value.operation = {
       id: operationId,
-      kind: "cart",
+      kind: operationKind,
       status: "needs-input",
       question: text,
       choices,
-      input: kind,
-      ...(quantity ? { quantity } : {}),
+      ...(operationKind === "cart"
+        ? { input: kind, ...(quantity ? { quantity } : {}) }
+        : {}),
     };
     value.status = operationTurnStatus(value.operation, usage);
     return value;
@@ -1623,11 +1724,14 @@ async function executeAgent(
       delete after.pendingCartIntent;
     }
   }
-  for (let step = 0; step < 4; step++) {
+  for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {
     if (committed && signal.reason?.name === "TimeoutError")
       return unavailableAdvice("TIMEOUT");
     signal.throwIfAborted();
-    const forceAnswer = step === 3 || terminalOnly;
+    const forceAnswer =
+      (productComparisonPending
+        ? usage.calls >= 3 && expectedRead !== "compareProducts"
+        : step === 3) || terminalOnly;
     progress(forceAnswer ? "answer" : "understanding");
     const { proposeCart: _cartTool, ...readTools } = nativeTools;
     const tools: ToolSet | undefined = committed
@@ -1652,6 +1756,7 @@ async function executeAgent(
       call = forcedCall;
       forcedCall = undefined;
     } else {
+      if (productComparisonPending && usage.calls >= 4) break;
       usage.calls++;
       let generated: Awaited<ReturnType<typeof generateText>>;
       try {
@@ -1709,7 +1814,11 @@ async function executeAgent(
             (error.responseBody.includes("tool_use_failed") ||
               /tool choice.*required/i.test(error.responseBody)));
         if (!invalidCall) throw error;
-        if (correction || step === 3) break;
+        if (
+          correction ||
+          (productComparisonPending ? usage.calls >= 4 : step === 3)
+        )
+          break;
         correction = true;
         messages.push({
           role: "user",
@@ -1766,6 +1875,15 @@ async function executeAgent(
       }
     }
     const name = call.toolName;
+    if (
+      !turn.action &&
+      !hasCartInstruction(turn.text) &&
+      directComparisonRequest(turn.text) &&
+      ["searchProducts", "getProductDetails", "compareProducts"].includes(name)
+    ) {
+      productComparisonPending = true;
+      expectedRead = "compareProducts";
+    }
     // Optional advice can never execute a catalog or cart tool.
     if (committed && name !== "presentAnswer")
       return unavailableAdvice("UNEXPECTED_ADVICE_TOOL");
@@ -1789,6 +1907,39 @@ async function executeAgent(
       if (name === "presentAnswer") {
         finishCatalog();
         const answer = answerSchema.parse(call.input);
+        if (productComparisonPending && !compared) {
+          if (/\?\s*$/.test(answer.text.trim())) {
+            const incomplete = assistantTextError(
+              answer.text,
+              providerFinish,
+              language,
+            );
+            if (answer.language !== language) throw new Error("WRONG_LANGUAGE");
+            if (incomplete) throw new Error(incomplete);
+            const questionAnswer = {
+              ...answer,
+              productIds: [],
+              view: "none" as const,
+            };
+            const text = validatePresentation(
+              questionAnswer,
+              verifiedEvidence(),
+              search,
+            );
+            const value = result(questionAnswer, text, "complete");
+            value.operation = {
+              id: operationId,
+              kind: "comparison",
+              status: "needs-input",
+              question: text,
+            };
+            value.status = operationTurnStatus(value.operation, usage);
+            return value;
+          }
+          throw new Error(
+            "Read the requested product comparison before answering.",
+          );
+        }
         adviceLength = answer.text.length;
         const incomplete = assistantTextError(
           answer.text,
@@ -1878,7 +2029,9 @@ async function executeAgent(
             continuation === "compareProducts" ||
             continuation === "getProductDetails"
           )
-            expectedRead = continuation;
+            expectedRead = productComparisonPending
+              ? "compareProducts"
+              : continuation;
           const raw = call.input as {
             mode?: "recommend" | "lookup";
             rejections?: { productId: string; userQuote: string }[];
@@ -1892,7 +2045,7 @@ async function executeAgent(
               raw.rejections ?? [],
             ),
           });
-          if (raw.mode === "lookup") {
+          if (raw.mode === "lookup" || productComparisonPending) {
             const fresh = initialAgentState();
             const checked = resolveExplicitFacets(
               turn.text,
@@ -1926,6 +2079,26 @@ async function executeAgent(
               totalMatches: found.totalMatches,
             };
             effectReferences = found.products.map((product) => product.id);
+            if (
+              productComparisonPending &&
+              raw.mode !== "lookup" &&
+              continuation !== "compareProducts" &&
+              continuation !== "readMore"
+            ) {
+              const currentIds = literalProductList(turn.text);
+              const queryIds = literalProductList(lookupCriteria.query);
+              const ids = currentIds.length
+                ? currentIds
+                : queryListGrounded(queryIds, turn.text)
+                  ? queryIds
+                  : [];
+              if (ids.length >= 2 && ids.length <= 10)
+                forcedCall = {
+                  toolName: "compareProducts",
+                  toolCallId: "app-comparison",
+                  input: { productIds: ids },
+                };
+            }
             break;
           }
           if (!resolution) {
@@ -2105,6 +2278,20 @@ async function executeAgent(
           if (product) effectReferences = [product.id];
           if (
             product &&
+            productComparisonPending &&
+            (call.input as { continueWith?: string }).continueWith !==
+              "readMore"
+          ) {
+            const ids = literalProductList(turn.text);
+            if (ids.length >= 2 && ids.length <= 10)
+              forcedCall = {
+                toolName: "compareProducts",
+                toolCallId: "app-comparison",
+                input: { productIds: ids },
+              };
+          } else if (
+            !productComparisonPending &&
+            product &&
             (call.input as { continueWith?: string }).continueWith !==
               "readMore" &&
             !hasCartInstruction(turn.text)
@@ -2126,44 +2313,8 @@ async function executeAgent(
                   product.name.toLowerCase() === ref.toLowerCase(),
               )?.id ?? ref,
           );
-          const current = turn.text.toLowerCase();
-          const named = products
-            .flatMap((product) => {
-              const positions = [product.id, product.name].flatMap((label) => {
-                const escaped = label
-                  .toLowerCase()
-                  .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                const match = new RegExp(
-                  `(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`,
-                ).exec(current);
-                return match ? [match.index] : [];
-              });
-              return positions.length
-                ? [{ id: product.id, position: Math.min(...positions) }]
-                : [];
-            })
-            .sort((a, b) => a.position - b.position)
-            .map((product) => product.id);
-          let unnamed = current;
-          for (const label of products
-            .filter((product) => named.includes(product.id))
-            .flatMap((product) => [product.id, product.name])
-            .sort((a, b) => b.length - a.length)) {
-            const escaped = label
-              .toLowerCase()
-              .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            unnamed = unnamed.replace(
-              new RegExp(`(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`, "g"),
-              " ",
-            );
-          }
-          const directList = !unnamed
-            .replace(
-              /\b(?:compare|and|with|vs|versus|to|please|could|can|you|the|products?|items?)\b/g,
-              "",
-            )
-            .replace(/[\s.,?!&:;'"/()-]+/g, "");
-          if (directList && named.length >= 2) {
+          const named = literalProductList(turn.text);
+          if (named.length >= 2) {
             if (named.length > 10)
               throw new Error("Choose up to ten products for one comparison.");
             // Exact canonical names from CURRENT own this read, including missing or substituted model references.
@@ -2224,7 +2375,7 @@ async function executeAgent(
                 ...after.lastIds,
                 ...proposal.items.map((item) => item.productId),
               ]),
-            ].filter((id) => products.some((p) => p.id === id));
+            ].filter((id) => products.some((p) => p.id === id && p.inStock));
             return question(
               language === "pl"
                 ? "Wybierz dostępny produkt i podaj liczbę sztuk od 1 do 99."

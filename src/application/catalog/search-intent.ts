@@ -11,7 +11,7 @@ export function parseSearchIntent(criteria: ProductSearch): ProductSearch {
     .replace(/[?!.]/g, " ")
     .trim();
   const generic =
-    /^(?:(?:what|can|i|buy|could|do|you|have|show|me|some|any|all|the|your|products?|items?|things?|options?|available|please|find|something|for|a|are|there)\s*)*$/i;
+    /^(?:(?:what|can|i|buy|could|do|you|have|show|me|some|any|all|the|your|our|this|products?|items?|things?|options?|available|please|find|something|for|from|in|a|are|there|store|shop|collection)\s*)*$/i;
   return { ...criteria, query: generic.test(query) ? "" : query, maxPrice };
 }
 export function budgetBrowseRequest(text: string): ProductSearch | undefined {

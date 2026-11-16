@@ -33,6 +33,104 @@ export function hasCartInstruction(text: string) {
 type CartProposal = z.infer<typeof cartProposalSchema>;
 type CartContext = { resolvedThisTurn: boolean };
 const quantityError = "Confirm the number of units for each item.";
+export function cartSelectionIds(state: AgentState): string[] {
+  return state.lastIds.length > 1
+    ? state.lastIds
+    : state.resultIds.length > 1
+      ? state.resultIds
+      : state.comparisonIds.length
+        ? state.comparisonIds
+        : state.lastIds;
+}
+const firstReference =
+  /\b(?:first|pierwsz(?:y|a|e|ego|emu|ym|ych|ymi|ej)|pierwsi)\b/;
+const secondReference =
+  /\b(?:second|drug(?:i|a|ie|iego|iemu|im|ich|imi|iej))\b/;
+const cheaperReference =
+  /\b(?:cheaper|cheapest|(?:naj)?tansz(?:y|a|e|ego|emu|ym|ych|ymi|ej))\b|less expensive/;
+export function cartSelectionKind(
+  value: string,
+): "both" | "first" | "second" | "cheapest" | "all" | undefined {
+  if (/\b(?:both|oba|obie|obydwa|obydwie|obydwu)\b/.test(value)) return "both";
+  if (firstReference.test(value)) return "first";
+  if (secondReference.test(value)) return "second";
+  if (cheaperReference.test(value)) return "cheapest";
+  if (
+    /\b(?:all|each|wszystkie|wszystkich|wszystko|kazdy|kazda|kazde|kazdego|kazdej|kazdym|kazdych|kazdemu|kazdymi)\b/.test(
+      value,
+    )
+  )
+    return "all";
+}
+const inflection =
+  "(?:s|es|a|y|i|e|u|ow|om|ami|ach|iem|em|ka|ki|ke|ek|kach|kom|kami|ce)?";
+function operandClause(value: string, proposal: CartProposal): string {
+  const ends: number[] = [];
+  for (const item of proposal.items) {
+    const p = products.find((p) => p.id === item.productId);
+    if (!p) continue;
+    for (const label of [p.id, p.id.replaceAll("-", " "), p.name]) {
+      const escaped = normalize(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      for (const m of value.matchAll(
+        new RegExp(`\\b${escaped}${inflection}\\b`, "g"),
+      ))
+        ends.push(m.index! + m[0].length);
+    }
+  }
+  if (proposal.selection !== "named")
+    for (const m of value.matchAll(
+      /\b(?:(?:first|second|selected|cheaper|cheapest|this|that)\s+(?:one|product|item|option)|(?:pierwsz(?:y|a|e|ego|emu|ym|ych|ymi|ej)|drug(?:i|a|ie|iego|iemu|im|ich|imi|iej)|wybran\w*|tansz\w*|ten|tego)\s+produkt\w*|it|(?:first|second|this|that|pierwsz(?:y|a|e|ego|emu|ym|ych|ymi|ej)|drug(?:i|a|ie|iego|iemu|im|ich|imi|iej))(?=\s+(?:to|do)\b|[,;.!?]|$))\b/g,
+    ))
+      ends.push(m.index! + m[0].length);
+  for (const m of value.matchAll(
+    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|jeden|dwa|dwie|trzy|cztery|piec|szesc|siedem|osiem|dziewiec|dziesiec)\s+(?:units?|pieces?|sztuk\w*)\b/g,
+  ))
+    ends.push(m.index! + m[0].length);
+  for (const end of ends.sort((a, b) => a - b)) {
+    const tail = value
+      .slice(end)
+      .replace(
+        /^\s*(?:(?:to|into|do)\s+(?:(?:my|the)\s+)?(?:cart|basket|koszyk\w*))?/i,
+        "",
+      )
+      .replace(/^[\s,;.!?]+/, "");
+    const confirmation =
+      /^(?:ask me.*confirm|confirm with me|zapytaj.*potwierdz|potwierdz.*najpierw)/.test(
+        tail,
+      );
+    if (
+      !confirmation &&
+      !/\b(?:is|are|like|likes|love|jest|sa|podoba|lubie|has|have|ma|looks|seems)\b/.test(
+        tail,
+      )
+    )
+      continue;
+    if (
+      /^(?:and|or|oraz|lub|i)\b/.test(tail) &&
+      !/^(?:and\s+(?:it|they)\s+(?:is|are)|(?:i|oraz)\s+(?:jest|sa)|i\s+(?:like|love))\b/.test(
+        tail,
+      )
+    )
+      continue;
+    if (
+      proposal.selection === "named" &&
+      !confirmation &&
+      !/^(?:i|it|they|we|you|is|are|jest|sa|podoba|lubie|has|ma|looks|seems)\b/.test(
+        tail,
+      )
+    )
+      continue;
+    if (hasCartInstruction(tail)) continue;
+    return value.slice(0, end);
+  }
+  return value;
+}
+export function cartInstructionText(text: string): string {
+  return operandClause(normalize(text), {
+    selection: "selected",
+    items: products.map((p) => ({ productId: p.id, quantity: 1 })),
+  });
+}
 function cartClause(text: string, context?: CartContext) {
   let value = normalize(text);
   if (context?.resolvedThisTurn) {
@@ -194,7 +292,19 @@ export function prepareCartProposal(
 ): { proposal: CartProposal } | { error: string } {
   if (!hasCartInstruction(text))
     return { error: "Explicit cart instruction required." };
-  const amounts = resolvedQuantities(cartClause(text, context), proposal.items);
+  const clause = operandClause(cartClause(text, context), proposal);
+  const operandError = authorizeCart(
+    text,
+    state,
+    {
+      ...proposal,
+      items: proposal.items.map((item) => ({ ...item, quantity: 1 })),
+    },
+    context,
+    false,
+  );
+  if (operandError) return { error: operandError };
+  const amounts = resolvedQuantities(clause, proposal.items);
   if (!amounts) return { error: quantityError };
   const prepared = {
     ...proposal,
@@ -212,15 +322,14 @@ export function authorizeCart(
   state: AgentState,
   proposal: CartProposal,
   context?: CartContext,
+  checkQuantities = true,
 ) {
   if (!hasCartInstruction(text)) return "Explicit cart instruction required.";
-  const value = cartClause(text, context);
+  const value = operandClause(cartClause(text, context), proposal);
   const items = proposal.items;
-  const positions = [
-    /\bfirst\b|pierwsz/,
-    /\bsecond\b|drug/,
-    /cheap|less expensive|tansz/,
-  ].filter((pattern) => pattern.test(value)).length;
+  const positions = [firstReference, secondReference, cheaperReference].filter(
+    (pattern) => pattern.test(value),
+  ).length;
   if (positions > 1)
     return "Please identify one unambiguous product selection.";
   if (
@@ -238,20 +347,10 @@ export function authorizeCart(
     )
   )
     return "Please identify the exact product to add.";
-  const selection = /\bboth\b|\boba\b|\bobie\b|obydw/.test(value)
-    ? "both"
-    : /\bfirst\b|pierwsz/.test(value)
-      ? "first"
-      : /\bsecond\b|drug/.test(value)
-        ? "second"
-        : /cheap|less expensive|tansz/.test(value)
-          ? "cheapest"
-          : /\ball\b|wszystk|\beach\b|kazd\w*/.test(value)
-            ? "all"
-            : proposal.selection;
+  const selection = cartSelectionKind(value) ?? proposal.selection;
   // Parse the purchase operand independently of harmless commentary after a comma.
   // Quantity parsing still uses the whole instruction ("both, two each").
-  let remainder = value.split(/[,;.!?]/, 1)[0];
+  let remainder = operandClause(value, proposal);
   for (const item of items) {
     const product = products.find((p) => p.id === item.productId);
     if (!product)
@@ -263,39 +362,42 @@ export function authorizeCart(
       ...(productTypes[product.productType]?.aliases ?? []),
     ].sort((a, b) => b.length - a.length)) {
       const escaped = normalize(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      remainder = remainder.replace(new RegExp(`\\b${escaped}\\w*`, "g"), " ");
+      remainder = remainder.replace(
+        new RegExp(`\\b${escaped}${inflection}\\b`, "g"),
+        " ",
+      );
     }
   }
   remainder = remainder
     .replace(
-      /\b(?:add|dodaj|dodac|dodasz|biore|wezme|kupuje|buy|take|choose|can|could|would|you|i|we|please|prosze|poprosze|mozesz|moge|chcialbym|czy|do|to|my|the|a|an|this|that|it|these|those|one|two|three|four|five|six|seven|eight|nine|ten|jeden|jedna|jedno|dwa|dwie|trzy|cztery|piec|szesc|siedem|osiem|dziewiec|dziesiec|ta|te|tego|tansz\w*|drozsz\w*|cheaper|cheapest|less|expensive|first|second|pierwsz\w*|drug\w*|both|all|oba|obie|obydw\w*|wszystk\w*|each|kazd\w*|again|another|more|jeszcze|ponownie|wiecej|kolejn\w*|product\w*|produkt\w*|items?|options?|of|and|or|i|cart|basket|koszyk\w*|szt\w*|units?|pieces?|them|x)\b/g,
+      /\b(?:add|dodaj|dodac|dodasz|biore|wezme|kupuje|buy|take|choose|can|could|would|you|i|we|please|prosze|poprosze|mozesz|moge|chcialbym|czy|do|to|my|the|a|an|this|that|it|these|those|one|two|three|four|five|six|seven|eight|nine|ten|jeden|jedna|jedno|dwa|dwie|trzy|cztery|piec|szesc|siedem|osiem|dziewiec|dziesiec|ta|te|tego|(?:naj)?tansz(?:y|a|e|ego|emu|ym|ych|ymi|ej)|drozsz(?:y|a|e|ego|emu|ym|ych|ymi|ej)|cheaper|cheapest|less|expensive|first|second|pierwsz(?:y|a|e|ego|emu|ym|ych|ymi|ej)|drug(?:i|a|ie|iego|iemu|im|ich|imi|iej)|both|all|oba|obie|obydw(?:a|ie|u)|wszystk(?:ie|ich|o)|each|kazd(?:y|a|e|ego|ej|ym|ych|emu|ymi)|again|another|more|jeszcze|ponownie|wiecej|kolejn(?:y|a|e|ego|ej|ym|ych|emu|ymi)|products?|produkt(?:u|y|ow|om|ami|ach|em|owi)?|items?|options?|of|and|or|i|cart|basket|koszyk(?:a|u|i|ow|om|ami|ach|iem)?|szt(?:uk(?:a|i|e|om|ami|ach)?)?|units?|pieces?|them|x)\b/g,
       " ",
     )
     .replace(/[^a-z]+/g, " ")
     .trim();
   if (remainder)
     return "The selection contains an unresolved reference. Please name the product or use its position.";
-  if (selection === "first" && !/\bfirst\b|pierwsz/.test(value))
+  if (selection === "first" && !firstReference.test(value))
     return "Ask which product.";
-  if (selection === "second" && !/\bsecond\b|drug/.test(value))
+  if (selection === "second" && !secondReference.test(value))
     return "Ask which product.";
-  if (selection === "cheapest" && !/cheap|less expensive|tansz/.test(value))
+  if (selection === "cheapest" && !cheaperReference.test(value))
     return "Ask which product.";
   if (selection === "both" && !/\bboth\b|\boba\b|\bobie\b|obydw/.test(value))
     return "Ask which products.";
   if (selection === "all" && !/\ball\b|wszystk|\beach\b|kazd\w*/.test(value))
     return "Ask which products.";
-  const amounts = resolvedQuantities(value, items);
-  if (!amounts || items.some((item, index) => item.quantity !== amounts[index]))
+  const amounts = checkQuantities
+    ? resolvedQuantities(operandClause(value, proposal), items)
+    : items.map((item) => item.quantity);
+  if (
+    checkQuantities &&
+    (!amounts || items.some((item, index) => item.quantity !== amounts[index]))
+  )
     return quantityError;
   if (new Set(items.map((p) => p.productId)).size !== items.length)
     return "Choose distinct items.";
-  const candidates =
-    state.lastIds.length > 1
-      ? state.lastIds
-      : state.comparisonIds.length
-        ? state.comparisonIds
-        : state.lastIds;
+  const candidates = cartSelectionIds(state);
   let expected: string[] = [];
   switch (selection) {
     case "named":
@@ -308,10 +410,10 @@ export function authorizeCart(
         .map((p) => p.id);
       break;
     case "first":
-      expected = state.lastIds.slice(0, 1);
+      expected = candidates.slice(0, 1);
       break;
     case "second":
-      expected = state.lastIds.slice(1, 2);
+      expected = candidates.slice(1, 2);
       break;
     case "both":
       if (candidates.length === 2) expected = candidates;
@@ -322,8 +424,8 @@ export function authorizeCart(
     case "selected":
       expected = state.selectedIds.length
         ? state.selectedIds
-        : candidates.length === 1
-          ? candidates
+        : state.lastIds.length === 1
+          ? state.lastIds
           : [];
       break;
     case "cheapest": {

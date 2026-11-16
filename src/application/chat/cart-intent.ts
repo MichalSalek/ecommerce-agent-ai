@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { products } from "@/data/products";
-import { prepareCartProposal, hasCartInstruction } from "./cart-authorization";
+import {
+  prepareCartProposal,
+  hasCartInstruction,
+  cartSelectionIds,
+  cartInstructionText,
+  cartSelectionKind,
+} from "./cart-authorization";
 import type { AgentState } from "./shopping-v3";
 import type { Language } from "./assistant-text";
 
@@ -45,7 +51,7 @@ export function rememberCartIntent(
 }
 export function resolveCartOperand(text: string, state: AgentState) {
   if (!hasCartInstruction(text)) return undefined;
-  const value = text
+  const value = cartInstructionText(text)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -53,7 +59,8 @@ export function resolveCartOperand(text: string, state: AgentState) {
   const named = products.filter((p) =>
     [p.id, p.name.toLowerCase()].some((label) => value.includes(label)),
   );
-  const candidates = state.lastIds.length ? state.lastIds : state.comparisonIds;
+  const candidates = cartSelectionIds(state);
+  const selector = cartSelectionKind(value);
   let selection:
     | "named"
     | "first"
@@ -66,29 +73,29 @@ export function resolveCartOperand(text: string, state: AgentState) {
   if (named.length) {
     selection = "named";
     ids = named.map((p) => p.id);
-  } else if (/\bfirst\b|pierwsz/.test(value)) {
+  } else if (selector === "first") {
     selection = "first";
     ids = candidates.slice(0, 1);
-  } else if (/\bsecond\b|drug/.test(value)) {
+  } else if (selector === "second") {
     selection = "second";
     ids = candidates.slice(1, 2);
-  } else if (/cheap|less expensive|tansz/.test(value)) {
+  } else if (selector === "cheapest") {
     selection = "cheapest";
     const rows = products.filter((p) => candidates.includes(p.id));
     const price = Math.min(...rows.map((p) => p.price));
     ids = rows.filter((p) => p.price === price).map((p) => p.id);
     if (ids.length !== 1) ids = [];
-  } else if (/\bboth\b|\boba\b|\bobie\b|obydw/.test(value)) {
+  } else if (selector === "both") {
     selection = "both";
     if (candidates.length === 2) ids = candidates;
-  } else if (/\ball\b|wszystk|\beach\b|kazd/.test(value)) {
+  } else if (selector === "all") {
     selection = "all";
     ids = candidates;
   } else
     ids = state.selectedIds.length
       ? state.selectedIds
-      : candidates.length === 1
-        ? candidates
+      : state.lastIds.length === 1
+        ? state.lastIds
         : [];
   if (!ids.length) return { error: "selection" as const, candidates };
   const prepared = prepareCartProposal(text, state, {
@@ -102,6 +109,8 @@ export function resolveCartOperand(text: string, state: AgentState) {
       : /Unavailable/.test(prepared.error)
         ? ("unavailable" as const)
         : ("selection" as const),
-    candidates: ids.length ? ids : candidates,
+    candidates: /Unavailable/.test(prepared.error)
+      ? candidates.filter((id)=>products.find((p)=>p.id===id)?.inStock)
+      : /units/.test(prepared.error) && ids.length ? ids : candidates,
   };
 }

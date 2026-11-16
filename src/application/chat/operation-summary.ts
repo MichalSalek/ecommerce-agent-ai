@@ -3,6 +3,14 @@ import { getStorePolicy } from "@/domain/catalog/policies";
 import type { Language } from "./assistant-text";
 import type { Comparison, SearchEvidence, CategoryCard } from "./shopping-v3";
 
+function polishCount(count: number, one: string, few: string, many: string) {
+  if (count === 1) return one;
+  return count % 10 >= 2 &&
+    count % 10 <= 4 &&
+    !(count % 100 >= 12 && count % 100 <= 14)
+    ? few
+    : many;
+}
 export function comparisonSummary(
   value: Comparison,
   language: Language,
@@ -16,7 +24,7 @@ export function comparisonSummary(
     .map((p) => p.name)
     .join(", ");
   return language === "pl"
-    ? `Porównanie obejmuje ${rows.length} produkty. Najniższa cena to ${price} EUR (${names}).`
+    ? `Porównanie obejmuje ${rows.length} ${polishCount(rows.length, "produkt", "produkty", "produktów")}. Najniższa cena to ${price} EUR (${names}).`
     : `This comparison covers ${rows.length} products. The lowest price is EUR ${price} (${names}).`;
 }
 export function detailsSummary(id: string, language: Language): string {
@@ -34,8 +42,8 @@ export function searchSummary(
   const count = value.products.length;
   if (count)
     return language === "pl"
-      ? `Pokazuję ${count} produktów z ${value.totalMatches} pasujących do kryteriów. ${value.remainingMatches > 0 ? `Pozostało ${value.remainingMatches} niewyświetlonych dopasowań.` : "To wszystkie dopasowania do wyświetlenia."}`
-      : `Showing ${count} products from ${value.totalMatches} matching your criteria. ${value.remainingMatches > 0 ? `${value.remainingMatches} unseen matches remain.` : "There are no further matching products to show."}`;
+      ? `Pokazuję ${count} ${polishCount(count, "produkt", "produkty", "produktów")} z ${value.totalMatches} pasujących do kryteriów. ${value.remainingMatches > 0 ? `Możesz wyświetlić jeszcze ${value.remainingMatches} ${polishCount(value.remainingMatches, "dopasowanie", "dopasowania", "dopasowań")}.` : "To wszystkie dopasowania do wyświetlenia."}`
+      : `Showing ${count} ${count === 1 ? "product" : "products"} from ${value.totalMatches} matching your criteria. ${value.remainingMatches > 0 ? `${value.remainingMatches} unseen ${value.remainingMatches === 1 ? "match remains" : "matches remain"}.` : "There are no further matching products to show."}`;
   const messages = {
     exhausted: [
       "There are no more matching products to show.",

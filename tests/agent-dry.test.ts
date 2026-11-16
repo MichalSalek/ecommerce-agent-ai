@@ -207,6 +207,24 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     ),
   );
   try {
+    await t.test("read clarifications carry their own operation kind and never create a cart intention", async () => {
+      for (const action of [
+        { type: "more" as const },
+        { type: "availability" as const },
+        { type: "advice" as const, operationId: "missing-result" },
+      ]) {
+        const model = scripted([]);
+        const result = await runAgent(model.runtime.model, catalog, {
+          text: "Continue", state: initialAgentState(), userMessageId: `read-question-${++sequence}`,
+          conversationId: `visitor-${sequence}`, action,
+        }, new AbortController().signal, model.runtime);
+        assert.equal(model.count(), 0);
+        assert.equal(result.operation.status, "needs-input");
+        assert.equal(result.operation.kind, action.type === "advice" ? "conversation" : "search");
+        assert.equal(result.checkpoint.after.pendingCartIntent, undefined);
+        assert.equal(result.cart, undefined);
+      }
+    });
     await t.test("UI comparison and details use canonical data without inference", async () => {
       const ids = ["mugs", "carafe", "travel-mug", "coffee-grinder", "pour-over-dripper"];
       const state = { ...initialAgentState(), criteria: { functionalGroup: "coffee" as const, maxPrice: 150 }, resultIds: ids, lastIds: ids, shownIds: ids };
@@ -759,6 +777,114 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         );
       },
     );
+    await t.test("Polish explicit comparison overrides a recommendation and preserves the active search", async () => {
+      const state = {
+        ...initialAgentState(), language: "pl" as const,
+        criteria: { productKind: "furniture", useEnvironment: "outdoor" as const, maxPrice: 150 },
+        requestedCount: 4, shownIds: ["garden-bench", "folding-garden-chair"],
+        resultIds: ["garden-bench", "folding-garden-chair"],
+        lastIds: ["garden-bench", "folding-garden-chair"],
+      };
+      const action = run(catalog, [
+        call("searchProducts", { ...nativeTransition("new", { query: "mugs and carafe" }), mode: "recommend", continueWith: "presentAnswer" }),
+        (m) => present(m, { text: "Oba produkty mają różne zastosowania.", language: "pl" }),
+      ], "Porównaj kubki i karafkę", state);
+      const result = await action.result;
+      assert.equal(action.mock.count(), 2);
+      assert.equal(result.operation.kind, "comparison");
+      assert.equal(result.operation.status, "completed");
+      assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+      assert.deepEqual(result.comparison?.cheapestIds, ["carafe"]);
+      assert.ok(!result.comparison?.productIds.includes("pour-over-dripper"));
+      assert.deepEqual(result.checkpoint.after.criteria, state.criteria);
+      assert.deepEqual(result.checkpoint.after.shownIds, state.shownIds);
+      assert.equal(result.checkpoint.after.requestedCount, state.requestedCount);
+      assert.equal(result.checkpoint.transition, undefined);
+      assert.deepEqual(result.checkpoint.after.comparisonIds, ["mugs", "carafe"]);
+      assert.deepEqual(result.evidence.filter(e => ["searchProducts", "compareProducts"].includes(e.tool)).map(e => e.tool), ["searchProducts", "compareProducts"]);
+      const cart = run(catalog, [], "Dodaj 2 sztuki tańszego do koszyka", result.checkpoint.after);
+      const added = await cart.result;
+      assert.equal(cart.mock.count(), 0);
+      assert.equal(added.operation.status, "awaiting-device");
+      assert.deepEqual(added.cart?.items, [{ productId: "carafe", quantity: 2 }]);
+    });
+    await t.test("translated lookup cannot reuse one noun or an excluded product as comparison consent", async () => {
+      for (const [text, query, language] of [
+        ["Porównaj kubki i karafkę", "travel-mug and mugs", "pl"],
+        ["Compare mugs but not carafe", "mugs and carafe", "en"],
+      ] as const) {
+        const action = run(catalog, [
+          call("searchProducts", { ...nativeTransition("new", { query }, { language }), mode: "recommend", continueWith: "presentAnswer" }),
+          call("presentAnswer", { text: language === "pl" ? "Które produkty porównać?" : "Which products should I compare?", language, evidenceIds: [], productIds: [], view: "none" }),
+        ], text);
+        const result = await action.result;
+        assert.equal(result.operation.status, "needs-input");
+        assert.equal(result.operation.kind, "comparison");
+        assert.equal(result.comparison, undefined);
+        assert.ok(!result.evidence.some(e => e.tool === "compareProducts"));
+      }
+    });
+    await t.test("a detail read can complete an explicit canonical comparison", async () => {
+      const action = run(catalog, [
+        call("getProductDetails", { productId: "mugs" }),
+        (m) => present(m, { text: "These products serve different purposes." }),
+      ], "Compare mugs and carafe");
+      const result = await action.result;
+      assert.equal(action.mock.count(), 2);
+      assert.equal(result.operation.status, "completed");
+      assert.equal(result.operation.kind, "comparison");
+      assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+    });
+    await t.test("unresolved comparison asks a question without creating a cart intention", async () => {
+      const action = run(catalog, [
+        call("searchProducts", { ...nativeTransition("new", { query: "mugs" }), mode: "lookup" }),
+        call("presentAnswer", { text: "Which products should I compare?", language: "en", evidenceIds: [], productIds: [], view: "none" }),
+      ], "Compare the options");
+      const result = await action.result;
+      assert.equal(result.operation.kind, "comparison");
+      assert.equal(result.operation.status, "needs-input");
+      assert.equal(result.checkpoint.after.pendingCartIntent, undefined);
+      assert.equal(result.cart, undefined);
+      assert.equal(result.comparison, undefined);
+    });
+    await t.test("synthetic comparison keeps the four-inference ceiling", async () => {
+      const action = run(catalog, [
+        call("searchProducts", { ...nativeTransition("new", { query: "mugs" }), mode: "lookup" }),
+        call("searchProducts", { ...nativeTransition("new", { query: "carafe" }), mode: "lookup" }),
+        call("getProductDetails", { productId: "mugs", continueWith: "readMore" }),
+        call("searchProducts", { ...nativeTransition("new", { query: "mugs and carafe" }), mode: "recommend", continueWith: "presentAnswer" }),
+      ], "Compare mugs and carafe");
+      const result = await action.result;
+      assert.equal(action.mock.count(), 4);
+      assert.equal(result.operation.kind, "comparison");
+      assert.equal(result.operation.status, "completed");
+      assert.equal(result.advice.status, "unavailable");
+      assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+      assert.equal(result.evidence.filter((entry) => entry.tool === "searchProducts").length, 3);
+      assert.equal(result.evidence.filter((entry) => entry.tool === "getProductDetails").length, 1);
+    });
+    await t.test("unfinished product comparison is reported as failed", async () => {
+      const answer = call("presentAnswer", { text: "Here are the results.", language: "en", evidenceIds: [], productIds: [], view: "none" });
+      const action = run(catalog, [
+        call("searchProducts", { ...nativeTransition("new", { query: "mugs" }), mode: "lookup" }),
+        answer,
+        answer,
+      ], "Compare the options");
+      const result = await action.result;
+      assert.equal(result.operation.kind, "comparison");
+      assert.equal(result.operation.status, "failed");
+      assert.equal(result.comparison, undefined);
+      assert.equal(result.cart, undefined);
+    });
+    await t.test("policy comparison does not force a product comparison", async () => {
+      const action = run(catalog, [
+        call("getPolicy", { topic: "delivery" }),
+        call("presentAnswer", { text: "Delivery details are available.", language: "en", evidenceIds: ["e1"], productIds: [], view: "none" }),
+      ], "Compare delivery policies");
+      const result = await action.result;
+      assert.equal(result.comparison, undefined);
+      assert.ok(!result.evidence.some(e => e.tool === "compareProducts"));
+    });
     await t.test(
       "direct comparison normalizes extra lookup matches and preserves request order",
       async () => {
@@ -845,7 +971,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
             call("compareProducts", { productIds: ["mugs", "carafe"] }),
             (messages) =>
               present(messages, {
-                text: "Please choose up to ten products for one comparison.",
+                text: "Which products would you like to compare?",
                 view: "none",
                 productIds: [],
               }),
@@ -857,6 +983,8 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         );
         const result = await action.result;
         assert.equal(result.status.status, "complete");
+        assert.equal(result.operation.kind, "comparison");
+        assert.equal(result.operation.status, "needs-input");
         assert.equal(result.comparison, undefined);
         assert.equal(result.presentation.view, "none");
       },
