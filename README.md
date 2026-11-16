@@ -103,7 +103,7 @@ A coding agent can also use [STARTER_PROMPT.md](STARTER_PROMPT.md) to inspect th
 
 ## Checks
 
-The isolated local runner explicitly selects llama/Qwen, scrubs Groq credentials and warms a full native request before measured calls. Its `--engine` mode uses the real engine and index with a longer functional-test boundary; this is separate from the thirty-second production HTTP deadline. It covers six bilingual families, starters/examples, counts, comparisons, the original reported flow and twenty turns. Private artifacts support reuse only for identical source/build and runner inputs.
+The isolated local runner explicitly selects llama/Qwen, scrubs Groq credentials, verifies that thinking is actually disabled and warms a full native request before measured calls. A router that forces thinking needs a dedicated passthrough endpoint; the runner records its effective local URL and never changes shared model settings. Its `--engine` mode uses the real engine and index with a longer functional-test boundary; this is separate from the thirty-second production HTTP deadline. It covers six bilingual families, starters/examples, counts, comparisons, the original reported flow and twenty turns. Private artifacts support reuse only for identical source/build and runner inputs.
 
 ```bash
 EMBEDDING_MODEL=minilm npm run test:agent:local -- --engine --artifact /tmp/aurelle-local.json

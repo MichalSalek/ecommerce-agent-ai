@@ -21,7 +21,7 @@ Approved scope: independent operation/advice outcomes, complete buffered advice,
 
 Local development uses the existing Qwen endpoint. Production retains the existing Render service and Groq primary/fallback route. No database, tunnel, payment service or additional infrastructure is introduced. Evidence records will distinguish deterministic, local-model and production-provider acceptance.
 
-The broad local HTTP acceptance is blocked by measured local-model throughput. A warmed native inference generated 353 tokens in 58.5 seconds (about 6 tokens/second); a complete diagnostic turn with advice took 124.4 seconds. The application retains its 30-second deadline. The isolated suite passed its initial catalog turn but timed out on the next free-form request. This is not a completed bilingual/twenty-turn acceptance. The diagnostic used a longer test signal and does not pass the HTTP deadline gate.
+Earlier HTTP diagnostics on the generic local gateway timed out under its forced xhigh profile. A warmed native inference generated 353 tokens in 58.5 seconds (about 6 tokens/second); a complete diagnostic turn with advice took 124.4 seconds. The application retains its 30-second deadline. The isolated suite passed its initial catalog turn but timed out on the next free-form request. This is not a completed bilingual/twenty-turn acceptance. The diagnostic used a longer test signal and does not pass the HTTP deadline gate.
 
 All four starters, ten examples, requested counts 4/5/10/20/all and comparisons 2/5/10 passed actual catalog-only API checks with zero inferences. Fresh 390px browser checks verified two unavailable model routes, one advice message/countdown, usable catalog controls during cooldown, Polish cart save and unchanged cart/receipt after reload.
 
@@ -38,3 +38,5 @@ A subsequent real response duplicated `garden` in requiredFeatures while already
 ## Acceptance boundaries
 
 The full local conversation suite also runs directly against the real engine through `scripts/agent-local-core.ts`, using a longer functional-test boundary. The production API retains its thirty-second timeout; its wire protocol, cancellation, browser storage and real Groq latency are separate acceptance evidence. Engine artifacts explicitly identify their mode and cannot reuse HTTP-mode batches. No functional conversation family is waived by this separation.
+
+The shared local router was verified to overwrite `chat_template_kwargs.enable_thinking=false` with thinking=true/xhigh. This explained thought-only length-limited responses. The local QA runner now uses the existing router's documented `/upstream/qwen38-uncensored/v1` passthrough, preserving the same GGUF and per-request thinking=false without changing shared configuration. A separate profile probe requires actual nonempty content with no reasoning before the native warm-up. Earlier high-thinking runs remain historical and are not reused for the fresh correct-profile suite.

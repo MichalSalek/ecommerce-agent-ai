@@ -2,17 +2,37 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rename, writeFile, appendFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 if (process.argv.includes('--help')) {
-  console.log('Usage: node scripts/agent-local.mjs [--engine] [--smoke|--suite] [--resume /tmp/artifact.json] [--query-guard-revision <old-SHA> | --facet-guard-revision <old-SHA>] [--artifact /tmp/artifact.json] [--inspect-resume]\n--engine: source-based ENGINE functional QA with 600s test turns; not HTTP latency acceptance. Cross-revision reuse requires exactly one guard revision and verified guard-only source change; --inspect-resume verifies without running the model. Without --engine requires an up-to-date standalone build. Both require local llama-server. Private artifacts reuse only whole passing batches of the same mode and inputs.');
+  console.log('Usage: node scripts/agent-local.mjs [--engine] [--smoke|--suite] [--resume /tmp/artifact.json] [--query-guard-revision <old-SHA> | --facet-guard-revision <old-SHA>] [--artifact /tmp/artifact.json] [--inspect-resume]\n  node scripts/agent-local.mjs --inspect-profile <fixture.json>\n--engine: source-based ENGINE functional QA with 600s test turns; not HTTP latency acceptance. Uses the local llama-swap upstream passthrough by default and verifies thinking is disabled before warming. Cross-revision reuse requires exactly one guard revision and verified guard-only source change. --inspect-profile and --inspect-resume do not call the model.');
   process.exit(0);
 }
 const args = process.argv.slice(2);
+function hasReasoning(value) {
+  if (value === undefined || value === null || value === false || value === '' || value === 0) return false;
+  if (Array.isArray(value)) return value.some(hasReasoning);
+  if (typeof value === 'object') return Object.values(value).some(hasReasoning);
+  return true;
+}
+function checkProfile(status, body) {
+  assert.equal(status,200,'Local model profile probe failed: expected HTTP 200');
+  const choice=body?.choices?.[0], message=choice?.message;
+  assert.ok(typeof message?.content==='string' && message.content.trim(), 'Local model profile probe returned no text; thinking may be forced. Use llama-swap upstream passthrough.');
+  assert.ok(![body?.reasoning,body?.reasoning_content,choice?.reasoning,choice?.reasoning_content,message?.reasoning,message?.reasoning_content,message?.reasoning_details].some(hasReasoning), 'Local model profile probe found reasoning content; thinking is forced. Use llama-swap upstream passthrough.');
+  assert.ok(!/<\/?(?:think|analysis)(?:\s|>)/i.test(message.content), 'Local model profile probe found reasoning tags; thinking is forced. Use llama-swap upstream passthrough.');
+}
+if (args[0] === '--inspect-profile') {
+  assert.equal(args.length,2,'Expected --inspect-profile <fixture.json>');
+  const fixture=JSON.parse(await readFile(args[1],'utf8'));
+  checkProfile(fixture.status,fixture.body);
+  console.log(JSON.stringify({reasoningDisabled:true,probe:'content-without-reasoning-v1'}));
+  process.exit(0);
+}
 for (let i = 0; i < args.length; i++) {
   assert.ok(['--engine', '--smoke', '--suite', '--resume', '--artifact', '--query-guard-revision', '--facet-guard-revision', '--inspect-resume'].includes(args[i]), `Unknown option: ${args[i]}`);
   if (['--resume', '--artifact', '--query-guard-revision', '--facet-guard-revision'].includes(args[i])) assert.ok(args[++i] && !args[i].startsWith('--'), 'Missing option value');
@@ -36,10 +56,11 @@ assert.ok(!guardRevision || (engine && resume && /^[a-f0-9]{40}$/.test(guardRevi
 assert.ok(!args.includes('--inspect-resume') || (guardRevision && resume), '--inspect-resume requires one guard revision and --resume');
 assert.notEqual(artifact, resume, 'Resume and output must differ');
 const root = fileURLToPath(new URL('../', import.meta.url));
-const upstream = new URL(process.env.LLAMA_BASE_URL ?? 'http://172.20.0.1:8090/v1');
+const upstream = new URL(process.env.LLAMA_BASE_URL ?? 'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1');
 const host = upstream.hostname;
 assert.ok(upstream.protocol === 'http:' && !upstream.username && !upstream.password && !upstream.search && !upstream.hash && (/^127\.(\d{1,3}\.){2}\d{1,3}$/.test(host) || host === 'localhost' || /^10\.(\d{1,3}\.){2}\d{1,3}$/.test(host) || /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) || /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)), 'llama endpoint must be a private IPv4 or localhost HTTP endpoint');
 const model = 'qwen38-uncensored';
+const expectedProfile={reasoningDisabled:true,probe:'content-without-reasoning-v1'};
 async function files(dir) {
   const paths = [];
   for (const e of (await readdir(join(root, dir), { withFileTypes: true })).sort((a,b) => a.name.localeCompare(b.name))) {
@@ -61,6 +82,7 @@ let resumeCompatibility;
 if (old) {
   assert.equal(old.model, model, 'Model changed');
   assert.equal(old.upstream, upstream.href, 'Local endpoint changed');
+  assert.deepEqual(old.profile, expectedProfile, 'Local model profile changed or was not verified');
   assert.equal(old.execution, execution, 'Cannot reuse evidence from another execution mode');
   assert.ok(Array.isArray(old.batches), 'Invalid resume batches');
   if (!guardRevision) {
@@ -151,7 +173,9 @@ const proxy = createServer(async (req, res) => {
       body = JSON.stringify(v); modelCalls++;
       if (warming && !engine) { assert.ok(!warmClaimed, 'Warm probe permits one native request'); warmClaimed = true; warmRequest = true; }
     }
+    if (path.endsWith('/chat/completions')) await appendFile(artifact+'.provider.jsonl', JSON.stringify({kind:'request',at:new Date().toISOString(),body:JSON.parse(body)})+'\n',{mode:0o600});
     const response = await fetch(`${upstream.href.replace(/\/$/, '')}${path.slice(3)}`, { method:req.method, headers: { 'content-type':'application/json' }, ...(req.method === 'POST' ? {body} : {}), redirect:'error', signal:AbortSignal.any([controller.signal, AbortSignal.timeout(engine?600000:180000)]) });
+    if (path.endsWith('/chat/completions')) { const raw=await response.clone().json().catch(()=>undefined); await appendFile(artifact+'.provider.jsonl',JSON.stringify({kind:'response',at:new Date().toISOString(),status:response.status,model:raw?.model,usage:raw?.usage,choices:raw?.choices?.map(c=>({finish:c.finish_reason,toolCalls:c.message?.tool_calls,contentChars:c.message?.content?.length??0,reasoningChars:c.message?.reasoning_content?.length??0}))})+'\n',{mode:0o600}); }
     if (!res.destroyed) res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'application/json' });
     if (response.body) for await (const chunk of response.body) if (!res.destroyed) res.write(chunk);
     if (!res.destroyed) res.end();
@@ -170,6 +194,16 @@ process.once('SIGINT', () => { shutdown(); process.exit(130); });
 process.once('SIGTERM', () => { shutdown(); process.exit(143); });
 try {
   const modelBase = `http://127.0.0.1:${proxy.address().port}/v1`;
+  console.log('[PROFILE] Checking local model response without thinking before native warm-up');
+  let profileResponse;
+  try {
+    profileResponse=await fetch(`${upstream.href.replace(/\/$/,'')}/chat/completions`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model,messages:[{role:'system',content:'Reply with Ready.'},{role:'user',content:'Hello.'}],max_tokens:16,chat_template_kwargs:{enable_thinking:false}}),redirect:'error',signal:AbortSignal.timeout(180000)});
+  } catch {throw new Error('Local model profile probe could not reach the configured upstream passthrough');}
+  let profileBody;
+  if(profileResponse.status===200) try {profileBody=await profileResponse.json();} catch {throw new Error('Local model profile probe returned invalid JSON');}
+  checkProfile(profileResponse.status,profileBody);
+  report.profile=expectedProfile; await save();
+  console.log('[PROFILE] Text returned with no reasoning content');
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/groq|proxy|openai|anthropic/i.test(k)));
   Object.assign(env, { NODE_ENV:'production', HOSTNAME:'127.0.0.1', CHAT_PROVIDER:'llama', LLAMA_BASE_URL:modelBase, LLAMA_MODEL:model, CHAT_REQUESTS_PER_HOUR:'1000', ...(engine ? {EMBEDDING_MODEL:'minilm'} : {GROQ_API_KEY:'', GROQ_FALLBACK_API_KEY:'', GROQ_BASE_URL:'http://127.0.0.1:1/v1', GROQ_BALANCER:'false', GROQ_TRANSPORT:'node'}) });
   let appPort;

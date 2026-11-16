@@ -25,6 +25,19 @@ test('local runner refuses public model endpoints before launching a server', ()
   assert.match(result.stderr, /private IPv4 or localhost/);
 });
 
+test('profile probe refuses forced reasoning or empty answers without logging reasoning text', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-profile-'));
+  const path=join(dir,'profile.json');
+  const inspect=(status:number,message:unknown)=>{writeFileSync(path,JSON.stringify({status,body:{choices:[{message}]}})); return run('agent-local',['--inspect-profile',path]);};
+  try {
+    const good=inspect(200,{content:'Ready.',reasoning_content:''}); assert.equal(good.status,0,good.stderr); assert.equal(JSON.parse(good.stdout).reasoningDisabled,true);
+    for(const message of [{content:'',reasoning_content:'private reasoning fixture'},{content:'Ready.',reasoning_content:'private reasoning fixture'},{content:'Ready.',reasoning:{text:'private reasoning fixture'}},{content:'<think>private reasoning fixture</think>Ready.'}]) {
+      const failed=inspect(200,message); assert.notEqual(failed.status,0); assert.match(failed.stderr,/thinking|reasoning/i); assert.doesNotMatch(failed.stderr,/private reasoning fixture/);
+    }
+    const http=inspect(503,{content:'Ready.'}); assert.notEqual(http.status,0); assert.match(http.stderr,/expected HTTP 200/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
 test('guard-only resume proves historical source, runner and previously accepted queries', () => {
   const dir=mkdtempSync(join(tmpdir(),'aurelle-guard-resume-'));
   const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -41,13 +54,14 @@ test('guard-only resume proves historical source, runner and previously accepted
     git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
     const revision=git('rev-parse','HEAD');
     const artifact=join(dir,'prior.json');
-    const prior={fingerprint:digest(['src/application/chat/query-language.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/v1',batches:[{name:'passed',passed:true,turns:[{validated:true,checkpoint:{after:{criteria:{query:'morning coffee'}}},result:{appliedCriteria:{query:'morning coffee'}}}]},{name:'failed',passed:false,turns:[]}]};
+    const prior={fingerprint:digest(['src/application/chat/query-language.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches:[{name:'passed',passed:true,turns:[{validated:true,checkpoint:{after:{criteria:{query:'morning coffee'}}},result:{appliedCriteria:{query:'morning coffee'}}}]},{name:'failed',passed:false,turns:[]}]};
     writeFileSync(artifact,JSON.stringify(prior));
     const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--query-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
     const unchanged=invoke(); assert.notEqual(unchanged.status,0); assert.match(unchanged.stderr,/Only the query-language guard may differ/);
     write('src/application/chat/query-language.ts',`${originalGuard}// verified adjustment\n`);
     const accepted=invoke(); assert.equal(accepted.status,0,accepted.stderr);
     const proof=JSON.parse(accepted.stdout); assert.equal(proof.originalRevision,revision); assert.deepEqual(proof.checkedQueries,['morning coffee']); assert.deepEqual(proof.reusedBatches,['passed']);
+    const {profile: _profile,...legacy}=prior; writeFileSync(artifact,JSON.stringify(legacy)); const oldProfile=invoke(); assert.notEqual(oldProfile.status,0); assert.match(oldProfile.stderr,/Local model profile changed or was not verified/); writeFileSync(artifact,JSON.stringify(prior));
     const strict=spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
     assert.notEqual(strict.status,0); assert.match(strict.stderr,/Source\/build fingerprint changed/);
     write('src/other.ts','export const value=2;\n'); const other=invoke(); assert.notEqual(other.status,0); assert.match(other.stderr,/Only the query-language guard may differ/); write('src/other.ts','export const value=1;\n');
@@ -75,7 +89,7 @@ test('facet-only resume rejects any prior search naming a canonical kind and unr
     git('add','scripts','src','package-lock.json'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
     const revision=git('rev-parse','HEAD'), artifact=join(dir,'prior.json');
     const turn={text:'I need something for my morning coffee',validated:true,operation:{kind:'search'},checkpoint:{before:{criteria:{}},transition:{operation:'new',language:'en',criteria:{query:'morning coffee'}},after:{criteria:{query:'morning coffee'}}}};
-    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/application/chat/query-language.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/v1',batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
+    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/application/chat/query-language.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
     writeFileSync(artifact,JSON.stringify(prior)); write('src/application/chat/explicit-facets.ts',`${facets}// bounded fix\n`);
     const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--facet-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
     const accepted=invoke(); assert.equal(accepted.status,0,accepted.stderr);
