@@ -57,6 +57,7 @@ import type { CartAction } from "@/application/chat/cart-action";
 import type { ChatRuntime } from "./runtime";
 import {
   assistantTextError,
+  catalogFactAbsenceError,
   resolveLanguage,
 } from "@/application/chat/assistant-text";
 import {
@@ -291,13 +292,13 @@ function numericText(text: string, evidence: Evidence[]) {
         return `${(row.cents / 100).toFixed(2)} EUR`;
       },
     )
-    .replace(/\[\[(price|name):([^\]]+)\]\]/g, (_match, kind, id) => {
+    .replace(/\[\[(price|name):([^\]]+)\]\](\s+EUR\b)?/g, (_match, kind, id, suffix) => {
       if (!evidence.some((e) => e.productIds.includes(id)))
         throw new Error("Unverified product reference.");
       const product = products.find((p) => p.id === id)!;
       return kind === "price"
         ? `${product.price.toFixed(2)} EUR`
-        : product.name;
+        : product.name + (suffix ?? "");
     })
     .replace(/\[\[count:([^:]+):([^\]]+)\]\]/g, (_match, id, field) => {
       const record = evidence.find((e) => e.id === id)?.output;
@@ -324,6 +325,14 @@ function validatePresentation(
   if (answer.evidenceIds.some((id) => !evidence.some((e) => e.id === id)))
     throw new Error("Unknown evidence ID.");
   const cited = evidence.filter((e) => answer.evidenceIds.includes(e.id));
+  const knownProducts = products.filter((product) =>
+    cited.some((record) => record.productIds.includes(product.id)),
+  );
+  const missingFact = catalogFactAbsenceError(answer.text, {
+    price: knownProducts.some((product) => Number.isFinite(product.price)),
+    dimensions: knownProducts.some((product) => !!product.dimensions),
+  });
+  if (missingFact) throw new Error(missingFact);
   if (
     /\b(?:smaller|larger|bigger|taller|shorter|lighter|heavier|faster|slower|(?:less|more)\s+space)\b|mniejsz|większ|wyższ|niższ|lżejsz|cięższ|szybsz|wolniejsz|mniej.{0,20}miejsc|więcej.{0,20}miejsc/i.test(
       answer.text,

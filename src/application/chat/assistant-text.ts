@@ -5,6 +5,22 @@ const fold = (text: string) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replaceAll("ł", "l");
+export function catalogFactAbsenceError(
+  text: string,
+  known: { price: boolean; dimensions: boolean },
+): string | undefined {
+  const missing = /\b(?:no|missing|lack\w*|without|do not have|don't have)\b.{0,60}\b(?:information|data|details|evidence)\b|\b(?:information|data|details|evidence)\b.{0,60}\b(?:missing|not (?:provided|supplied|available|given))\b|brak\w*.{0,60}(?:informac|danych|szczegol)|nie (?:ma|mam|podano|posiadam|zawier\w*).{0,60}(?:informac|danych|cen|wymiar)/;
+  for (const clause of fold(text).split(/[.!?;]|\b(?:but|however|ale|jednak)\b/)) {
+    const field =
+      known.price && /\b(?:prices?|pricing|costs?|cen\w*)\b/.test(clause)
+        ? "price"
+        : known.dimensions && /\b(?:dimensions?|measurements?|wymiar\w*)\b/.test(clause)
+          ? "dimensions"
+          : undefined;
+    if (field && (missing.test(clause) || /\bnot (?:provided|supplied|listed|specified|available)\b/.test(clause)))
+      return field === "price" ? "FALSE_MISSING_PRICE" : "FALSE_MISSING_MEASUREMENT";
+  }
+}
 export function explicitLanguage(text: string): Language | undefined {
   const value = fold(text);
   if (

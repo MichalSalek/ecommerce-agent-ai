@@ -12,6 +12,7 @@ import {
 import type { CatalogService } from "../src/application/catalog/catalog-service";
 import {
   assistantTextError,
+  catalogFactAbsenceError,
   resolveLanguage,
 } from "../src/application/chat/assistant-text";
 import {
@@ -114,6 +115,47 @@ test("comparison button completes without a model and preserves its group", asyn
   assert.match(result.answer, /2 products/);
   assert.match(result.answer, /EUR|€/);
   assert.deepEqual(result.checkpoint.after.resultIds, ["mugs", "carafe"]);
+});
+
+test("advice cannot deny known prices beneath a completed comparison", async () => {
+  for (const [language, text] of [["pl", "W podanych materiałach brakuje informacji o cenach, aby wskazać tańszy produkt."], ["en", "There is no pricing information in the supplied records."]] as const) {
+    const mock = model([
+      response("compareProducts", { productIds: ["mugs", "carafe"] }),
+      response("presentAnswer", { text, language, evidenceIds: ["e1"], productIds: ["mugs", "carafe"], view: "comparison" }),
+    ]);
+    const result = await run(language === "pl" ? "Porównaj kubki i karafkę" : "Compare mugs and carafe", mock);
+    assert.equal(result.operation.status, "completed");
+    assert.equal(result.advice.status, "unavailable");
+    assert.deepEqual(result.comparison?.cheapestIds, ["carafe"]);
+    assert.equal(mock.calls(), 2);
+  }
+});
+
+test("known-field absence checks preserve missing performance data and unknown fields", () => {
+  assert.equal(catalogFactAbsenceError("The catalog has no durability information, but the price is recorded.", { price: true, dimensions: true }), undefined);
+  assert.equal(catalogFactAbsenceError("There is no pricing information.", { price: false, dimensions: false }), undefined);
+  assert.equal(catalogFactAbsenceError("Brakuje informacji o wymiarach.", { price: true, dimensions: true }), "FALSE_MISSING_MEASUREMENT");
+  assert.equal(catalogFactAbsenceError("Prices are not listed.", { price: true, dimensions: true }), "FALSE_MISSING_PRICE");
+});
+
+test("a price reference owns its currency suffix", async () => {
+  const mock = model([response("presentAnswer", { text: "W koszyku masz [[count:cart:totalUnits]] sztuki [[name:carafe]] po [[price:carafe]] EUR za sztukę.", language: "pl", evidenceIds: ["cart"], productIds: ["carafe"], view: "none" })]);
+  const result = await run("Jaką ilość wybrałem wcześniej?", mock, { cart: [{ productId: "carafe", quantity: 2 }] });
+  assert.equal(result.operation.status, "completed");
+  assert.match(result.answer, /19\.00 EUR za sztukę/);
+  assert.doesNotMatch(result.answer, /EUR EUR/);
+});
+
+test("the demo policy answers the store-status question in both languages", async () => {
+  for (const language of ["pl", "en"] as const) {
+    const mock = model([
+      response("getPolicy", { topic: "demonstracyjny sklep" }),
+      response("presentAnswer", { text: language === "pl" ? "Informacje dotyczą sklepu demonstracyjnego." : "This concerns the demonstration store.", language, evidenceIds: ["e1"], productIds: [], view: "none" }),
+    ]);
+    const result = await run(language === "pl" ? "Czy to sklep demonstracyjny?" : "Is this a demonstration store?", mock, { state: { ...initialAgentState(), language } });
+    assert.equal(result.operation.status, "completed");
+    assert.match(result.answer, language === "pl" ? /sklep demonstracyjny.*nie przyjmuje płatności/ : /demonstration store.*does not accept payments/);
+  }
 });
 
 test("a comparison recovers from an overview carrying the previous topic's filters", async () => {

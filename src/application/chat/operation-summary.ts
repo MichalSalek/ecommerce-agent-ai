@@ -1,5 +1,5 @@
 import { products } from "@/data/products";
-import { getStorePolicy } from "@/domain/catalog/policies";
+import { getStorePolicy, resolvePolicyTopic } from "@/domain/catalog/policies";
 import type { Language } from "./assistant-text";
 import type { Comparison, SearchEvidence, CategoryCard } from "./shopping-v3";
 
@@ -83,11 +83,14 @@ export function categoriesSummary(
 }
 export function policySummary(topic: string, language: Language): string {
   if (language === "en") return getStorePolicy(topic);
-  if (/return|refund|zwrot/i.test(topic))
+  const kind = resolvePolicyTopic(topic);
+  if (kind === "returns")
     return "Przykładowa polityka sklepu pozwala na zwrot w ciągu 14 dni od dostawy.";
-  if (/deliver|ship|dostaw|wysy/i.test(topic))
+  if (kind === "delivery")
     return "Przykładowa dostawa kosztuje 4 EUR i trwa od 2 do 3 dni roboczych.";
-  if (/pay|order|płat|plat|zamów/i.test(topic))
+  if (kind === "payments")
     return "Ten sklep demonstracyjny nie przyjmuje płatności ani nie składa zamówień.";
+  if (kind === "demo")
+    return "To sklep demonstracyjny, który nie przyjmuje płatności ani nie składa zamówień.";
   return "Dostępne informacje dotyczą dostawy, zwrotów i płatności.";
 }
