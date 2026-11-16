@@ -29,6 +29,8 @@ The final plain-advice Groq canary passed on `3531993`: 233 input and 72 output 
 
 ABSORBED: the real local garden cases reproduced a pre-existing query-language false positive. The English vocabulary omitted canonical taxonomy/category labels, so `garden furniture` was misclassified as Polish. Regression tests fail before the fix and pass after it; Polish queries still require translation. Five already successful batches retain verified unchanged behavior: their saved queries were only `morning coffee` or empty. Reviewed resume checks the old source/runner hashes, permits only this one changed source file and revalidates every reused query.
 
+The same live cases then exposed a missing hard-kind projection: a model query for `garden furniture` without a kind filter returned a hand trowel. The existing facet resolver now recovers a unique, positive canonical kind named in both CURRENT and the semantic query. Quotes, negation, hypothetical/relational requests and mixed kinds/types do not silently narrow the result. A separate reviewed resume proof confirms that earlier coffee/category batches contain no affected kind terms.
+
 ## Acceptance boundaries
 
 The full local conversation suite also runs directly against the real engine through `scripts/agent-local-core.ts`, using a longer functional-test boundary. The production API retains its thirty-second timeout; its wire protocol, cancellation, browser storage and real Groq latency are separate acceptance evidence. Engine artifacts explicitly identify their mode and cannot reuse HTTP-mode batches. No functional conversation family is waived by this separation.

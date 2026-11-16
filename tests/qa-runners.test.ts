@@ -61,6 +61,38 @@ test('guard-only resume proves historical source, runner and previously accepted
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });
 
+test('facet-only resume rejects any prior search naming a canonical kind and unrelated changes', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-facet-resume-'));
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  const write=(path:string,value:string)=>writeFileSync(join(dir,path),value);
+  const digest=(paths:string[])=>{const h=createHash('sha256'); for(const path of paths){const content=readFileSync(join(dir,path));h.update(`${path.length}:${path}:${content.length}:`);h.update(content);} return h.digest('hex');};
+  try {
+    git('init'); mkdirSync(join(dir,'scripts')); mkdirSync(join(dir,'src/application/chat'),{recursive:true}); mkdirSync(join(dir,'src/domain/catalog'),{recursive:true});
+    copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs')); write('scripts/agent-local-core.ts','export {};\n');
+    const facets='export const unchanged=1;\n', taxonomy='export const productKinds={furniture:{en:"furniture",pl:"meble",aliases:["furnishing","mebl"]},lighting:{en:"lighting",pl:"oświetlenie",aliases:["lampy"]}};\n';
+    write('src/application/chat/explicit-facets.ts',facets); write('src/domain/catalog/taxonomy.ts',taxonomy); write('src/other.ts','export const value=1;\n'); write('package-lock.json','{}\n');
+    symlinkSync(join(process.cwd(),'node_modules'),join(dir,'node_modules'),'dir');
+    git('add','scripts','src','package-lock.json'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
+    const revision=git('rev-parse','HEAD'), artifact=join(dir,'prior.json');
+    const turn={text:'I need something for my morning coffee',validated:true,operation:{kind:'search'},checkpoint:{after:{criteria:{query:'morning coffee'}}}};
+    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/v1',batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
+    writeFileSync(artifact,JSON.stringify(prior)); write('src/application/chat/explicit-facets.ts',`${facets}// bounded fix\n`);
+    const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--facet-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
+    const accepted=invoke(); assert.equal(accepted.status,0,accepted.stderr);
+    const proof=JSON.parse(accepted.stdout); assert.equal(proof.kind,'facet-guard-only'); assert.equal(proof.originalRevision,revision); assert.deepEqual(proof.reusedBatches,['coffee']); assert.deepEqual(proof.checkedSearches.map((row:{text:string})=>row.text),[turn.text]);
+    for(const text of ['Show me garden furniture','Bez mebli proszę','Pokaż oswietlenie']) {
+      writeFileSync(artifact,JSON.stringify({...prior,batches:[{name:'unsafe',passed:true,turns:[{...turn,text}]}]}));
+      const rejected=invoke(); assert.notEqual(rejected.status,0); assert.match(rejected.stderr,/previously passing search contains a canonical kind alias/);
+    }
+    writeFileSync(artifact,JSON.stringify(prior));
+    const combined=invoke(['--query-guard-revision',revision]); assert.notEqual(combined.status,0); assert.match(combined.stderr,/exceptions cannot be combined/);
+    write('src/domain/catalog/taxonomy.ts',`${taxonomy}// changed\n`); const other=invoke(); assert.notEqual(other.status,0); assert.match(other.stderr,/Only the explicit-facets guard may differ/); write('src/domain/catalog/taxonomy.ts',taxonomy);
+    write('package-lock.json','{"changed":true}\n'); const lock=invoke(); assert.notEqual(lock.status,0); assert.match(lock.stderr,/Only the explicit-facets guard may differ/); write('package-lock.json','{}\n');
+    write('src/added.ts','export const added=1;\n'); const added=invoke(); assert.notEqual(added.status,0); assert.match(added.stderr,/Source paths differ/); rmSync(join(dir,'src/added.ts'));
+    writeFileSync(artifact,JSON.stringify({...prior,runnerHash:'0'.repeat(64)})); const forged=invoke(); assert.notEqual(forged.status,0); assert.match(forged.stderr,/Original revision does not match artifact runner fingerprint/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
 test('engine QA helper rejects unsafe providers, routes, keys and public bind before starting', () => {
   const base={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,CHAT_PROVIDER:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
   const invoke=(extra:Record<string,string>, args:string[]=[])=>spawnSync(process.execPath,['--import','tsx','scripts/agent-local-core.ts',...args],{encoding:'utf8',env:{...base,...extra},timeout:5000});

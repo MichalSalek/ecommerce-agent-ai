@@ -48,6 +48,87 @@ function aliases(facet: ExplicitFacet): string[] {
     ? [type.en, type.pl, ...type.aliases]
     : [facet.value.replaceAll("-", " "), facet.value];
 }
+
+// Only recover a kind when both sources name it in a positive, non-quoted
+// clause. This deliberately leaves uncertain interpretation to the model.
+function positiveClauses(text: string): string[] {
+  return fold(text)
+    .replace(/"[^"\n]*"|“[^”\n]*”|„[^”\n]*”|'[^'\n]*'/g, " ")
+    .split(/[.!?;\n]+|\b(?:but|ale|jednak)\b/)
+    .filter(
+      (clause) =>
+        !/\b(?:if|unless|suppose|hypothetically|jesli|jezeli|gdyby|hipotetycznie)\b/.test(
+          clause,
+        ),
+    );
+}
+function positivelyMentions(
+  clause: string,
+  terms: readonly string[],
+  exact = false,
+): boolean {
+  return terms.some((term) => {
+    const escaped = fold(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`\\b${escaped}${exact ? "\\b" : "\\w*"}`, "g");
+    for (const match of clause.matchAll(pattern)) {
+      const prefix = clause.slice(0, match.index).trimEnd();
+      // A relation such as a cover for furniture does not request furniture.
+      if (
+        /\b(?:for|do|na)\s*$/.test(prefix) &&
+        !/\b(?:look(?:ing)?|search(?:ing)?|shop(?:ping)?)\s+for$/.test(prefix)
+      )
+        continue;
+      if (
+        /\b(?:not|no|never|without|exclude|except|don'?t|doesn'?t|isn'?t|aren'?t|nie|bez|zadn\w*)(?:\s+\w+){0,2}\s*$/.test(
+          prefix,
+        )
+      )
+        continue;
+      const suffix = clause.slice((match.index ?? 0) + match[0].length);
+      if (/^\s+(?:is|are)\s+not\s+(?:wanted|requested|needed)\b/.test(suffix))
+        continue;
+      return true;
+    }
+    return false;
+  });
+}
+function recoverKind(
+  text: string,
+  query: string,
+): { kind?: string; ambiguous?: boolean } {
+  const current = positiveClauses(text);
+  const semantic = positiveClauses(query);
+  const names = (kind: string) => aliases({ facet: "kind", value: kind });
+  const candidates = Object.keys(productKinds).filter(
+    (kind) =>
+      current.some((clause) =>
+        positivelyMentions(clause, names(kind), kind === "decor"),
+      ) &&
+      semantic.some((clause) =>
+        positivelyMentions(clause, names(kind), kind === "decor"),
+      ),
+  );
+  if (candidates.length !== 1) return { ambiguous: candidates.length > 1 };
+  const kind = candidates[0];
+  const relevant = current.filter((clause) =>
+    positivelyMentions(clause, names(kind), kind === "decor"),
+  );
+  const otherKind = relevant.some((clause) =>
+    Object.keys(productKinds).some(
+      (other) =>
+        other !== kind &&
+        positivelyMentions(clause, names(other), other === "decor"),
+    ),
+  );
+  const otherType = relevant.some((clause) =>
+    Object.values(productTypes).some(
+      (type) =>
+        type.kind !== kind &&
+        positivelyMentions(clause, [type.en, type.pl, ...type.aliases]),
+    ),
+  );
+  return otherKind || otherType ? { ambiguous: true } : { kind };
+}
 /** Model-inferred functions have closed membership; explicit hard facets need current source evidence. */
 export function resolveExplicitFacets(
   text: string,
@@ -124,6 +205,23 @@ export function resolveExplicitFacets(
       criteria.categoryExplicit = true;
     } else if (filter.facet === "excludeType") excludes.push(filter.value);
     else includes.push(filter.value);
+  }
+  if (
+    !criteria.productKind &&
+    (fresh ||
+      (!before.criteria.productKind &&
+        !before.criteria.productType &&
+        !before.criteria.productTypes?.length)) &&
+    !filters.some((filter) => filter.facet === "kind") &&
+    criteria.query
+  ) {
+    const recovered = recoverKind(text, criteria.query);
+    if (recovered.ambiguous)
+      issues.push(
+        "Multiple product kinds or conflicting product types were named; clarify the intended scope.",
+      );
+    else if (recovered.kind && !includes.length)
+      criteria.productKind = recovered.kind;
   }
   if (includes.length) {
     criteria.productTypes = [...new Set(includes)];
