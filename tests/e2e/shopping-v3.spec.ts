@@ -217,7 +217,7 @@ test("restored legacy results replace a presentation failure with a canonical su
   );
   await page.goto("/chat");
   await expect(page.locator(".chat-error")).toHaveCount(0);
-  await expect(page.getByText(/Showing 1 products from 86 matching your criteria/)).toBeVisible();
+  await expect(page.getByText(/Showing 1 product from 86 matching your criteria/)).toBeVisible();
   await expect(
     page.getByText(/OLD GENERIC FAILURE|secret-provider-detail/),
   ).toHaveCount(0);
