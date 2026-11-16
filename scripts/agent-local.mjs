@@ -127,7 +127,7 @@ if (old) {
   }
 }
 if (args.includes('--inspect-resume')) {console.log(JSON.stringify(resumeCompatibility)); process.exit(0);}
-const report = { fingerprint, runnerHash, mode, execution, model, upstream: upstream.href, ...(resumeCompatibility?{resumeCompatibility}:{}), note: engine ? 'ENGINE functional QA only, not production HTTP latency acceptance. Local Qwen is not equivalent to Groq; cart writes are simulated.' : 'Standalone HTTP QA; local Qwen is not equivalent to Groq; cart writes are simulated.', batches: [], failures: [], started: new Date().toISOString() };
+const report = { fingerprint, runnerHash, mode, execution, model, upstream: upstream.href, ...(resumeCompatibility?{resumeCompatibility}:{}), timeouts:{turnMs:engine?600000:30000,providerMs:engine?600000:180000}, note: engine ? 'ENGINE functional QA only, not production HTTP latency acceptance. Local Qwen is not equivalent to Groq; cart writes are simulated.' : 'Standalone HTTP QA; local Qwen is not equivalent to Groq; cart writes are simulated.', batches: [], failures: [], started: new Date().toISOString() };
 async function save() { const p = `${artifact}.${process.pid}.tmp`; await writeFile(p, JSON.stringify(report, null, 2), { mode: 0o600 }); await rename(p, artifact); }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 let modelCalls = 0, modelSuccesses = 0;
@@ -151,7 +151,7 @@ const proxy = createServer(async (req, res) => {
       body = JSON.stringify(v); modelCalls++;
       if (warming && !engine) { assert.ok(!warmClaimed, 'Warm probe permits one native request'); warmClaimed = true; warmRequest = true; }
     }
-    const response = await fetch(`${upstream.href.replace(/\/$/, '')}${path.slice(3)}`, { method:req.method, headers: { 'content-type':'application/json' }, ...(req.method === 'POST' ? {body} : {}), redirect:'error', signal:AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]) });
+    const response = await fetch(`${upstream.href.replace(/\/$/, '')}${path.slice(3)}`, { method:req.method, headers: { 'content-type':'application/json' }, ...(req.method === 'POST' ? {body} : {}), redirect:'error', signal:AbortSignal.any([controller.signal, AbortSignal.timeout(engine?600000:180000)]) });
     if (!res.destroyed) res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'application/json' });
     if (response.body) for await (const chunk of response.body) if (!res.destroyed) res.write(chunk);
     if (!res.destroyed) res.end();

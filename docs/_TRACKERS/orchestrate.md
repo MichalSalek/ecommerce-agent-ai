@@ -33,6 +33,8 @@ The same live cases then exposed a missing hard-kind projection: a model query f
 
 The garden rerun also exposed an omitted EUR 150 cap. The same resolver now preserves explicit bilingual EUR caps, known requested result counts and only-in-stock requirements from CURRENT. Currency conversion and conflicting caps require clarification. A count phrase such as `up to 10 products` is removed from the semantic query before the existing budget parser can mistake it for EUR 10. Reuse now additionally replays every successful saved search transition and requires the identical resolved transition.
 
+A subsequent real response duplicated `garden` in requiredFeatures while already applying outdoor scope, incorrectly producing an unconfirmed-feature empty result. Canonical structural constraints are now removed from duplicate feature requirements only when the applied scope already guarantees them; substantive features such as waterproof remain untouched. Engine-QA provider calls share the existing 600-second functional-test boundary; the production HTTP deadline remains thirty seconds.
+
 ## Acceptance boundaries
 
 The full local conversation suite also runs directly against the real engine through `scripts/agent-local-core.ts`, using a longer functional-test boundary. The production API retains its thirty-second timeout; its wire protocol, cancellation, browser storage and real Groq latency are separate acceptance evidence. Engine artifacts explicitly identify their mode and cannot reuse HTTP-mode batches. No functional conversation family is waived by this separation.

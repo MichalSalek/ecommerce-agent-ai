@@ -63,7 +63,9 @@ function positiveClauses(text: string): string[] {
     );
 }
 function negatedAt(clause: string, index: number): boolean {
-  return /\b(?:not|no|never|without|dont|don't|nie|bez|zadn\w*)(?:\s+\w+){0,2}\s*$/.test(clause.slice(0, index));
+  return /\b(?:not|no|never|without|dont|don't|nie|bez|zadn\w*)(?:\s+\w+){0,2}\s*$/.test(
+    clause.slice(0, index),
+  );
 }
 function explicitConstraints(text: string): {
   maxPrice?: number;
@@ -76,27 +78,48 @@ function explicitConstraints(text: string): {
   const counts = new Set<number>();
   const issues: string[] = [];
   let inStockOnly: true | undefined;
-  const currency = "(?:eur|euros?|€|usd|gbp|pln|dollars?|pounds?|zlot(?:y|ych|e)?|zl|\\$|£)";
+  const currency =
+    "(?:eur|euros?|€|usd|gbp|pln|dollars?|pounds?|zlot(?:y|ych|e)?|zl|\\$|£)";
   const budget = new RegExp(
     `\\b(?:under|below|up\\s+to|at\\s+most|maximum|max|ponizej|do|maksymalnie|maksimum|nie\\s+wiecej\\s+niz)\\s*(?:(${currency})\\s*)?(\\d+(?:[.,]\\d{1,2})?)(?!\\d|[.,]\\d)\\s*(?:(${currency})(?![a-z]))?`,
     "g",
   );
   const numbers: Record<string, number> = {
-    "4": 4, four: 4, cztery: 4,
-    "5": 5, five: 5, piec: 5,
-    "10": 10, ten: 10, dziesiec: 10,
-    "20": 20, twenty: 20, dwadziescia: 20,
-    all: 1000, wszystkie: 1000, wszystkich: 1000,
+    "4": 4,
+    four: 4,
+    cztery: 4,
+    "5": 5,
+    five: 5,
+    piec: 5,
+    "10": 10,
+    ten: 10,
+    dziesiec: 10,
+    "20": 20,
+    twenty: 20,
+    dwadziescia: 20,
+    all: 1000,
+    wszystkie: 1000,
+    wszystkich: 1000,
   };
-  const countPattern = /\b(4|5|10|20|four|five|ten|twenty|cztery|piec|dziesiec|dwadziescia|all|wszystkie|wszystkich)\s+(?:the\s+)?(?:(?!(?:eur|usd|gbp|pln|euro|dollars?|people|persons?|osob|cm|mm|kg)\b)[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?|produkty|produktow|produkt|propozycj\w*|opcj\w*)\b/g;
+  const countPattern =
+    /\b(4|5|10|20|four|five|ten|twenty|cztery|piec|dziesiec|dwadziescia|all|wszystkie|wszystkich)\s+(?:the\s+)?(?:(?!(?:eur|usd|gbp|pln|euro|dollars?|people|persons?|osob|cm|mm|kg)\b)[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?|produkty|produktow|produkt|propozycj\w*|opcj\w*)\b/g;
   for (const clause of clauses) {
     for (const match of clause.matchAll(budget)) {
       if (negatedAt(clause, match.index ?? 0)) continue;
       const following = clause.slice((match.index ?? 0) + match[0].length);
-      if (!match[1] && !match[3] && /^(?:[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?|produkty|produktow|propozycj\w*|opcj\w*|people|persons?|osob|cm|mm|kg|meters?|metrow)\b/.test(following.trimStart())) continue;
+      if (
+        !match[1] &&
+        !match[3] &&
+        /^(?:[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?|produkty|produktow|propozycj\w*|opcj\w*|people|persons?|osob|cm|mm|kg|meters?|metrow)\b/.test(
+          following.trimStart(),
+        )
+      )
+        continue;
       const currencies = [match[1], match[3]].filter(Boolean);
       if (currencies.some((value) => !/^(?:eur|euros?|€)$/.test(value))) {
-        issues.push("The stated budget uses a currency other than EUR; clarify the amount without conversion.");
+        issues.push(
+          "The stated budget uses a currency other than EUR; clarify the amount without conversion.",
+        );
         continue;
       }
       const amount = Number(match[2].replace(",", "."));
@@ -105,13 +128,25 @@ function explicitConstraints(text: string): {
     for (const match of clause.matchAll(countPattern)) {
       if (!negatedAt(clause, match.index ?? 0)) counts.add(numbers[match[1]]);
     }
-    if (/\b(?:show|list|display|pokaz|wyswietl)\s+(?:me\s+)?(?:everything|wszystko)\b/.test(clause)) counts.add(1000);
-    const stock = /\b(?:only\s+(?:(?:currently|available)\s+)?(?:in[ -]stock|available)|only\s+(?:products|items)\s+(?:in[ -]stock|available)|tylko\s+(?:obecnie\s+)?dostepn\w*|tylko\s+produkty\s+dostepn\w*)\b/g;
+    if (
+      /\b(?:show|list|display|pokaz|wyswietl)\s+(?:me\s+)?(?:everything|wszystko)\b/.test(
+        clause,
+      )
+    )
+      counts.add(1000);
+    const stock =
+      /\b(?:only\s+(?:(?:currently|available)\s+)?(?:in[ -]stock|available)|only\s+(?:products|items)\s+(?:in[ -]stock|available)|tylko\s+(?:obecnie\s+)?dostepn\w*|tylko\s+produkty\s+dostepn\w*)\b/g;
     for (const match of clause.matchAll(stock))
       if (!negatedAt(clause, match.index ?? 0)) inStockOnly = true;
   }
-  if (amounts.size > 1) issues.push("Multiple price limits were stated; clarify the intended maximum.");
-  if (counts.size > 1) issues.push("Multiple result counts were stated; clarify the intended count.");
+  if (amounts.size > 1)
+    issues.push(
+      "Multiple price limits were stated; clarify the intended maximum.",
+    );
+  if (counts.size > 1)
+    issues.push(
+      "Multiple result counts were stated; clarify the intended count.",
+    );
   return {
     maxPrice: amounts.size === 1 ? [...amounts][0] : undefined,
     requestedCount: counts.size === 1 ? [...counts][0] : undefined,
@@ -218,7 +253,9 @@ export function resolveExplicitFacets(
   }
   change = {
     ...change,
-    ...(explicit.requestedCount === undefined ? {} : { requestedCount: explicit.requestedCount }),
+    ...(explicit.requestedCount === undefined
+      ? {}
+      : { requestedCount: explicit.requestedCount }),
     ...(change.remove ? { remove: [...retained] } : {}),
   };
   const fresh = change.operation === "new" || change.operation === "browse";
@@ -333,6 +370,46 @@ export function resolveExplicitFacets(
         ...excludes,
       ]),
     ];
+  if (criteria.requiredFeatures?.length) {
+    const effective = { ...(fresh ? {} : before.criteria), ...criteria };
+    for (const key of change.remove ?? []) delete effective[key];
+    const structural = [
+      ...(effective.productKind
+        ? aliases({ facet: "kind", value: effective.productKind })
+        : []),
+      ...(effective.category
+        ? aliases({ facet: "category", value: effective.category })
+        : []),
+      ...[
+        ...(effective.productTypes ?? []),
+        ...(effective.productType ? [effective.productType] : []),
+      ].flatMap((value) => aliases({ facet: "type", value })),
+      ...(effective.functionalGroup ? [effective.functionalGroup] : []),
+      ...(effective.useEnvironment === "outdoor" ||
+      effective.useEnvironment === "both"
+        ? [
+            "garden",
+            "outdoor",
+            "outdoors",
+            "ogrod",
+            "ogrodowy",
+            "ogrodowe",
+            "do ogrodu",
+            "na zewnatrz",
+          ]
+        : []),
+      ...(effective.useEnvironment === "indoor" ||
+      effective.useEnvironment === "both"
+        ? ["indoor", "indoors"]
+        : []),
+      ...(effective.inStockOnly
+        ? ["in stock", "available", "dostepny", "dostepne"]
+        : []),
+    ].map((value) => fold(value).trim());
+    criteria.requiredFeatures = criteria.requiredFeatures.filter(
+      (feature) => !structural.includes(fold(feature).trim()),
+    );
+  }
   if (
     criteria.productKind &&
     criteria.productKind !== before.criteria.productKind &&
