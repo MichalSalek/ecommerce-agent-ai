@@ -1,3 +1,38 @@
+# Reliable shopping outcomes — 2026-11-16
+
+Application revision: `e7f98a3c9e6fe6519dc1fc315b893a5332264d0d`. Public URL: [Aurelle](https://ecommerce-agent.michalsalek.com). Local, CI, public functional acceptance and the ten-minute runtime observation passed.
+
+Catalog operations now have an independent outcome from optional model advice. A rejected comment leaves the canonical products, comparison, counts and continuation available. Structured controls and known cart selections do not initialize the model. Language follows the current customer message; cart clarification uses a bounded server-owned intention, and browser receipts follow the atomic device write.
+
+## Integrated checks
+
+- `npm test`: **214 passed**, including actual MiniLM/BGE retrieval, provider fixtures, legacy history and the reproduced shopping/cart failures. Strict types and the production build passed.
+- Chromium E2E: **33 passed**, including cooldown/catalog independence, every starter/example action, Stop/reset, stored history, cart-write failure, retry and reload.
+- [Same-revision source and container CI](https://github.com/MichalSalek/ecommerce-agent-ai/actions/runs/43924416642): both jobs passed. The real container used 512 MiB and 0.1 CPU; cold concurrent requests peaked at 170.8 MiB, and index rebuilding peaked at **312.3 MiB**, with no OOM.
+- Correct-profile local Qwen acceptance covered **33 scenarios / 75 turns**: six bilingual families, four starters, ten examples, counts 4/5/10/20/all, comparisons 2/5/10, the original reported flow and a twenty-turn Polish conversation. Canonical facts, the mugs/carafe comparison and two saved carafes were inspected separately from language/status assertions.
+
+The local router was found to force thinking/xhigh despite the request setting. QA used its existing documented upstream passthrough with the same Qwen GGUF, and a probe verified actual text with zero reasoning. Shared router configuration was unchanged. Engine QA has a longer functional boundary; it does **not** establish thirty-second HTTP latency. Production retains that deadline.
+
+Evidence was reused only after scoped compatibility checks. The completed full run is `/tmp/aurelle-engine-overview.json`. Final output guards changed four source files; `/tmp/aurelle-final-evidence-validation.json` pins those files, proves unchanged inference/control flow, checks 69 retained turns and 61 identical canonical summaries, and preserves the other 32 scenarios plus the first fourteen long-conversation turns. `/tmp/aurelle-final-twenty.json` contains that verified prefix and six freshly executed final turns. The final comparison correctly remains completed when an unsupported claim that prices are missing is rejected. A separate Bielik text-only probe returned a complete Polish description with zero reasoning; it is not native-agent conformance evidence.
+
+## Groq allowance and public behavior
+
+All release attempts share one 8,000-token ledger. Actual uncached input plus output totals **7,053**, leaving **947**. This includes the earlier free-message canary (1,995), intermediate advice attempts (3,970), accepted compact advice (305), public overlong advice (475) and accepted public advice (308). No failed attempt was removed or given a new release budget. The earlier free-message path was reused; the final public model check exercised explicit advice on the deployed revision.
+
+Fresh provider logs identify `openai/gpt-oss-120b`, primary route, for both public advice requests. A 529-character response to the five-product comparison was withheld; the comparison and its operation ID remained intact, with one advice-only retry and no retry of the whole message. A second, 267-character response for mugs/carafe was displayed and manually checked against material, features and limitations. The fallback route was exercised by deterministic failure fixtures, rather than deliberately exhausting the live allowance.
+
+The fresh isolated public browser ran coffee → comparison → advice → new conversation → coffee → comparison → details → “Dodaj do koszyka ten produkt, fajny jest”. It saved one dripper, one operation and one receipt. Reload issued no chat request and preserved the exact cart/receipt; cart navigation and Back preserved them too. The cart showed EUR 18 items + EUR 4 demo delivery = EUR 22. The 390 px viewport had no horizontal overflow and a reachable composer. Browser-rendered Polish and apostrophe encoding were correct. Screenshots are `/tmp/aurelle-public-desktop-cart.png`, `/tmp/aurelle-public-mobile.png` and `/tmp/aurelle-public-mobile-cart.png`.
+
+## Publication and observation
+
+Render deployment `dep-dbtkbabl550s73dhpf7g` became live at `2026-11-16T18:06:40Z` on the existing Free service. Origin and public health checks identify the exact revision, 86 products and MiniLM fingerprint `24709dc1df1fee04`. Cache purge affected only the demo hostname; four documents and 101 assets were verified and warmed. The deployment verifier completed a ten-card structured turn with zero inferences. A separate actual semantic gift query loaded MiniLM before observation.
+
+After the actual MiniLM query, observation ran from `18:10:42Z` through `18:21:16Z` (635 seconds). Render returned eleven memory and CPU samples spanning ten minutes on the same instance. Memory ranged from 140.1 to **204.6 MiB**; CPU ranged from 0.0010 to 0.0095 cores. There were no provider events during that window and no restart/OOM evidence. Sampled public health checks returned HTTP 200 with the expected revision; the existing Better Stack keyword monitor remained UP in the checks, with its final recorded check at `18:19:28Z`. The deployment still reported the exact accepted commit and live state. The private aggregate is `/tmp/aurelle-final-runtime-summary.json`.
+
+These checks establish a bounded accepted demo release. Model interpretation can still be wrong, invalid advice can be omitted, provider quotas can block AI, and Render Free has no availability guarantee. Catalog controls and known cart operations remain usable during AI cooldown. The monitor checks web health, not every model response or provider allowance.
+
+The records below describe earlier releases and are historical.
+
 # Shopping-v2 acceptance
 
 The current source adds 86 catalog records across ten categories, 38 individually generated WebP assets, structural search and device-local cart actions. The catalog census preserves the original 48 IDs, prices, stock states and image paths.
