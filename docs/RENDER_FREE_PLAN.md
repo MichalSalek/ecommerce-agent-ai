@@ -48,3 +48,11 @@ The current release procedure verifies both 86-product encoder profiles locally 
 Run `npm run verify:deployment -- URL FULL_SHA`, `node scripts/verify-shopping.mjs URL` and a fresh browser conversation that actually saves the chosen quantity to the local cart. The UI now has always-visible examples. Its mobile chat header is compact; the conversation still owns the remaining measured viewport height. The existing monitor remains a liveness check, not a claim of model availability or Render Free continuity.
 
 [Source and container checks](https://github.com/MichalSalek/ecommerce-agent-ai/actions/workflows/ci.yml), the live revision endpoint and the release report identify the published artifact. [Verification](VERIFICATION.md) distinguishes local evidence from historical release measurements.
+
+## Shopping-v3 release procedure
+
+The native engine replaces the earlier planner. Release the integrated source only after the dry suite, real-provider transcript, types, build and browser acceptance. The source and constrained-container jobs must both pass for the same commit. The container fixture speaks native tools and measures cgroup peak memory during concurrent structural/semantic requests and a missing-index rebuild; it does not verify Groq behavior.
+
+Deploy that exact commit to the existing service with auto-deploy off. Verify `live`, revision, 86 records, MiniLM and the prepared fingerprint; purge only the demo hostname prefix and run the warming script. Run `npm run verify:deployment -- URL FULL_SHA`, a fresh semantic conversation and a real browser cart save/reload. Observe provider memory, CPU and events for at least ten minutes and confirm the existing liveness monitor. Roll back only this deployment if acceptance fails; retain device storage. Earlier v1 cart and conversation formats remain compatible with the previous artifact.
+
+`npm run test:agent:live -- URL` records bilingual conversation evidence and actual usage. Set its pacing to the current provider quota, shared with other users of that organization. Successful Groq headers also pace subsequent inferences inside a request; provider cooldowns remain visible and do not trigger model switching or automatic retry. The live runner's simulated cart is separate from the required browser-storage acceptance.

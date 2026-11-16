@@ -1,5 +1,6 @@
 import type { TextEmbedding } from "@/application/catalog/text-embedding";
 import { meetsFeature } from "@/domain/catalog/requirements";
+import { expandFunctionalGroup } from "@/domain/catalog/functional-groups";
 import { connect, type Table } from "@lancedb/lancedb";
 import { resolve } from "node:path";
 import {
@@ -96,6 +97,14 @@ export class LanceProductRepository implements ProductRepository {
           ? "useEnvironment = 'both'"
           : `(useEnvironment = '${criteria.useEnvironment}' OR useEnvironment = 'both')`,
       );
+    if (criteria.functionalGroup) {
+      const groupTypes = expandFunctionalGroup(criteria.functionalGroup);
+      filters.push(
+        groupTypes.length
+          ? `productType IN (${groupTypes.map((type) => `'${type.replaceAll("'", "''")}'`).join(",")})`
+          : "price < 0",
+      );
+    }
     if (criteria.productTypes?.length) {
       const allowed = [
         ...new Set(this.catalog.map((p) => p.productType)),
@@ -115,9 +124,7 @@ export class LanceProductRepository implements ProductRepository {
       );
     if (criteria.requiredFeatures?.length) {
       const eligible = this.catalog.filter((p) =>
-        criteria.requiredFeatures!.every((feature) =>
-          meetsFeature(p, feature),
-        ),
+        criteria.requiredFeatures!.every((feature) => meetsFeature(p, feature)),
       );
       filters.push(
         eligible.length
@@ -164,15 +171,13 @@ export class LanceProductRepository implements ProductRepository {
     const visible = criteria.excludeIds?.length
       ? await fetchRows(this.filters(criteria, true))
       : ranked;
-    const unseen = visible
-      .filter(relevant)
-      .map((row) =>
-        productSchema.parse({
-          ...row,
-          features: Array.from(row.features),
-          limitations: Array.from(row.limitations),
-        }),
-      );
+    const unseen = visible.filter(relevant).map((row) =>
+      productSchema.parse({
+        ...row,
+        features: Array.from(row.features),
+        limitations: Array.from(row.limitations),
+      }),
+    );
     if (criteria.targetPrice !== undefined)
       unseen.sort(
         (a, b) =>
@@ -191,7 +196,7 @@ export class LanceProductRepository implements ProductRepository {
       totalMatches,
       unseenMatches: unseen.length,
       remainingMatches: unseen.length - products.length,
-      matchedIds: ranked.filter(relevant).map(row=>String(row.id)),
+      matchedIds: ranked.filter(relevant).map((row) => String(row.id)),
     };
   }
   async search(criteria: ProductSearch): Promise<Product[]> {
@@ -206,17 +211,20 @@ export class LanceProductRepository implements ProductRepository {
   async overview(criteria: Partial<ProductSearch> = {}) {
     // Use the same structural filters as retrieval, never a parallel list of merchandise claims.
     const table = await this.prepare();
-    const filters = this.filters({ query: "", ...criteria, excludeIds: undefined });
+    const filters = this.filters({
+      query: "",
+      ...criteria,
+      excludeIds: undefined,
+    });
     let query = table.query();
     if (filters.length) query = query.where(filters.join(" AND "));
-    const all = (await query.toArray())
-      .map((p) =>
-        productSchema.parse({
-          ...p,
-          features: Array.from(p.features),
-          limitations: Array.from(p.limitations),
-        }),
-      );
+    const all = (await query.toArray()).map((p) =>
+      productSchema.parse({
+        ...p,
+        features: Array.from(p.features),
+        limitations: Array.from(p.limitations),
+      }),
+    );
     return {
       total: all.length,
       categories: [...new Set(all.map((p) => p.category))]

@@ -492,7 +492,21 @@ try {
     ["pl", "Szukam czegoś do porannej kawy"],
   ]) {
     const c = conversation(`discovery-${language}`, language);
-    nonempty((await c.turn(prompt)).result);
+    const coffeeResult = (await c.turn(prompt)).result;
+    nonempty(coffeeResult);
+    const coffeeIds = new Set([
+      "mugs",
+      "carafe",
+      "travel-mug",
+      "coffee-grinder",
+      "pour-over-dripper",
+      "gooseneck-kettle",
+      "digital-coffee-scale",
+    ]);
+    assert.ok(
+      coffeeResult.products.every((product) => coffeeIds.has(product.id)),
+      "Coffee recommendation contains unrelated merchandise",
+    );
     await c.turn(
       language === "en"
         ? "Show only in-stock products"
@@ -642,6 +656,19 @@ try {
         /\b2\b|dwie|dwa/i,
         "Cart quantity was not recalled",
       );
+  }
+  const countsConversation = conversation("requested-counts-en", "en");
+  for (const [prompt, requested] of [
+    ["I'd like to see four products from the store.", 4],
+    ["Please give me five products instead.", 5],
+    ["Can you show ten products?", 10],
+    ["I'd like twenty product suggestions.", 20],
+    ["Show me everything in your shop.", 1000],
+  ]) {
+    const turn = await countsConversation.turn(prompt);
+    assert.equal(turn.result?.products.length, Math.min(requested, 10));
+    assert.equal(turn.result?.requestedCount, requested);
+    assert.equal(turn.result?.totalMatches, 86);
   }
   const gift = await conversation("readme-gift-en", "en").turn(
     "Find a gift under EUR 25",

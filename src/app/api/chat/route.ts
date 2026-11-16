@@ -8,6 +8,7 @@ import { settledMessages } from "@/application/chat/history";
 import { chatAdmission } from "@/composition/admission";
 import { z } from "zod";
 import { getShop } from "@/composition/shop";
+import { products } from "@/data/products";
 import { resolveChatRuntime } from "@/composition/chat";
 import {
   createNativeAgentStream,
@@ -34,11 +35,23 @@ export async function POST(request: Request) {
             lines: z
               .array(
                 z.object({
-                  productId: z.string().max(150),
+                  productId: z
+                    .string()
+                    .max(150)
+                    .refine(
+                      (id) => products.some((product) => product.id === id),
+                      "Unknown cart product.",
+                    ),
                   quantity: z.number().int().min(1).max(99),
                 }),
               )
-              .max(100),
+              .max(products.length)
+              .refine(
+                (lines) =>
+                  new Set(lines.map((line) => line.productId)).size ===
+                  lines.length,
+                "Duplicate cart lines.",
+              ),
           })
           .optional(),
       })

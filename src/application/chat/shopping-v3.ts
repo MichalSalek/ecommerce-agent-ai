@@ -17,6 +17,7 @@ export const agentStateSchema = z.object({
   shownIds: ids,
   rejectedIds: ids,
   lastIds: ids,
+  resultIds: ids.max(10).default([]),
   comparisonIds: ids.max(10),
   selectedIds: ids.max(10),
 });
@@ -32,6 +33,7 @@ export const initialAgentState = (): AgentState => ({
   shownIds: [],
   rejectedIds: [],
   lastIds: [],
+  resultIds: [],
   comparisonIds: [],
   selectedIds: [],
 });
@@ -44,6 +46,7 @@ export const transitionSchema = z.object({
     .array(
       z.enum([
         "query",
+        "functionalGroup",
         "category",
         "categoryExplicit",
         "productKind",
@@ -57,7 +60,7 @@ export const transitionSchema = z.object({
         "inStockOnly",
       ]),
     )
-    .max(13)
+    .max(14)
     .optional(),
   requestedCount: z.number().int().min(1).max(1000).optional(),
   preferences: z.array(z.string().max(150)).max(8).optional(),
@@ -74,18 +77,38 @@ export const resultOutcomeSchema = z.enum([
   "no-assortment",
   "invalid-criteria",
 ]);
-export const searchEvidenceSchema = z.object({
-  evidenceId: z.string(),
-  products: z.array(z.object({ id: z.string() })).max(10),
-  appliedCriteria: criteriaSchema,
-  outcome: resultOutcomeSchema,
-  requestedCount: z.number().int().positive(),
-  scopeTotal: z.number().int().nonnegative(),
-  totalMatches: z.number().int().nonnegative(),
-  unseenMatches: z.number().int().nonnegative(),
-  remainingMatches: z.number().int().nonnegative(),
-  newlyShownCount: z.number().int().min(0).max(10).optional(),
-});
+export const searchEvidenceSchema = z
+  .object({
+    evidenceId: z.string().min(1).max(150),
+    products: z.array(z.object({ id: z.string().min(1).max(100) })).max(10),
+    appliedCriteria: criteriaSchema,
+    outcome: resultOutcomeSchema,
+    requestedCount: z.number().int().positive().max(1000),
+    scopeTotal: z.number().int().nonnegative().max(products.length),
+    totalMatches: z.number().int().nonnegative().max(products.length),
+    unseenMatches: z.number().int().nonnegative().max(products.length),
+    remainingMatches: z.number().int().nonnegative().max(products.length),
+    newlyShownCount: z.number().int().min(0).max(10).optional(),
+  })
+  .superRefine((result, context) => {
+    if (
+      result.totalMatches > result.scopeTotal ||
+      result.products.length > result.totalMatches ||
+      result.products.length > Math.min(10, result.requestedCount) ||
+      new Set(result.products.map((product) => product.id)).size !==
+        result.products.length ||
+      result.unseenMatches > result.totalMatches ||
+      result.remainingMatches > result.unseenMatches ||
+      (result.newlyShownCount !== undefined &&
+        (result.newlyShownCount > result.products.length ||
+          result.remainingMatches !==
+            result.unseenMatches - result.newlyShownCount))
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Inconsistent catalog counters.",
+      });
+  });
 export type SearchEvidence = z.infer<typeof searchEvidenceSchema>;
 export const categoryCardsSchema = z
   .array(
@@ -168,12 +191,14 @@ export function sanitizeState(value: unknown): AgentState {
     "shownIds",
     "rejectedIds",
     "lastIds",
+    "resultIds",
     "comparisonIds",
     "selectedIds",
   ] as const)
     state[field] = [...new Set(state[field])].filter((id) =>
       products.some((p) => p.id === id),
     );
+  state.lastIds = state.lastIds.slice(0, 10);
   return state;
 }
 export function transitionState(

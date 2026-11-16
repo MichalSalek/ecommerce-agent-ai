@@ -7,6 +7,7 @@ import { AssistantIcon } from "@/components/chat/AssistantIcon";
 import { ProductResults } from "@/components/chat/ProductResults";
 import { CategoryResults } from "@/components/chat/CategoryResults";
 import { ComparisonResults } from "@/components/chat/ComparisonResults";
+import { useCart, type ActionResult } from "@/components/CartProvider";
 import { products } from "@/data/products";
 import { WELCOME_ID } from "@/application/chat/history";
 const starters = [
@@ -20,6 +21,7 @@ const starters = [
 ];
 export default function ChatView() {
   const {
+    id: conversationId,
     messages,
     sendMessage,
     status,
@@ -36,16 +38,24 @@ export default function ChatView() {
     threadPosition,
     cartFeedback,
   } = useConversation();
+  const { applyAction } = useCart();
   const router = useRouter();
   const thread = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const nearBottom = useRef(threadPosition.current.follow);
   const initializedScroll = useRef(false);
+  const retryAllowed = useRef(true);
   const [showLatest, setShowLatest] = useState(false);
   const [copied, setCopied] = useState<string>();
+  const [cartRetryStatus, setCartRetryStatus] = useState<
+    Record<string, ActionResult>
+  >({});
   const busy = status === "submitted" || status === "streaming";
   const started = messages.some((m) => m.role === "user");
+  useEffect(() => {
+    retryAllowed.current = true;
+  }, [conversationId]);
   useEffect(() => {
     const el = panel.current;
     if (!el) return;
@@ -118,7 +128,14 @@ export default function ChatView() {
     field.current?.focus();
   }
   async function reset() {
-    await newConversation();
+    retryAllowed.current = false;
+    try {
+      await newConversation();
+    } catch (error) {
+      retryAllowed.current = true;
+      throw error;
+    }
+    setCartRetryStatus({});
     router.replace("/chat", { scroll: false });
     nearBottom.current = true;
     threadPosition.current.follow = true;
@@ -161,6 +178,10 @@ export default function ChatView() {
             part.type === "data-products" ||
             part.type === "data-comparison" ||
             part.type === "data-categories" ||
+            (part.type === "data-shoppingState" &&
+              ["new", "browse"].includes(
+                part.data.transition?.operation ?? "",
+              )) ||
             (!hasV3 &&
               part.type === "tool-searchProducts" &&
               part.state === "output-available"),
@@ -324,13 +345,24 @@ export default function ChatView() {
                     part.data.status !== "complete"
                   )
                     return (
-                      <p className="result-explanation" role="status" key={i}>
-                        {part.data.status === "partial"
-                          ? "The response is incomplete. You can try again."
-                          : part.data.status === "provider-limit"
-                            ? `The model provider has reached its limit. ${part.data.retryAfter ? `Retry in ${part.data.retryAfter} seconds.` : "Please retry later."}`
-                            : "The connection was interrupted. Please try again."}
-                      </p>
+                      <div className="result-explanation" role="status" key={i}>
+                        <p>
+                          {part.data.status === "partial"
+                            ? "The response is incomplete. You can try again."
+                            : part.data.status === "provider-limit"
+                              ? `The model provider has reached its limit. ${part.data.retryAfter ? `Retry in ${part.data.retryAfter} seconds.` : "Please retry later."}`
+                              : "The connection was interrupted. Please try again."}
+                        </p>
+                        {part.data.status === "partial" &&
+                          message.id === visible.at(-1)?.id && (
+                            <button
+                              disabled={busy}
+                              onClick={() => void regenerate()}
+                            >
+                              Retry last message
+                            </button>
+                          )}
+                      </div>
                     );
                   if (
                     !message.parts.some((p) =>
@@ -354,6 +386,10 @@ export default function ChatView() {
             ))
           )}
           {cartFeedback.map(({ action, status }) => {
+            const effectiveStatus =
+              status === "added" || status === "duplicate"
+                ? status
+                : (cartRetryStatus[action.operationId] ?? status);
             const items = action.items ?? [
               { productId: action.productId, quantity: action.quantity },
             ];
@@ -363,9 +399,10 @@ export default function ChatView() {
                 role="status"
                 key={action.operationId}
               >
-                {status === "added" || status === "duplicate" ? (
+                {effectiveStatus === "added" ||
+                effectiveStatus === "duplicate" ? (
                   <>
-                    {status === "added" && items.length > 1 ? (
+                    {effectiveStatus === "added" && items.length > 1 ? (
                       <>
                         <p>Added to your cart:</p>
                         <ul>
@@ -381,7 +418,7 @@ export default function ChatView() {
                       </>
                     ) : (
                       <p>
-                        {status === "added"
+                        {effectiveStatus === "added"
                           ? `Added ${items[0].quantity} × ${products.find((product) => product.id === items[0].productId)?.name ?? "product"} to your cart.`
                           : "This request was already processed."}
                       </p>
@@ -389,13 +426,39 @@ export default function ChatView() {
                     <Link href="/cart">Open cart ↗</Link>
                   </>
                 ) : (
-                  <p>
-                    {status === "limit"
-                      ? "The cart cannot hold more than 99 of this item."
-                      : status === "unavailable"
-                        ? "This item is unavailable and was not added."
-                        : "The cart could not be saved, so this item was not added. Please try again."}
-                  </p>
+                  <>
+                    <p>
+                      {effectiveStatus === "limit"
+                        ? "The cart cannot hold more than 99 of this item."
+                        : effectiveStatus === "unavailable"
+                          ? "This item is unavailable and was not added."
+                          : "The cart could not be saved, so this item was not added. Please try again."}
+                    </p>
+                    {(effectiveStatus === "storage-error" ||
+                      effectiveStatus === "not-ready") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (
+                            !retryAllowed.current ||
+                            !messages.some(
+                              (message) =>
+                                message.role === "user" &&
+                                message.id === action.userMessageId,
+                            )
+                          )
+                            return;
+                          const result = applyAction(action, conversationId);
+                          setCartRetryStatus((previous) => ({
+                            ...previous,
+                            [action.operationId]: result,
+                          }));
+                        }}
+                      >
+                        Retry adding to cart
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             );
@@ -453,7 +516,7 @@ export default function ChatView() {
               <strong>Let's try that again.</strong>
               <p>The response could not be completed. Please try again.</p>
               <button
-                disabled={busy || conversationClosed}
+                disabled={busy}
                 onClick={() => {
                   nearBottom.current = true;
                   threadPosition.current.follow = true;

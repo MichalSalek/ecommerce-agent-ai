@@ -286,3 +286,38 @@ test("v3 roundtrip canonicalizes comparison facts and keeps legacy v1 records re
   );
   assert.deepEqual(oldCompact.output, [{ id: "mugs" }, { id: "carafe" }]);
 });
+
+test("v3 catalog counter extensions reject impossible client facts without clearing text", () => {
+  const base = {
+    evidenceId: "e1",
+    products: [{ id: "mugs" }],
+    appliedCriteria: {},
+    outcome: "matches",
+    requestedCount: 5,
+    scopeTotal: 86,
+    totalMatches: 1,
+    unseenMatches: 1,
+    remainingMatches: 0,
+    newlyShownCount: 1,
+  };
+  for (const data of [
+    { ...base, scopeTotal: 999 },
+    { ...base, totalMatches: 87 },
+    { ...base, remainingMatches: 2 },
+    { ...base, products: [{ id: "mugs" }, { id: "mugs" }] },
+  ]) {
+    const message = {
+      id: "assistant",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "Kept conversation." },
+        { type: "data-products", data },
+      ],
+    };
+    const result = settledMessages([message]);
+    assert.equal(result.length, 1);
+    assert.deepEqual(result[0].parts, [
+      { type: "text", text: "Kept conversation." },
+    ]);
+  }
+});

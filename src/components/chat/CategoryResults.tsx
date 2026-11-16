@@ -33,7 +33,10 @@ export function CategoryResults({
                   height={160}
                   sizes="80px"
                 />
-                <span>{example.name}</span>
+                <span>
+                  {example.name}
+                  {!example.inStock ? " (out of stock)" : ""}
+                </span>
               </Link>
             )}
             <div>

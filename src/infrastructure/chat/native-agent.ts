@@ -7,6 +7,13 @@ import {
   type ToolSet,
 } from "ai";
 import { products } from "@/data/products";
+import { verifiedRejections } from "@/application/chat/rejections";
+import { queryLanguageError } from "@/application/chat/query-language";
+import {
+  resolveExplicitFacets,
+  type ExplicitFacet,
+} from "@/application/chat/explicit-facets";
+import { expandFunctionalGroup } from "@/domain/catalog/functional-groups";
 import { type CatalogService } from "@/application/catalog/catalog-service";
 import { criteriaError, meetsFeature } from "@/domain/catalog/requirements";
 import type { Product, ProductSearch } from "@/domain/catalog/product";
@@ -19,7 +26,7 @@ import {
   type PresentedAnswer,
 } from "@/application/chat/native-tools";
 import {
-  authorizeCart,
+  prepareCartProposal,
   hasCartInstruction,
 } from "@/application/chat/cart-authorization";
 import {
@@ -142,6 +149,62 @@ function validatePresentation(
   if (answer.evidenceIds.some((id) => !evidence.some((e) => e.id === id)))
     throw new Error("Unknown evidence ID.");
   const cited = evidence.filter((e) => answer.evidenceIds.includes(e.id));
+  const foldedReply = answer.text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replaceAll("ł", "l");
+  if (
+    /\bi(?:'ve| have)?\s+added\b|\bwe(?:'ve| have)?\s+added\b|\b(?:was|were|have been|has been)\s+added\b|(?:^|[.!?]\s+)(?:added|saved)\b|dodal(?:em|am)|\bdodano\b|zostal.{0,25}dodan/i.test(
+      foldedReply,
+    )
+  )
+    throw new Error(
+      "Only the browser may confirm a saved cart operation. Say the selection is prepared and the device will confirm after saving.",
+    );
+  const offerWords =
+    /\b(?:discounts?|promotions?|promo codes?|free|sale)\b|rabat|gratis|darmo/i.test(
+      answer.text,
+    );
+  const denyingOffer =
+    /\bno (?:discounts?|promotions?|promo codes?|free)|\bnot free\b|(?:cannot|can't|do not|don't|does not|doesn't).{0,60}(?:offer|apply|provide|discount|promo|free)|(?:nie|brak).{0,50}(?:rabat|promoc|darmo|gratis)/i.test(
+      answer.text,
+    );
+  const approximateBudget = cited.some(
+    (record) =>
+      (record.output as SearchEvidence)?.appliedCriteria?.targetPrice !==
+      undefined,
+  );
+  if (
+    (offerWords && !denyingOffer) ||
+    (/%/.test(answer.text) && !approximateBudget)
+  )
+    throw new Error(
+      "There is no verified promotion, free offer or discount. Use canonical prices and policies.",
+    );
+  if (
+    answer.view === "products" &&
+    search &&
+    !evidence.some(
+      (record) =>
+        record.tool === "getProductDetails" &&
+        record.productIds.some((id) => answer.productIds.includes(id)),
+    )
+  ) {
+    const source = evidence.find((record) => record.id === search.evidenceId);
+    if (source && !cited.includes(source)) {
+      cited.push(source);
+      answer.evidenceIds.push(source.id);
+    }
+    if (
+      answer.productIds.some(
+        (id) => !cited.some((record) => record.productIds.includes(id)),
+      )
+    )
+      throw new Error("Products require cited evidence.");
+    // The application owns the requested page size; an omitted presentation ID never hides a matching card.
+    answer.productIds = search.products.map((product) => product.id);
+  }
   const absence =
     /\b(?:no (?:products|items|stock|matches)|nothing (?:available|in stock)|we (?:do not|don't) (?:have|stock)|brak (?:produkt|asortyment|dopasowa)|nie (?:mamy|ma (?:produkt|takich)))/i.test(
       answer.text,
@@ -153,10 +216,29 @@ function validatePresentation(
         (e.tool === "searchProducts" &&
           (e.output as SearchEvidence).products?.length === 0) ||
         (e.tool === "getCatalogOverview" &&
-          (e.output as { total: number }).total === 0),
+          (e.output as { total: number }).total === 0) ||
+        (e.tool === "deviceCart" &&
+          (e.output as { totalUnits: number }).totalUnits === 0 &&
+          /cart|basket|koszyk/i.test(answer.text)),
     )
   )
     throw new Error("Check the exact catalog scope before claiming absence.");
+  if (
+    /we (?:do not|don't) (?:have|stock)|nie mamy|brak asortymentu/i.test(
+      answer.text,
+    ) &&
+    !/\bmore\b|additional|new options|kolejn|nowych/i.test(answer.text) &&
+    cited.some(
+      (record) =>
+        record.tool === "searchProducts" &&
+        ["exhausted", "unconfirmed-feature"].includes(
+          (record.output as SearchEvidence).outcome,
+        ),
+    )
+  )
+    throw new Error(
+      "Shown items or an unconfirmed feature do not establish absence of assortment.",
+    );
   if (
     new Set(answer.productIds).size !== answer.productIds.length ||
     answer.productIds.some(
@@ -165,20 +247,15 @@ function validatePresentation(
   )
     throw new Error("Products require cited evidence.");
   if (
-    answer.view === "products" &&
-    search &&
-    (search.products.length !== answer.productIds.length ||
-      search.products.some((p) => !answer.productIds.includes(p.id)))
-  )
-    throw new Error(
-      "Present the complete search page, respecting the requested count.",
-    );
-  if (
     answer.claim &&
     answer.claim !== "none" &&
     !cited.some(
       (e) =>
         (e.output as SearchEvidence)?.outcome === answer.claim ||
+        (answer.claim === "unavailable" &&
+          e.productIds.some((id) =>
+            products.some((product) => product.id === id && !product.inStock),
+          )) ||
         (answer.claim === "no-assortment" &&
           e.tool === "getCatalogOverview" &&
           (e.output as { total: number }).total === 0),
@@ -191,6 +268,55 @@ function validatePresentation(
     );
   // Prices in advice are resolved by the application. Avoid unchecked numeric currency claims.
   const withoutReferences = answer.text.replace(/\[\[[^\]]+\]\]/g, "");
+  if (cited.length) {
+    const facts = cited.flatMap((record) => [
+      record.output,
+      ...record.productIds.flatMap((id) => products.filter((p) => p.id === id)),
+      ...(record.output &&
+      typeof record.output === "object" &&
+      "differencesCents" in record.output
+        ? (record.output as Comparison).differencesCents.map(
+            (row) => row.cents / 100,
+          )
+        : []),
+    ]);
+    const numbers =
+      JSON.stringify(facts)
+        .match(/\d+(?:[.,]\d+)?/g)
+        ?.map((value) => Number(value.replace(",", "."))) ?? [];
+    const numberWords = [
+      "zero",
+      "one",
+      "two",
+      "three",
+      "four",
+      "five",
+      "six",
+      "seven",
+      "eight",
+      "nine",
+      "ten",
+    ];
+    for (const [number, word] of numberWords.entries())
+      if (new RegExp(`\\b${word}\\b`, "i").test(JSON.stringify(facts)))
+        numbers.push(number);
+    for (const token of withoutReferences.match(/\d+(?:[.,]\d+)?/g) ?? []) {
+      if (!numbers.includes(Number(token.replace(",", "."))))
+        throw new Error(
+          "Unverified numerical fact. Use the executed catalog/policy evidence.",
+        );
+    }
+    if (
+      /(?:all.*(?:in stock|available)|wszystk.*dostępn)/i.test(answer.text) &&
+      !/(?:not all|nie wszystk)/i.test(answer.text) &&
+      cited.some((record) =>
+        record.productIds.some(
+          (id) => products.find((p) => p.id === id)?.inStock === false,
+        ),
+      )
+    )
+      throw new Error("Not all cited products are in stock.");
+  }
   const counts = cited.flatMap((e) => {
     const record = e.output as Record<string, unknown>;
     return [
@@ -200,6 +326,8 @@ function validatePresentation(
       "unseenMatches",
       "remainingMatches",
       "requestedCount",
+      "totalLines",
+      "totalUnits",
     ]
       .flatMap((field) =>
         typeof record?.[field] === "number" ? [record[field] as number] : [],
@@ -210,6 +338,18 @@ function validatePresentation(
             ? [(record[field] as unknown[]).length]
             : [],
         ),
+      )
+      .concat(
+        Array.isArray(record?.categories)
+          ? record.categories.flatMap((category) =>
+              category &&
+              typeof category === "object" &&
+              "count" in category &&
+              typeof category.count === "number"
+                ? [category.count]
+                : [],
+            )
+          : [],
       );
   });
   for (const match of withoutReferences.matchAll(
@@ -224,6 +364,7 @@ function validatePresentation(
       appliedCriteria?: ProductSearch;
       differencesCents?: { cents: number }[];
       policy?: string;
+      totalEUR?: number;
     };
     return [
       ...e.productIds.flatMap((id) =>
@@ -231,6 +372,7 @@ function validatePresentation(
       ),
       record?.appliedCriteria?.maxPrice,
       record?.appliedCriteria?.targetPrice,
+      record?.totalEUR,
       ...(record?.differencesCents ?? []).map((p) => p.cents / 100),
       ...(record?.policy?.match(/\d+(?:\.\d+)?/g) ?? []).map(Number),
     ].filter((n): n is number => typeof n === "number");
@@ -312,10 +454,11 @@ export function stateFromMessages(
           state = { ...initialAgentState(), language: state.language };
         const { excludeIds, limit, newSearch, ...criteria } = input;
         state.criteria = criteria;
-        state.requestedCount = limit ?? 5;
+        state.requestedCount = 5;
         state.shownIds = [
           ...new Set([...state.shownIds, ...(excludeIds ?? []), ...ids]),
         ];
+        state.resultIds = ids.slice(0, 10);
       }
       if (ids.length) state.lastIds = ids;
       if (part.type === "tool-compareProducts") state.comparisonIds = ids;
@@ -331,7 +474,13 @@ export async function runAgent(
   options: Partial<ChatRuntime> = {},
 ): Promise<AgentResult> {
   cleanCaches();
-  const key = turnKey(turn);
+  const resolutionKey = turnKey(turn);
+  const key =
+    resolutionKey +
+    ":" +
+    createHash("sha256")
+      .update(JSON.stringify(turn.cart ?? null))
+      .digest("hex");
   if (completed.has(key)) {
     signal.throwIfAborted();
     return structuredClone(completed.get(key)!.result);
@@ -342,7 +491,14 @@ export async function runAgent(
     signal.throwIfAborted();
     if (completed.has(key)) return structuredClone(completed.get(key)!.result);
   }
-  const execution = executeAgent(model, catalog, turn, signal, options, key);
+  const execution = executeAgent(
+    model,
+    catalog,
+    turn,
+    signal,
+    options,
+    resolutionKey,
+  );
   pending.set(key, execution);
   try {
     const result = await execution;
@@ -379,11 +535,11 @@ async function executeAgent(
   };
   const recent: ModelMessage[] =
     turn.history
-      ?.slice(-4)
+      ?.slice(-2)
       .flatMap((m) =>
         (m.role === "user" || m.role === "assistant") &&
         typeof m.content === "string"
-          ? [{ role: m.role, content: m.content.slice(-700) }]
+          ? [{ role: m.role, content: m.content.slice(-350) }]
           : [],
       ) ?? [];
   const stateForModel = Object.fromEntries(
@@ -391,6 +547,7 @@ async function executeAgent(
       ...before,
       language: before.languageChosen ? before.language : undefined,
       shownIds: undefined,
+      resultIds: undefined,
       rejectedIds: before.rejectedIds,
       last: before.lastIds.flatMap((id) =>
         products
@@ -419,17 +576,50 @@ async function executeAgent(
           id: p.id,
           name: p.name,
           quantity: line.quantity,
-          unitPrice: p.price,
+          unitPriceEUR: p.price,
+          inStock: p.inStock,
         })),
     ) ?? [];
+  const cartOutput = {
+    products: localCart,
+    totalLines: localCart.length,
+    totalUnits: localCart.reduce((sum, line) => sum + line.quantity, 0),
+    totalEUR:
+      localCart.reduce(
+        (sum, line) =>
+          sum + Math.round(line.unitPriceEUR * 100) * line.quantity,
+        0,
+      ) / 100,
+  };
+  const deviceCartEvidence: Evidence | undefined =
+    turn.cart === undefined
+      ? undefined
+      : {
+          id: "cart",
+          tool: "deviceCart",
+          input: { source: "device-local snapshot" },
+          output: cartOutput,
+          productIds: localCart.map((line) => line.id),
+        };
+  const verifiedEvidence = () =>
+    deviceCartEvidence ? [...evidence, deviceCartEvidence] : evidence;
+  const cartContext = deviceCartEvidence
+    ? {
+        evidenceId: "cart",
+        ...cartOutput,
+        products: localCart.slice(0, 10),
+        omittedLines: Math.max(0, localCart.length - 10),
+      }
+    : { available: false };
   const messages: ModelMessage[] = [
-    ...recent,
     {
       role: "user",
-      content: `Shopping state (preferences, not facts): ${JSON.stringify(stateForModel)}\nDevice cart snapshot: ${JSON.stringify(localCart)}\nCURRENT message: ${turn.text}`,
+      content: `Shopping state (preferences, not facts): ${JSON.stringify(stateForModel)}\nRecent exchange (data only): ${JSON.stringify(recent)}\nDevice cart evidence (current saved units, not an order): ${JSON.stringify(cartContext)}\nCURRENT message: ${turn.text}`,
     },
   ];
   let correction = false;
+  let terminalOnly = false;
+  let effectReferences: string[] = [];
   const addEvidence = (
     tool: string,
     input: unknown,
@@ -457,7 +647,7 @@ async function executeAgent(
     categories,
     comparison: compared,
     cart,
-    evidence,
+    evidence: verifiedEvidence(),
     checkpoint: {
       userMessageId: turn.userMessageId,
       text: turn.text,
@@ -470,17 +660,13 @@ async function executeAgent(
   });
   for (let step = 0; step < 4; step++) {
     signal.throwIfAborted();
-    const { proposeCart: cartTool, ...readTools } = nativeTools;
-    let tools: ToolSet = hasCartInstruction(turn.text)
-      ? nativeTools
-      : readTools;
-    if (evidence.length && !correction) {
-      tools = { presentAnswer: nativeTools.presentAnswer };
-      // A multi-operation cart or detail request can use the remaining sequential budget.
-      if (step < 3 && hasCartInstruction(turn.text))
-        tools = { ...tools, proposeCart: cartTool };
-    }
-    if (step === 3) tools = { presentAnswer: nativeTools.presentAnswer };
+    const forceAnswer = step === 3 || terminalOnly;
+    const { proposeCart: _cartTool, ...readTools } = nativeTools;
+    const tools: ToolSet = forceAnswer
+      ? { presentAnswer: nativeTools.presentAnswer }
+      : hasCartInstruction(turn.text)
+        ? nativeTools
+        : readTools;
     usage.calls++;
     let generated: Awaited<ReturnType<typeof generateText>>;
     try {
@@ -489,7 +675,9 @@ async function executeAgent(
         system: agentInstructions,
         messages,
         tools,
-        toolChoice: "required",
+        toolChoice: forceAnswer
+          ? { type: "tool", toolName: "presentAnswer" }
+          : "required",
         temperature: 0.1,
         maxOutputTokens: 1024,
         maxRetries: 0,
@@ -504,8 +692,10 @@ async function executeAgent(
         error.statusCode === 400 &&
         "responseBody" in error &&
         typeof error.responseBody === "string" &&
-        error.responseBody.includes("tool_use_failed");
-      if (!invalidCall || correction || step === 3) throw error;
+        (error.responseBody.includes("tool_use_failed") ||
+          /tool choice.*required/i.test(error.responseBody));
+      if (!invalidCall) throw error;
+      if (correction || step === 3) break;
       correction = true;
       messages.push({
         role: "user",
@@ -550,14 +740,47 @@ async function executeAgent(
     let output: unknown;
     try {
       if ("invalid" in call && call.invalid)
-        throw new Error("Invalid tool input. Correct the tool schema once.");
+        throw new Error(
+          name === "searchProducts" || name === "getCatalogOverview"
+            ? "Invalid input. Hard kind/type/category belong in explicitFilters with CURRENT source words. Functional needs use functionalGroup, not a guessed subtype list."
+            : "Invalid tool input. Correct the tool schema once.",
+        );
       if (name === "presentAnswer") {
         const answer = answerSchema.parse(call.input);
-        if (search && !cart && !compared && answer.view !== "products")
-          throw new Error(
-            "Present the verified search page using view products, including an empty result.",
+        if (
+          answer.productIds.some(
+            (id) =>
+              !verifiedEvidence().some((record) =>
+                record.productIds.includes(id),
+              ),
+          )
+        )
+          throw new Error("Unverified product reference.");
+        if (
+          compared &&
+          !cart &&
+          (answer.view === "none" || answer.view === "comparison")
+        ) {
+          answer.view = "comparison";
+          answer.productIds = compared.productIds;
+          const source = evidence.find(
+            (record) => record.tool === "compareProducts",
           );
-        const text = validatePresentation(answer, evidence, search);
+          if (source && !answer.evidenceIds.includes(source.id))
+            answer.evidenceIds.push(source.id);
+        } else if (categories && !search && answer.view === "none")
+          answer.view = "categories";
+        else if (
+          search &&
+          answer.view === "none" &&
+          answer.productIds.length &&
+          (search.products.length !== before.lastIds.length ||
+            search.products.some(
+              (product) => !before.lastIds.includes(product.id),
+            ))
+        )
+          answer.view = "products";
+        const text = validatePresentation(answer, verifiedEvidence(), search);
         after.languageChosen = true;
         if (answer.view === "categories" && !categories)
           throw new Error("Read categories first.");
@@ -576,18 +799,84 @@ async function executeAgent(
               ...new Set([...after.shownIds, ...answer.productIds]),
             ];
         }
+        if (
+          search &&
+          (answer.view === "products" || answer.view === "comparison")
+        )
+          after.resultIds = search.products.map((product) => product.id);
         signal.throwIfAborted();
         console.log("[AGENT] usage", JSON.stringify(usage));
         return result(answer, text, "complete");
       }
       switch (name) {
         case "searchProducts": {
-          const proposed = transitionSchema.parse(call.input);
+          const raw = call.input as {
+            mode?: "recommend" | "lookup";
+            rejections?: { productId: string; userQuote: string }[];
+            explicitFilters?: ExplicitFacet[];
+          };
+          let proposed = transitionSchema.parse({
+            ...(call.input as object),
+            rejectedIds: verifiedRejections(
+              turn.text,
+              before,
+              raw.rejections ?? [],
+            ),
+          });
+          if (raw.mode === "lookup") {
+            const fresh = initialAgentState();
+            const checked = resolveExplicitFacets(
+              turn.text,
+              fresh,
+              { ...proposed, operation: "new" },
+              raw.explicitFilters ?? [],
+            );
+            if ("error" in checked) {
+              output = checked;
+              break;
+            }
+            const lookupCriteria: ProductSearch = {
+              query: "",
+              ...checked.change.criteria,
+              limit: 10,
+            };
+            const invalid =
+              criteriaError(lookupCriteria) ??
+              queryLanguageError(lookupCriteria.query);
+            if (invalid) {
+              output = invalid;
+              break;
+            }
+            const found = await catalog.searchResult(lookupCriteria);
+            output = {
+              lookupOnly: true,
+              appliedCriteria: lookupCriteria,
+              products: found.products.map((product) =>
+                compactProduct(product, true),
+              ),
+              totalMatches: found.totalMatches,
+            };
+            effectReferences = found.products.map((product) => product.id);
+            break;
+          }
           if (!resolution) {
+            const verified = resolveExplicitFacets(
+              turn.text,
+              before,
+              proposed,
+              raw.explicitFilters ?? [],
+            );
+            if ("error" in verified) {
+              output = verified;
+              break;
+            }
+            proposed = verified.change;
             const candidate = change
               ? structuredClone(after)
               : transitionState(before, proposed);
-            const invalid = criteriaError(candidate.criteria);
+            const invalid =
+              criteriaError(candidate.criteria) ??
+              queryLanguageError(candidate.criteria.query);
             if (invalid) {
               output = invalid;
               break;
@@ -608,6 +897,7 @@ async function executeAgent(
               productKind: criteria.productKind,
               productType: criteria.productType,
               productTypes: criteria.productTypes,
+              functionalGroup: criteria.functionalGroup,
               useEnvironment: criteria.useEnvironment,
             };
             const scope = await catalog.overview(scoped);
@@ -646,7 +936,16 @@ async function executeAgent(
             search = {
               evidenceId: "",
               products: found.products.map((p) => ({ id: p.id })),
-              appliedCriteria: after.criteria,
+              appliedCriteria: {
+                ...after.criteria,
+                ...(after.criteria.functionalGroup
+                  ? {
+                      productTypes:
+                        after.criteria.productTypes ??
+                        expandFunctionalGroup(after.criteria.functionalGroup),
+                    }
+                  : {}),
+              },
               outcome,
               requestedCount: after.requestedCount,
               scopeTotal: scope.total,
@@ -670,17 +969,30 @@ async function executeAgent(
               compactProduct(products.find((p) => p.id === row.id)!),
             ),
           };
+          effectReferences = search.products.map((product) => product.id);
           break;
         }
         case "getCatalogOverview": {
           const input = call.input as {
             criteria: Partial<ProductSearch>;
             useActive?: boolean;
+            explicitFilters?: ExplicitFacet[];
           };
-          const criteria = {
-            ...(input.useActive ? after.criteria : {}),
-            ...input.criteria,
-          };
+          const checked = resolveExplicitFacets(
+            turn.text,
+            after,
+            {
+              operation: input.useActive ? "refine" : "browse",
+              language: after.language,
+              criteria: input.criteria,
+            },
+            input.explicitFilters ?? [],
+          );
+          if ("error" in checked) {
+            output = checked;
+            break;
+          }
+          const criteria = transitionState(after, checked.change).criteria;
           output =
             criteriaError(criteria) ??
             (await catalog.overview({ ...criteria, excludeIds: undefined }));
@@ -704,13 +1016,22 @@ async function executeAgent(
         case "getProductDetails": {
           const input = call.input as { productId: string };
           const product = await catalog.details(input.productId);
+          if (product) effectReferences = [product.id];
           output = product
             ? compactProduct(product, true)
             : { error: "Unknown product ID. Use a verified ID." };
           break;
         }
         case "compareProducts": {
-          const { productIds } = call.input as { productIds: string[] };
+          const refs = (call.input as { productIds: string[] }).productIds;
+          const productIds = refs.map(
+            (ref) =>
+              products.find(
+                (product) =>
+                  product.id === ref ||
+                  product.name.toLowerCase() === ref.toLowerCase(),
+              )?.id ?? ref,
+          );
           if (
             new Set(productIds).size !== productIds.length ||
             productIds.some((id) => !products.some((p) => p.id === id))
@@ -718,10 +1039,14 @@ async function executeAgent(
             throw new Error("Use distinct canonical product IDs.");
           compared = comparison(productIds);
           after.comparisonIds = productIds;
+          effectReferences = productIds;
           output = {
             ...compared,
             products: productIds.map((id) =>
-              compactProduct(products.find((p) => p.id === id)!, true),
+              compactProduct(
+                products.find((p) => p.id === id)!,
+                true,
+              ),
             ),
           };
           break;
@@ -732,10 +1057,49 @@ async function executeAgent(
           };
           break;
         case "proposeCart": {
-          const proposal = cartProposalSchema.parse(call.input);
-          const error = authorizeCart(turn.text, after, proposal);
+          let proposal = cartProposalSchema.parse(call.input);
+          const effectState = effectReferences.length
+            ? {
+                ...after,
+                lastIds: effectReferences,
+                selectedIds:
+                  effectReferences.length === 1
+                    ? effectReferences
+                    : after.selectedIds,
+              }
+            : after;
+          const prepared = prepareCartProposal(
+            turn.text,
+            effectState,
+            proposal,
+            { resolvedThisTurn: effectReferences.length > 0 },
+          );
+          const error = "error" in prepared ? prepared.error : undefined;
+          if ("proposal" in prepared) proposal = prepared.proposal;
           if (error) {
-            output = { error };
+            terminalOnly = true;
+            output = {
+              status: "needs-clarification",
+              reason: error,
+              ...(proposal.items.some((item) =>
+                products.some(
+                  (product) =>
+                    product.id === item.productId && !product.inStock,
+                ),
+              )
+                ? { outcome: "unavailable" }
+                : {}),
+              candidates: [
+                ...new Set([
+                  ...after.lastIds,
+                  ...proposal.items.map((item) => item.productId),
+                ]),
+              ].flatMap((id) =>
+                products
+                  .filter((product) => product.id === id)
+                  .map((product) => compactProduct(product)),
+              ),
+            };
             break;
           }
           const operationId = createHash("sha256")
@@ -756,6 +1120,23 @@ async function executeAgent(
           after.selectedIds = proposal.items.map((p) => p.productId);
           output = {
             status: "proposal-only",
+            maxUnitsPerProduct: 99,
+            maxItemsPerAction: 10,
+            totalUnits: proposal.items.reduce(
+              (sum, item) => sum + item.quantity,
+              0,
+            ),
+            totalEUR:
+              proposal.items.reduce(
+                (sum, item) =>
+                  sum +
+                  Math.round(
+                    products.find((product) => product.id === item.productId)!
+                      .price * 100,
+                  ) *
+                    item.quantity,
+                0,
+              ) / 100,
             items: proposal.items.map((p) => ({
               ...p,
               ...compactProduct(
@@ -777,13 +1158,25 @@ async function executeAgent(
       }
       const ids =
         name === "searchProducts"
-          ? (search?.products.map((p) => p.id) ?? [])
+          ? output &&
+            typeof output === "object" &&
+            "products" in output &&
+            Array.isArray(output.products)
+            ? output.products.map((product) => product.id)
+            : []
           : name === "getProductDetails" && !hasError
             ? [(call.input as { productId: string }).productId]
             : name === "compareProducts"
               ? (compared?.productIds ?? [])
               : name === "proposeCart" && !hasError
-                ? (cart?.items?.map((p) => p.productId) ?? [])
+                ? (cart?.items?.map((p) => p.productId) ??
+                  (terminalOnly &&
+                  output &&
+                  typeof output === "object" &&
+                  "candidates" in output &&
+                  Array.isArray(output.candidates)
+                    ? output.candidates.map((product) => product.id)
+                    : []))
                 : [];
       const record = addEvidence(name, call.input, output, ids);
       messages.push(
@@ -829,12 +1222,15 @@ async function executeAgent(
       );
       if (correction) break;
       correction = true;
+      const rejection = {
+        error: error instanceof Error ? error.message : "Invalid tool input.",
+        ...(name === "proposeCart"
+          ? { maxUnitsPerProduct: 99, maxItemsPerAction: 10 }
+          : {}),
+      };
       const rejected =
         name in nativeTools
-          ? addEvidence(name, call.input, {
-              error:
-                error instanceof Error ? error.message : "Invalid tool input.",
-            })
+          ? addEvidence(name, call.input, rejection)
           : undefined;
       // A rejected presentation is never emitted. One native correction stays within four inferences.
       messages.push(
@@ -860,10 +1256,7 @@ async function executeAgent(
                 type: "json",
                 value: {
                   ...(rejected ? { evidenceId: rejected.id } : {}),
-                  error:
-                    error instanceof Error
-                      ? error.message
-                      : "Invalid tool input.",
+                  ...rejection,
                 },
               },
             },
@@ -975,7 +1368,19 @@ export function createNativeAgentStream(
               continue;
             let output: unknown = record.output;
             let input = record.input;
-            if (record.tool === "searchProducts" && result.search) {
+            if (
+              record.tool === "searchProducts" &&
+              (record.output as { lookupOnly?: boolean })?.lookupOnly
+            ) {
+              output = record.productIds.flatMap((id) =>
+                products.filter((product) => product.id === id),
+              );
+              input = {
+                ...(record.output as { appliedCriteria: ProductSearch })
+                  .appliedCriteria,
+                limit: 10,
+              };
+            } else if (record.tool === "searchProducts" && result.search) {
               const rows = result.search.products.flatMap((row) =>
                 products.filter((p) => p.id === row.id),
               );
@@ -1082,6 +1487,11 @@ export function createNativeAgentStream(
           "[AGENT] failed",
           JSON.stringify({
             status,
+            limits: Object.fromEntries(
+              Object.entries(headers ?? {}).filter(([name]) =>
+                /ratelimit|retry-after/i.test(name),
+              ),
+            ),
             kind: error instanceof Error ? error.name : "unknown",
             message: error instanceof Error ? error.message.slice(0, 1000) : "",
           }),

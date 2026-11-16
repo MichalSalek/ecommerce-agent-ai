@@ -1,23 +1,12 @@
 import type { Product, ProductSearch } from "./product";
 import { products } from "@/data/products";
 import { productKinds, productTypes } from "./taxonomy";
+import { matchesMaterial } from "./material-facts";
 const normalized = (s: string) => s.trim().toLowerCase();
-const woodenMaterials = new Set([
-  "walnut wood",
-  "solid oak",
-  "oak wood",
-  "wood",
-  "boucle fabric and wood",
-  "steel and wood",
-  "wood and metal",
-  "wood and steel",
-  "wood and fabric",
-]);
 /** Exact catalog properties, never a substring of descriptions or limitations. */
 export function meetsFeature(product: Product, feature: string) {
   const key = normalized(feature);
-  if (key === "wood" || key === "wooden")
-    return woodenMaterials.has(product.material);
+  if (matchesMaterial(product.material, key)) return true;
   return (
     normalized(product.material) === key ||
     product.features.some((value) => normalized(value) === key)

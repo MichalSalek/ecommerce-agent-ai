@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FunctionalGroup } from "./functional-groups";
 export const productSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -21,6 +22,7 @@ export const productSchema = z.object({
 export type Product = z.infer<typeof productSchema>;
 export interface ProductSearch {
   query: string;
+  functionalGroup?: FunctionalGroup;
   maxPrice?: number;
   targetPrice?: number;
   category?: string;

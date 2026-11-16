@@ -50,7 +50,7 @@ export function ProductResults({
     evidence &&
     (outcomeText[evidence.outcome] ||
       (found.length < evidence.requestedCount
-        ? `You requested ${evidence.requestedCount} products. ${evidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
+        ? `${evidence.requestedCount >= 1000 ? "Showing a batch from the matching collection." : `You requested ${evidence.requestedCount} products.`} ${evidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
         : ""));
   return (
     <div className="product-results">

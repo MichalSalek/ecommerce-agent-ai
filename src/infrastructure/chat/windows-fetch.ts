@@ -1,4 +1,34 @@
 import { spawn } from "node:child_process";
+export function parseWindowsCurlResponse(output: string): Response {
+  const statusMarker = "\nAURELLE_STATUS:",
+    headerMarker = "\nAURELLE_HEADERS:";
+  const cut = output.lastIndexOf(statusMarker),
+    headerAt = output.lastIndexOf(headerMarker);
+  if (cut < 0 || headerAt <= cut)
+    throw new Error("Invalid balancer HTTP response.");
+  const status = Number(
+    output.slice(cut + statusMarker.length, headerAt).trim(),
+  );
+  if (!Number.isInteger(status) || status < 200 || status > 599)
+    throw new Error("Invalid balancer HTTP status.");
+  let values: unknown;
+  try {
+    values = JSON.parse(output.slice(headerAt + headerMarker.length));
+  } catch {
+    throw new Error("Invalid balancer response headers.");
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (values && typeof values === "object")
+    for (const [key, value] of Object.entries(values)) {
+      if (
+        !/^(?:content-type|retry-after|x-ratelimit-.+|ratelimit-.+)$/i.test(key)
+      )
+        continue;
+      const last = Array.isArray(value) ? value.at(-1) : value;
+      if (typeof last === "string") headers.set(key, last);
+    }
+  return new Response(output.slice(0, cut), { status, headers });
+}
 // Explicit WSL transport: curl runs in Windows, where the loopback-only balancer lives.
 export const windowsFetch: typeof fetch = async (input, init) => {
   const url = String(input);
@@ -22,7 +52,7 @@ export const windowsFetch: typeof fetch = async (input, init) => {
       "--data-binary",
       "@-",
       "--write-out",
-      "\n%{http_code}",
+      "\nAURELLE_STATUS:%{http_code}\nAURELLE_HEADERS:%{header_json}",
     ];
     new Headers(init.headers).forEach((value, key) =>
       args.push("--header", `${key}: ${value}`),
@@ -72,18 +102,11 @@ export const windowsFetch: typeof fetch = async (input, init) => {
         reject(new Error("Cannot reach the Windows Groq balancer."));
         return;
       }
-      const cut = output.lastIndexOf("\n");
-      const status = Number(output.slice(cut + 1).trim());
-      if (status < 100 || status > 599) {
-        reject(new Error("Invalid balancer HTTP response."));
-        return;
+      try {
+        resolve(parseWindowsCurlResponse(output));
+      } catch (error) {
+        reject(error);
       }
-      resolve(
-        new Response(output.slice(0, cut), {
-          status,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
     });
     child.stdin.end(init.body);
   });

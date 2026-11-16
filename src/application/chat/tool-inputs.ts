@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { functionalGroupNames } from "@/domain/catalog/functional-groups";
 export const searchInput = z.object({
   query: z.string().trim().max(300),
+  functionalGroup: z.enum(functionalGroupNames).optional(),
   maxPrice: z.number().finite().nonnegative().optional(),
   targetPrice: z.number().finite().nonnegative().optional(),
   category: z.string().max(80).optional(),

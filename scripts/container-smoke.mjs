@@ -74,7 +74,7 @@ function parseSSE(raw) {
     .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
     .map((line) => JSON.parse(line.slice(6)));
 }
-async function search(base, phase) {
+async function search(base, phase, semanticCoffee = false) {
   const started = performance.now();
   const response = await fetch(`${base}/api/chat`, {
     method: "POST",
@@ -86,7 +86,14 @@ async function search(base, phase) {
         {
           id: crypto.randomUUID(),
           role: "user",
-          parts: [{ type: "text", text: "Show me ten products" }],
+          parts: [
+            {
+              type: "text",
+              text: semanticCoffee
+                ? "[fixture-semantic-coffee] Find products for my morning coffee"
+                : "Show me ten products",
+            },
+          ],
         },
       ],
     }),
@@ -104,10 +111,65 @@ async function search(base, phase) {
     `${phase}: incomplete turn`,
   );
   const result = events.find((event) => event.type === "data-products")?.data;
-  assert.equal(result?.products.length, 10, `${phase}: ten cards`);
-  assert.equal(result.totalMatches, 86, `${phase}: canonical catalog size`);
-  assert.equal(result.remainingMatches, 76);
-  assert.equal(new Set(result.products.map((item) => item.id)).size, 10);
+  assert.ok(
+    result && Array.isArray(result.products),
+    `${phase}: missing result`,
+  );
+  const count = result.products.length;
+  assert.equal(new Set(result.products.map((item) => item.id)).size, count);
+  if (semanticCoffee) {
+    assert.equal(
+      result.appliedCriteria.query,
+      "morning coffee",
+      `${phase}: semantic query missing`,
+    );
+    assert.deepEqual(result.appliedCriteria.productTypes, [
+      "mug",
+      "carafe",
+      "coffee-dripper",
+      "coffee-grinder",
+      "kettle",
+      "scale",
+    ]);
+    assert.ok(count >= 1 && count <= 10, `${phase}: expected 1 to 10 cards`);
+    const coffeeIds = new Set([
+      "mugs",
+      "carafe",
+      "travel-mug",
+      "pour-over-dripper",
+      "coffee-grinder",
+      "digital-coffee-scale",
+      "gooseneck-kettle",
+    ]);
+    assert.ok(
+      result.products.some((item) => coffeeIds.has(item.id)),
+      `${phase}: no known coffee product`,
+    );
+    for (const field of [
+      "scopeTotal",
+      "totalMatches",
+      "unseenMatches",
+      "remainingMatches",
+    ])
+      assert.ok(
+        Number.isInteger(result[field]) && result[field] >= 0,
+        `${phase}: invalid ${field}`,
+      );
+    assert.ok(
+      result.totalMatches <= result.scopeTotal &&
+        result.unseenMatches <= result.totalMatches,
+      `${phase}: invalid counts`,
+    );
+    assert.equal(
+      result.remainingMatches,
+      result.unseenMatches - (result.newlyShownCount ?? count),
+      `${phase}: invalid remaining count`,
+    );
+  } else {
+    assert.equal(count, 10, `${phase}: ten cards`);
+    assert.equal(result.totalMatches, 86, `${phase}: canonical catalog size`);
+    assert.equal(result.remainingMatches, 76);
+  }
   assert.ok(events.some((event) => event.type === "data-shoppingState"));
   console.log(
     `[VERIFY] ${phase} finished in ${((performance.now() - started) / 1000).toFixed(1)}s`,
@@ -155,8 +217,8 @@ try {
       assert.ok(response.headers.get("content-type")?.startsWith("image/"));
   }
   await Promise.all([
-    search(base, "cold concurrent 1"),
-    search(base, "cold concurrent 2"),
+    search(base, "cold structural ten cards"),
+    search(base, "cold semantic coffee", true),
   ]);
   memoryPeak("cold concurrent requests");
   run(

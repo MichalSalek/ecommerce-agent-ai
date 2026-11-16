@@ -193,3 +193,204 @@ test("bulk cart receipt follows successful storage and survives reload", async (
   await expect(page.getByText("2 × Ceramic mugs")).toBeVisible();
   await expect(page.getByText("1 × Glass carafe")).toBeVisible();
 });
+
+async function blockCartWrites(page: Page) {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("test.blockCart") === null)
+      sessionStorage.setItem("test.blockCart", "yes");
+    const write = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (
+        key === "aurelle.cart.v1" &&
+        sessionStorage.getItem("test.blockCart") === "yes"
+      )
+        throw new DOMException("Quota exceeded", "QuotaExceededError");
+      return write.call(this, key, value);
+    };
+  });
+}
+
+function mockCartAction(page: Page) {
+  let calls = 0;
+  let operationId = "";
+  const install = page.route("**/api/chat", async (route) => {
+    calls++;
+    const body = route.request().postDataJSON();
+    const userMessageId = body.messages
+      .filter((message: { role: string }) => message.role === "user")
+      .at(-1).id;
+    operationId = `${body.conversationId}:${userMessageId}`;
+    const items = [
+      { productId: "mugs", quantity: 2 },
+      { productId: "carafe", quantity: 1 },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers,
+      body: answer([
+        { type: "text-start", id: "reply" },
+        { type: "text-delta", id: "reply", delta: "Your selection is ready." },
+        { type: "text-end", id: "reply" },
+        {
+          type: "data-cartAction",
+          data: { operationId, userMessageId, ...items[0], items },
+        },
+      ]),
+    });
+  });
+  return { install, calls: () => calls, operationId: () => operationId };
+}
+
+test("failed bulk cart save can be retried once with the same operation", async ({
+  page,
+}) => {
+  await blockCartWrites(page);
+  const api = mockCartAction(page);
+  await api.install;
+  await page.goto("/chat");
+  await send(page, "Add two mugs and a carafe");
+  await expect(page.getByText(/cart could not be saved/)).toBeVisible();
+  expect(
+    await page.evaluate(() => localStorage.getItem("aurelle.cart.v1")),
+  ).toBeNull();
+  await page.evaluate(() => sessionStorage.setItem("test.blockCart", "no"));
+  await page.getByRole("button", { name: "Retry adding to cart" }).click();
+  await expect(page.getByText("2 × Ceramic mugs")).toBeVisible();
+  await expect(page.getByText("1 × Glass carafe")).toBeVisible();
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("aurelle.cart.v1")!),
+  );
+  expect(saved.lines).toEqual([
+    { productId: "mugs", quantity: 2 },
+    { productId: "carafe", quantity: 1 },
+  ]);
+  expect(saved.executedOperations).toEqual([api.operationId()]);
+  expect(saved.receipts[0].operationId).toBe(api.operationId());
+  expect(api.calls()).toBe(1);
+  await page.reload();
+  await expect(page.getByText("2 × Ceramic mugs")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry adding to cart" }),
+  ).toHaveCount(0);
+  expect(api.calls()).toBe(1);
+});
+
+test("restoring a failed cart action never replays it", async ({ page }) => {
+  await blockCartWrites(page);
+  const api = mockCartAction(page);
+  await api.install;
+  await page.goto("/chat");
+  await send(page, "Add two mugs and a carafe");
+  await expect(
+    page.getByRole("button", { name: "Retry adding to cart" }),
+  ).toBeVisible();
+  await page.evaluate(() => sessionStorage.setItem("test.blockCart", "no"));
+  await page.reload();
+  await expect(page.getByText("Your selection is ready.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry adding to cart" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(() => localStorage.getItem("aurelle.cart.v1")),
+  ).toBeNull();
+  expect(api.calls()).toBe(1);
+});
+
+test("a cart ledger entry wins over manual retry", async ({ page }) => {
+  await blockCartWrites(page);
+  const api = mockCartAction(page);
+  await api.install;
+  await page.goto("/chat");
+  await send(page, "Add two mugs and a carafe");
+  await expect(
+    page.getByRole("button", { name: "Retry adding to cart" }),
+  ).toBeVisible();
+  await page.evaluate((operationId) => {
+    sessionStorage.setItem("test.blockCart", "no");
+    const saved = JSON.stringify({
+      version: 1,
+      lines: [
+        { productId: "mugs", quantity: 2 },
+        { productId: "carafe", quantity: 1 },
+      ],
+      executedOperations: [operationId],
+      receipts: [],
+    });
+    localStorage.setItem("aurelle.cart.v1", saved);
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "aurelle.cart.v1", newValue: saved }),
+    );
+  }, api.operationId());
+  await page.getByRole("button", { name: "Retry adding to cart" }).click();
+  await expect(
+    page.getByText("This request was already processed."),
+  ).toBeVisible();
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("aurelle.cart.v1")!),
+  );
+  expect(saved.lines).toEqual([
+    { productId: "mugs", quantity: 2 },
+    { productId: "carafe", quantity: 1 },
+  ]);
+  expect(saved.executedOperations).toEqual([api.operationId()]);
+  expect(api.calls()).toBe(1);
+});
+
+test("a partial twentieth response can retry the same user turn", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    if (localStorage.getItem("aurelle.conversation.v1")) return;
+    const messages = Array.from({ length: 20 }, (_, i) => [
+      {
+        id: `u-${i}`,
+        role: "user",
+        parts: [{ type: "text", text: `Question ${i}` }],
+      },
+      {
+        id: `a-${i}`,
+        role: "assistant",
+        parts: [
+          {
+            type: "text",
+            text: i === 19 ? "The response is incomplete." : "Earlier reply.",
+          },
+          ...(i === 19
+            ? [{ type: "data-turnStatus", data: { status: "partial" } }]
+            : []),
+        ],
+      },
+    ]).flat();
+    localStorage.setItem(
+      "aurelle.conversation.v1",
+      JSON.stringify({ version: 1, id: "partial20", draft: "", messages }),
+    );
+  });
+  let calls = 0;
+  await page.route("**/api/chat", async (route) => {
+    const body = route.request().postDataJSON();
+    calls++;
+    expect(
+      body.messages.filter((m: { role: string }) => m.role === "user"),
+    ).toHaveLength(20);
+    expect(body.messages.at(-1).id).toBe("u-19");
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers,
+      body: answer([
+        { type: "text-start", id: "reply" },
+        { type: "text-delta", id: "reply", delta: "Recovered final response." },
+        { type: "text-end", id: "reply" },
+      ]),
+    });
+  });
+  await page.goto("/chat");
+  await expect(page.getByRole("textbox")).toBeDisabled();
+  await page.getByRole("button", { name: "Retry last message" }).click();
+  await expect(page.getByText("Recovered final response.")).toBeVisible();
+  expect(calls).toBe(1);
+  await page.reload();
+  await expect(page.getByText("Recovered final response.")).toBeVisible();
+});

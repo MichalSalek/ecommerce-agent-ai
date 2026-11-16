@@ -16,11 +16,24 @@ const server = http.createServer(async (req, res) => {
     let name, args;
     if (!toolMessage) {
       name = "searchProducts";
+      const current = [...request.messages]
+        .reverse()
+        .find((m) => m.role === "user");
+      const semanticCoffee =
+        typeof current?.content === "string" &&
+        current.content.includes("[fixture-semantic-coffee]");
       args = {
+        mode: "recommend",
         operation: "new",
         language: "en",
-        criteria: {},
+        criteria: semanticCoffee
+          ? {
+              query: "morning coffee",
+              functionalGroup: "coffee",
+            }
+          : {},
         requestedCount: 10,
+        continueWith: "presentAnswer",
       };
     } else {
       const content =
@@ -33,7 +46,7 @@ const server = http.createServer(async (req, res) => {
         throw new Error("Expected native search tool result");
       name = "presentAnswer";
       args = {
-        text: "Here are ten products from the collection.",
+        text: "Here are products from the collection.",
         language: "en",
         evidenceIds: [output.evidenceId],
         productIds: output.products.map((p) => p.id),

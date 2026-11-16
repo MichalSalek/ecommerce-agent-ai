@@ -36,7 +36,41 @@ const transition = (
   criteria: Transition["criteria"] = {},
   extra: Partial<Transition> = {},
 ): Transition => ({ operation, language: "en", criteria, ...extra });
-const call = (name: string, input: unknown): Call => ({ name, input });
+// Convert trusted fixture criteria into native facets without manufacturing user quotes.
+const nativeTransition = (
+  operation: Transition["operation"],
+  criteria: Transition["criteria"] = {},
+  extra: Partial<Transition> = {},
+) => {
+  const {
+    productKind,
+    productType,
+    productTypes,
+    excludeTypes,
+    category,
+    categoryExplicit: _categoryExplicit,
+    ...modelCriteria
+  } = criteria;
+  const explicitFilters = [
+    ...(productKind ? [{ facet: "kind", value: productKind }] : []),
+    ...(productType ? [{ facet: "type", value: productType }] : []),
+    ...(productTypes ?? []).map((value) => ({ facet: "type", value })),
+    ...(excludeTypes ?? []).map((value) => ({ facet: "excludeType", value })),
+    ...(category ? [{ facet: "category", value: category }] : []),
+  ];
+  return {
+    ...transition(operation, modelCriteria, extra),
+    explicitFilters,
+    continueWith: "presentAnswer" as const,
+  };
+};
+const call = (name: string, input: unknown): Call => ({
+  name,
+  input:
+    name === "searchProducts" && input && typeof input === "object"
+      ? { mode: "recommend", ...input }
+      : input,
+});
 const lastTool = (messages: any[]) => {
   const message = [...messages].reverse().find((m) => m.role === "tool");
   return JSON.parse(message.content);
@@ -151,6 +185,806 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     ),
   );
   try {
+    await t.test(
+      "independent product lookups compare without replacing the active garden search",
+      async () => {
+        const state = {
+          ...initialAgentState(),
+          criteria: {
+            productKind: "furniture",
+            useEnvironment: "outdoor" as const,
+            maxPrice: 150,
+          },
+          requestedCount: 4,
+          shownIds: ["garden-bench", "folding-garden-chair"],
+          lastIds: ["garden-bench", "folding-garden-chair"],
+        };
+        const action = run(
+          catalog,
+          [
+            call("searchProducts", {
+              ...nativeTransition("new", { productType: "mug" }),
+              mode: "lookup",
+            }),
+            call("searchProducts", {
+              ...nativeTransition("new", { productType: "carafe" }),
+              mode: "lookup",
+            }),
+            call("compareProducts", { productIds: ["mugs", "carafe"] }),
+            (m) =>
+              present(m, {
+                view: "comparison",
+                evidenceIds: ["e1", "e2", "e3"],
+              }),
+          ],
+          "Compare the mugs and carafe",
+          state,
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 4);
+        assert.equal(action.mock.requests[1].tool_choice, "required");
+        assert.equal(action.mock.requests[2].tool_choice, "required");
+        assert.deepEqual(action.mock.requests[3].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        assert.deepEqual(
+          result.evidence.map((e) => e.tool),
+          ["searchProducts", "searchProducts", "compareProducts"],
+        );
+        assert.ok(result.evidence[0].productIds.includes("mugs"));
+        assert.ok(result.evidence[1].productIds.includes("carafe"));
+        assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+        assert.deepEqual(result.presentation.productIds, ["mugs", "carafe"]);
+        assert.deepEqual(result.checkpoint.after.criteria, state.criteria);
+        assert.deepEqual(result.checkpoint.after.shownIds, state.shownIds);
+        assert.equal(
+          result.checkpoint.after.requestedCount,
+          state.requestedCount,
+        );
+        assert.deepEqual(result.checkpoint.after.comparisonIds, [
+          "mugs",
+          "carafe",
+        ]);
+        assert.deepEqual(result.checkpoint.after.lastIds, ["mugs", "carafe"]);
+        assert.equal(result.checkpoint.transition, undefined);
+        for (const contract of [undefined, "shopping-v2"] as const) {
+          const events = await collect(
+            createNativeAgentStream(
+              action.mock.runtime,
+              catalog,
+              action.turn,
+              new AbortController().signal,
+              { contract },
+            ),
+          );
+          const outputs = events.filter(
+            (event) => event.type === "tool-output-available",
+          );
+          assert.ok(
+            outputs.some(
+              (event) =>
+                Array.isArray(event.output) &&
+                event.output.some(
+                  (product: { id: string }) => product.id === "mugs",
+                ),
+            ),
+          );
+          assert.ok(
+            outputs.some(
+              (event) =>
+                Array.isArray(event.output) &&
+                event.output.some(
+                  (product: { id: string }) => product.id === "carafe",
+                ),
+            ),
+          );
+        }
+      },
+    );
+    await t.test(
+      "generic furniture and seating refinement retain canonical group scope",
+      async () => {
+        const initial = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition(
+                "new",
+                {
+                  productKind: "furniture",
+                  useEnvironment: "outdoor",
+                  maxPrice: 150,
+                },
+                { requestedCount: 10 },
+              ),
+            ),
+            present,
+          ],
+          "Show outdoor furniture under 150 EUR",
+        ).result;
+        assert.equal(initial.status.status, "complete");
+        assert.equal(initial.search?.totalMatches, 4);
+        assert.ok(
+          initial.search?.products.some((p) => p.id === "outdoor-bistro-table"),
+        );
+        const expected = new Set([
+          "folding-garden-chair",
+          "garden-bench",
+          "sun-lounger",
+        ]);
+        const next = nativeTransition("refine", { functionalGroup: "seating" });
+        const seated = await run(
+          catalog,
+          [call("searchProducts", next), present],
+          "I need something to sit on",
+          initial.checkpoint.after,
+        ).result;
+        assert.equal(seated.search?.totalMatches, 3);
+        assert.deepEqual(
+          new Set(seated.search?.products.map((p) => p.id)),
+          expected,
+        );
+        assert.ok(
+          seated.search?.products.every((p) =>
+            initial.presentation.productIds.includes(p.id),
+          ),
+        );
+        const narrow = {
+          ...next,
+          explicitFilters: [
+            { facet: "type", value: "sofa" },
+            { facet: "type", value: "stool" },
+          ],
+        };
+        const corrected = await run(
+          catalog,
+          [
+            call("searchProducts", narrow),
+            call("searchProducts", next),
+            present,
+          ],
+          "I need something to sit on",
+          initial.checkpoint.after,
+        ).result;
+        assert.equal(
+          (corrected.evidence[0].output as any).code,
+          "UNGROUNDED_FACET",
+        );
+        assert.equal(corrected.search?.totalMatches, 3);
+        assert.deepEqual(
+          new Set(corrected.search?.products.map((p) => p.id)),
+          expected,
+        );
+        const sofas = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("refine", { productType: "sofa" }),
+            ),
+            (m) =>
+              present(m, {
+                claim: "no-match",
+                productIds: [],
+                view: "products",
+              }),
+          ],
+          "Only sofas, still under 150",
+          initial.checkpoint.after,
+        ).result;
+        assert.equal(sofas.search?.outcome, "no-match");
+        assert.equal(sofas.search?.totalMatches, 0);
+        const noBenches = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("refine", { excludeTypes: ["bench"] }),
+            ),
+            present,
+          ],
+          "No benches",
+          seated.checkpoint.after,
+        ).result;
+        assert.equal(noBenches.search?.totalMatches, 2);
+        assert.ok(
+          noBenches.search?.products.every((p) => p.id !== "garden-bench"),
+        );
+        const ungrounded = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("refine", { excludeTypes: ["bench"] }),
+            ),
+            call("searchProducts", nativeTransition("refine", {})),
+            present,
+          ],
+          "I like this seating",
+          seated.checkpoint.after,
+        ).result;
+        assert.equal(
+          (ungrounded.evidence[0].output as any).code,
+          "UNGROUNDED_FACET",
+        );
+        assert.equal(ungrounded.search?.totalMatches, 3);
+      },
+    );
+    await t.test(
+      "cart proposal is not a browser-confirmed addition",
+      async () => {
+        const result = await run(
+          catalog,
+          [
+            call("proposeCart", {
+              selection: "first",
+              items: [{ productId: "mugs", quantity: 1 }],
+            }),
+            call("presentAnswer", {
+              text: "Added to your cart.",
+              language: "en",
+              evidenceIds: ["e1"],
+              productIds: [],
+              view: "none",
+            }),
+            call("presentAnswer", {
+              text: "Your device will confirm after saving.",
+              language: "en",
+              evidenceIds: ["e1"],
+              productIds: [],
+              view: "none",
+            }),
+          ],
+          "Add the first item to my cart",
+          { ...initialAgentState(), lastIds: ["mugs", "carafe"] },
+        ).result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(result.answer, "Your device will confirm after saving.");
+        assert.equal(result.cart?.productId, "mugs");
+      },
+    );
+    await t.test(
+      "valid model confirmation keeps its text without forcing repeated cards",
+      async () => {
+        const action = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("refine", { inStockOnly: true }),
+            ),
+            (m) =>
+              present(m, {
+                text: "These products are in stock.",
+                view: "none",
+                productIds: [],
+              }),
+          ],
+          "Check availability",
+          {
+            ...initialAgentState(),
+            criteria: { productKind: "furniture", useEnvironment: "outdoor" },
+            lastIds: ["garden-bench"],
+          },
+        ).result;
+        assert.equal(action.status.status, "complete");
+        assert.equal(action.answer, "These products are in stock.");
+        assert.equal(action.presentation.view, "none");
+        const page = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("new", {}, { requestedCount: 5 }),
+            ),
+            (m) =>
+              present(m, {
+                productIds: lastTool(m)
+                  .products.slice(0, 2)
+                  .map((p: any) => p.id),
+              }),
+          ],
+          "Show five products",
+        ).result;
+        assert.equal(page.status.status, "complete");
+        assert.equal(page.presentation.productIds.length, 5);
+      },
+    );
+    await t.test(
+      "shown IDs require explicit current-user evidence before rejection",
+      async () => {
+        const state = {
+          ...initialAgentState(),
+          criteria: {
+            productKind: "furniture",
+            useEnvironment: "outdoor" as const,
+          },
+          shownIds: ["garden-bench", "folding-garden-chair"],
+          lastIds: ["garden-bench", "folding-garden-chair"],
+        };
+        const accidental = await run(
+          catalog,
+          [
+            call("searchProducts", {
+              ...nativeTransition("refine", {}),
+              rejectedIds: state.shownIds,
+              rejections: [
+                {
+                  productId: "garden-bench",
+                  userQuote: "I need something to sit on",
+                },
+              ],
+            }),
+            present,
+          ],
+          "I need something to sit on",
+          state,
+        ).result;
+        assert.equal(accidental.status.status, "complete");
+        assert.deepEqual(accidental.checkpoint.after.rejectedIds, []);
+        assert.equal(accidental.search?.totalMatches, 6);
+        const rejected = await run(
+          catalog,
+          [
+            call("searchProducts", {
+              ...nativeTransition("refine", {}),
+              rejections: [
+                { productId: "garden-bench", userQuote: "not the bench" },
+                {
+                  productId: "folding-garden-chair",
+                  userQuote: "not the bench",
+                },
+              ],
+            }),
+            present,
+          ],
+          "Anything but not the bench",
+          state,
+        ).result;
+        assert.deepEqual(rejected.checkpoint.after.rejectedIds, [
+          "garden-bench",
+        ]);
+        assert.ok(
+          rejected.search?.products.every((row) => row.id !== "garden-bench"),
+        );
+      },
+    );
+    await t.test(
+      "unverified discounts and free goods never become catalog advice",
+      async () => {
+        for (const text of [
+          "There is a 4% discount.",
+          "These products are free.",
+          "Use promo code AURELLE.",
+        ]) {
+          const action = await run(
+            catalog,
+            [
+              call("getPolicy", { topic: "delivery" }),
+              (m) => present(m, { text, view: "none", productIds: [] }),
+              (m) =>
+                present(m, {
+                  text: "Delivery costs EUR 4.",
+                  view: "none",
+                  productIds: [],
+                  evidenceIds: ["e1"],
+                }),
+            ],
+            "Invent a special offer",
+          ).result;
+          assert.equal(action.status.status, "complete");
+          assert.equal(action.answer, "Delivery costs EUR 4.");
+        }
+      },
+    );
+    await t.test(
+      "new referenced recommendations and comparisons retain canonical presentation",
+      async () => {
+        const page = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("new", {
+                productKind: "gardening",
+                useEnvironment: "outdoor",
+              }),
+            ),
+            (m) => present(m, { view: "none" }),
+          ],
+          "Co macie do ogrodnictwa w ogrodzie?",
+        ).result;
+        assert.equal(page.presentation.view, "products");
+        assert.equal(page.presentation.productIds.length, 5);
+        const compared = await run(
+          catalog,
+          [
+            call("compareProducts", { productIds: ["mugs", "carafe"] }),
+            (m) => present(m, { view: "none", productIds: [] }),
+          ],
+          "compare mugs and carafe",
+        ).result;
+        assert.equal(compared.presentation.view, "comparison");
+        assert.deepEqual(compared.presentation.productIds, ["mugs", "carafe"]);
+      },
+    );
+    await t.test(
+      "Polish encoder input is corrected before executing a catalog search",
+      async () => {
+        const result = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition(
+                "new",
+                {
+                  query: "poranna kawa",
+                  functionalGroup: "coffee",
+                },
+                { language: "pl" },
+              ),
+            ),
+            call(
+              "searchProducts",
+              nativeTransition(
+                "new",
+                {
+                  query: "morning coffee",
+                  functionalGroup: "coffee",
+                },
+                { language: "pl" },
+              ),
+            ),
+            (m) =>
+              present(m, {
+                language: "pl",
+                text: "Oto propozycje do porannej kawy.",
+              }),
+          ],
+          "Szukam czegoś do porannej kawy",
+        ).result;
+        assert.equal(result.status.status, "complete");
+        assert.equal((result.evidence[0].output as any).code, "QUERY_LANGUAGE");
+        assert.equal(result.search?.appliedCriteria.query, "morning coffee");
+        assert.equal(result.search?.products.length, 5);
+        assert.equal(result.search?.appliedCriteria.functionalGroup, "coffee");
+        assert.ok(
+          result.search?.products.every(
+            (p) => !["tea-infuser", "toothbrush-cup"].includes(p.id),
+          ),
+        );
+        const english = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition("new", {
+                query: "morning coffee",
+                functionalGroup: "coffee",
+              }),
+            ),
+            present,
+          ],
+          "I need something for morning coffee",
+        ).result;
+        assert.equal(english.status.status, "complete");
+        assert.equal(english.search?.appliedCriteria.functionalGroup, "coffee");
+        assert.ok(english.search?.products.length);
+        assert.ok(
+          english.search?.products.every(
+            (p) => !["tea-infuser", "toothbrush-cup"].includes(p.id),
+          ),
+        );
+      },
+    );
+    await t.test(
+      "compound search and comparison use consecutive native reads",
+      async () => {
+        const action = run(
+          catalog,
+          [
+            call("searchProducts", {
+              ...nativeTransition(
+                "new",
+                { productKind: "furniture", useEnvironment: "outdoor" },
+                { requestedCount: 4 },
+              ),
+              continueWith: "compareProducts",
+            }),
+            (messages) =>
+              call("compareProducts", {
+                productIds: lastTool(messages).products.map(
+                  (p: { id: string }) => p.id,
+                ),
+              }),
+            (messages) =>
+              present(messages, {
+                view: "comparison",
+                evidenceIds: ["e1", "e2"],
+              }),
+          ],
+          "find four outdoor furniture items and compare them",
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 3);
+        assert.equal(action.mock.requests[1].tool_choice, "required");
+        assert.ok(
+          action.mock.requests[1].tools.some(
+            (tool: any) => tool.function.name === "compareProducts",
+          ),
+        );
+        assert.deepEqual(
+          result.evidence.map((e) => e.tool),
+          ["searchProducts", "compareProducts"],
+        );
+        assert.deepEqual(
+          result.comparison?.productIds,
+          result.search?.products.map((p) => p.id),
+        );
+        assert.ok(
+          result.comparison?.productIds.every((id) =>
+            products.some((p) => p.id === id),
+          ),
+        );
+        assert.equal(result.checkpoint.transition?.operation, "new");
+        assert.equal(result.checkpoint.after.criteria.productKind, "furniture");
+        assert.equal(
+          result.checkpoint.after.criteria.useEnvironment,
+          "outdoor",
+        );
+      },
+    );
+    await t.test(
+      "compound category overview and search use consecutive native reads",
+      async () => {
+        const action = run(
+          catalog,
+          [
+            call("getCategories", { continueWith: "searchProducts" }),
+            call(
+              "searchProducts",
+              nativeTransition(
+                "new",
+                { category: "Garden" },
+                { requestedCount: 4 },
+              ),
+            ),
+            (messages) => present(messages, { evidenceIds: ["e1", "e2"] }),
+          ],
+          "what categories are there and show four items in the Garden category",
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 3);
+        assert.equal(action.mock.requests[1].tool_choice, "required");
+        assert.ok(
+          action.mock.requests[1].tools.some(
+            (tool: any) => tool.function.name === "searchProducts",
+          ),
+        );
+        assert.deepEqual(
+          result.evidence.map((e) => e.tool),
+          ["getCategories", "searchProducts"],
+        );
+        assert.equal(result.categories?.length, 10);
+        assert.equal(result.search?.products.length, 4);
+        assert.ok(
+          result.search?.products.every(
+            ({ id }) =>
+              products.find((p) => p.id === id)?.category === "Garden",
+          ),
+        );
+        assert.equal(result.checkpoint.transition?.operation, "new");
+      },
+    );
+    await t.test(
+      "cart stream contracts preserve legacy manual cards and atomic v3",
+      async () => {
+        const two = [
+          { productId: "mugs", quantity: 1 },
+          { productId: "carafe", quantity: 1 },
+        ];
+        for (const contract of [
+          undefined,
+          "shopping-v2",
+          "shopping-v3",
+        ] as const) {
+          const mock = scripted([
+            call("proposeCart", { selection: "both", items: two }),
+            (m) =>
+              present(m, {
+                view: "none",
+                productIds: [],
+                text: "Your device will confirm.",
+              }),
+          ]);
+          const events = await collect(
+            createNativeAgentStream(
+              mock.runtime,
+              catalog,
+              {
+                text: "add both to my cart",
+                state: { ...initialAgentState(), lastIds: ["mugs", "carafe"] },
+                userMessageId: `cart-contract-${++sequence}`,
+                conversationId: `visitor-${sequence}`,
+              },
+              new AbortController().signal,
+              { contract },
+            ),
+          );
+          const actions = events.filter((e) => e.type === "data-cartAction");
+          if (contract === "shopping-v3") {
+            assert.equal(actions.length, 1);
+            const action = actions[0];
+            assert.ok(action.type === "data-cartAction");
+            assert.deepEqual(action.data.items, two);
+          } else {
+            assert.equal(actions.length, 0);
+            const manual = events.find(
+              (e) =>
+                e.type === "tool-output-available" &&
+                e.toolCallId === "manual-cart",
+            );
+            assert.ok(
+              manual?.type === "tool-output-available" &&
+                Array.isArray(manual.output),
+            );
+            assert.deepEqual(
+              new Set(manual.output.map((p: { id: string }) => p.id)),
+              new Set(["mugs", "carafe"]),
+            );
+            assert.ok(
+              events.some(
+                (e) =>
+                  e.type === "text-delta" && e.delta.includes("Add to cart"),
+              ),
+            );
+          }
+        }
+        const mock = scripted([
+          call("proposeCart", {
+            selection: "first",
+            items: [{ productId: "mugs", quantity: 2 }],
+          }),
+          (m) =>
+            present(m, {
+              view: "none",
+              productIds: [],
+              text: "Your device will confirm.",
+            }),
+        ]);
+        const events = await collect(
+          createNativeAgentStream(
+            mock.runtime,
+            catalog,
+            {
+              text: "add two units of the first one",
+              state: { ...initialAgentState(), lastIds: ["mugs", "carafe"] },
+              userMessageId: `single-${++sequence}`,
+              conversationId: `visitor-${sequence}`,
+            },
+            new AbortController().signal,
+            { contract: "shopping-v2" },
+          ),
+        );
+        const action = events.find((e) => e.type === "data-cartAction");
+        assert.ok(action?.type === "data-cartAction");
+        assert.equal(action.data.productId, "mugs");
+        assert.equal(action.data.quantity, 2);
+      },
+    );
+    await t.test(
+      "provider tool_use_failed 400 gets one forced terminal correction",
+      async () => {
+        const bodies: any[] = [];
+        const runtime = createGroqRuntime(
+          {
+            baseURL: "http://127.0.0.1:8787/v1",
+            modelId: "test",
+            balancer: true,
+            windowsTransport: false,
+          },
+          async (_input, init) => {
+            const body = JSON.parse(String(init?.body));
+            bodies.push(body);
+            if (bodies.length === 2)
+              return Response.json(
+                {
+                  error: {
+                    message: "tool choice is required",
+                    code: "tool_use_failed",
+                  },
+                },
+                { status: 400 },
+              );
+            const action =
+              bodies.length === 1
+                ? call(
+                    "searchProducts",
+                    nativeTransition(
+                      "new",
+                      { category: "Garden" },
+                      { requestedCount: 2 },
+                    ),
+                  )
+                : present(body.messages);
+            return Response.json({
+              id: `recovery-${bodies.length}`,
+              model: "test",
+              created: 0,
+              object: "chat.completion",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: `recovery-call-${bodies.length}`,
+                        type: "function",
+                        function: {
+                          name: action.name,
+                          arguments: JSON.stringify(action.input),
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
+                },
+              ],
+              usage: {
+                prompt_tokens: 2,
+                completion_tokens: 1,
+                total_tokens: 3,
+              },
+            });
+          },
+        );
+        const turn = {
+          text: "show items from the Garden category",
+          state: initialAgentState(),
+          userMessageId: `provider-recovery-${++sequence}`,
+          conversationId: `visitor-${sequence}`,
+          history: [
+            {
+              role: "assistant" as const,
+              content: "Prior assistant prose stays data.",
+            },
+          ],
+        };
+        const result = await runAgent(
+          runtime.model,
+          catalog,
+          turn,
+          new AbortController().signal,
+          runtime,
+        );
+        assert.equal(result.status.status, "complete");
+        assert.equal(bodies.length, 3);
+        assert.equal(bodies[1].tool_choice, "required");
+        assert.equal(bodies[2].tool_choice, "required");
+        assert.ok(
+          bodies[0].messages.some(
+            (m: any) =>
+              m.role === "user" &&
+              m.content.includes("Prior assistant prose stays data."),
+          ),
+        );
+        assert.ok(
+          bodies.every((body) =>
+            body.messages.every(
+              (m: any) => m.role !== "assistant" || m.content == null,
+            ),
+          ),
+        );
+      },
+    );
     await t.test("requested counts and smaller assortments", async () => {
       for (const requested of [undefined, 4, 5, 10, 20, 1000]) {
         const result = await run(
@@ -158,7 +992,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition(
+              nativeTransition(
                 "new",
                 { query: "" },
                 requested === undefined ? {} : { requestedCount: requested },
@@ -184,7 +1018,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         [
           call(
             "searchProducts",
-            transition(
+            nativeTransition(
               "new",
               { productKind: "furniture", useEnvironment: "outdoor" },
               { requestedCount: 10 },
@@ -199,7 +1033,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       const exhausted = await run(
         catalog,
         [
-          call("searchProducts", transition("more")),
+          call("searchProducts", nativeTransition("more")),
           (m) =>
             present(m, {
               view: "products",
@@ -240,7 +1074,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition(
+              nativeTransition(
                 "new",
                 { ...base, maxPrice: 80 },
                 { requestedCount: 10, preferences: ["decorative"] },
@@ -261,7 +1095,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         const approximate = await run(
           catalog,
           [
-            call("searchProducts", transition("refine", { targetPrice: 100 })),
+            call(
+              "searchProducts",
+              nativeTransition("refine", { targetPrice: 100 }),
+            ),
             present,
           ],
           "around 100",
@@ -278,7 +1115,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition(
+              nativeTransition(
                 "change",
                 { excludeTypes: ["bench"] },
                 { remove: ["targetPrice"] },
@@ -307,18 +1144,18 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition("new", { category: "Garden", maxPrice: 50 }),
+              nativeTransition("new", { category: "Garden", maxPrice: 50 }),
             ),
             present,
           ],
-          "garden",
+          "show the Garden category under 50",
         ).result;
         const furniture = await run(
           catalog,
           [
             call(
               "searchProducts",
-              transition(
+              nativeTransition(
                 "new",
                 { productKind: "furniture", useEnvironment: "outdoor" },
                 { requestedCount: 2 },
@@ -334,7 +1171,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(furniture.checkpoint.after.criteria.maxPrice, undefined);
         const page2 = await run(
           catalog,
-          [call("searchProducts", transition("more")), present],
+          [call("searchProducts", nativeTransition("more")), present],
           "more",
           furniture.checkpoint.after,
         ).result;
@@ -363,7 +1200,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         const refined = await run(
           catalog,
           [
-            call("searchProducts", transition("refine", { maxPrice: 80 })),
+            call(
+              "searchProducts",
+              nativeTransition("refine", { maxPrice: 80 }),
+            ),
             present,
           ],
           "under 80",
@@ -375,7 +1215,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition("change", {}, { remove: ["maxPrice"] }),
+              nativeTransition("change", {}, { remove: ["maxPrice"] }),
             ),
             present,
           ],
@@ -394,7 +1234,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition("new", {
+              nativeTransition("new", {
                 productKind: "furniture",
                 useEnvironment: "outdoor",
                 requiredFeatures: ["waterproof"],
@@ -416,7 +1256,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition("new", {
+              nativeTransition("new", {
                 productKind: "furniture",
                 useEnvironment: "outdoor",
                 requiredFeatures: ["certified"],
@@ -437,7 +1277,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition(
+              nativeTransition(
                 "new",
                 {
                   productKind: "furniture",
@@ -462,11 +1302,11 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           [
             call(
               "searchProducts",
-              transition("new", { category: "Not a category" }),
+              nativeTransition("new", { category: "Not a category" }),
             ),
             call(
               "searchProducts",
-              transition(
+              nativeTransition(
                 "new",
                 { query: "a ceramic cone for brewing pour-over coffee" },
                 { requestedCount: 2 },
@@ -481,6 +1321,34 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.ok(
           fixed.search?.products.some((p) => p.id === "pour-over-dripper"),
         );
+      },
+    );
+    await t.test(
+      "policy numbers are verified before presenting advice",
+      async () => {
+        const result = await run(
+          catalog,
+          [
+            call("getPolicy", { topic: "returns" }),
+            (m) =>
+              present(m, {
+                text: "Returns are accepted within 30 days.",
+                view: "none",
+                productIds: [],
+              }),
+            (m) =>
+              present(m, {
+                text: "Returns are accepted within 14 days.",
+                view: "none",
+                productIds: [],
+                evidenceIds: ["e1"],
+              }),
+          ],
+          "What is your returns policy?",
+        ).result;
+        assert.equal(result.status.status, "complete");
+        assert.match(result.answer, /14 days/);
+        assert.doesNotMatch(result.answer, /30 days/);
       },
     );
     await t.test(
@@ -633,6 +1501,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
               operation: "not-an-operation",
               language: "en",
               criteria: {},
+              continueWith: "presentAnswer",
             }),
             call("presentAnswer", {
               text: "Please clarify.",
@@ -762,7 +1631,10 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
                         type: "function",
                         function: {
                           name: "searchProducts",
-                          arguments: JSON.stringify(transition("more")),
+                          arguments: JSON.stringify(
+                            call("searchProducts", nativeTransition("more"))
+                              .input,
+                          ),
                         },
                       },
                     ],
@@ -789,7 +1661,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         );
         assert.equal(firstPage.length, 2);
         const retry = scripted([
-          call("searchProducts", transition("more")),
+          call("searchProducts", nativeTransition("more")),
           present,
         ]);
         const result = await runAgent(
@@ -816,7 +1688,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           view: "none",
         });
         const partialModel = scripted([
-          call("searchProducts", transition("more")),
+          call("searchProducts", nativeTransition("more")),
           badAnswer,
           badAnswer,
         ]);
@@ -829,7 +1701,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         );
         assert.equal(partial.status.status, "partial");
         const correctedModel = scripted([
-          call("searchProducts", transition("more")),
+          call("searchProducts", nativeTransition("more")),
           present,
         ]);
         const corrected = await runAgent(
@@ -848,7 +1720,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       async () => {
         const action = run(
           catalog,
-          [call("searchProducts", transition("more")), present],
+          [call("searchProducts", nativeTransition("more")), present],
           "more",
           { ...initialAgentState(), shownIds: ["mugs"] },
         );
@@ -865,18 +1737,24 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         const a = run(
           catalog,
           [
-            call("searchProducts", transition("new", { category: "Kitchen" })),
+            call(
+              "searchProducts",
+              nativeTransition("new", { category: "Kitchen" }),
+            ),
             present,
           ],
-          "kitchen",
+          "show the Kitchen category",
         );
         const b = run(
           catalog,
           [
-            call("searchProducts", transition("new", { category: "Garden" })),
+            call(
+              "searchProducts",
+              nativeTransition("new", { category: "Garden" }),
+            ),
             present,
           ],
-          "garden",
+          "show the Garden category",
         );
         const [left, right] = await Promise.all([a.result, b.result]);
         assert.equal(left.search?.appliedCriteria.category, "Kitchen");
