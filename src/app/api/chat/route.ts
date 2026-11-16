@@ -10,6 +10,7 @@ import { z } from "zod";
 import { getShop } from "@/composition/shop";
 import { products } from "@/data/products";
 import { resolveChatRuntime } from "@/composition/chat";
+import { legacyButtonAction } from "@/application/chat/shopping-v3";
 import {
   createNativeAgentStream,
   stateFromMessages,
@@ -108,19 +109,22 @@ export async function POST(request: Request) {
       AbortSignal.timeout(90000),
     ]);
     const runtime = await resolveChatRuntime(signal);
+    const text = user.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    const state = stateFromMessages(normalized, user.id);
     return createUIMessageStreamResponse({
       stream: createNativeAgentStream(
         runtime,
         shop.catalog,
         {
-          text: user.parts
-            .filter((p) => p.type === "text")
-            .map((p) => p.text)
-            .join(" "),
+          text,
           userMessageId: user.id,
           conversationId: body.conversationId,
-          state: stateFromMessages(normalized, user.id),
-          action: user.metadata?.shoppingAction,
+          state,
+          action:
+            user.metadata?.shoppingAction ?? legacyButtonAction(text, state),
           cart: body.cart?.lines,
           history: normalized
             .slice(0, -1)

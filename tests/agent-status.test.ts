@@ -31,3 +31,29 @@ test("timeout and temporary provider unavailability have distinct safe statuses"
   assert.equal(unavailable.providerLimit, undefined);
   assert.doesNotMatch(JSON.stringify(unavailable), /secret provider details/);
 });
+
+test("legacy read buttons retain the last group after inspecting one product", async () => {
+  const { initialAgentState, legacyButtonAction } =
+    await import("../src/application/chat/shopping-v3");
+  const state = {
+    ...initialAgentState(),
+    lastIds: ["mugs"],
+    resultIds: ["mugs", "carafe", "travel-mug"],
+  };
+  assert.deepEqual(legacyButtonAction("Compare these products", state), {
+    type: "compare",
+    productIds: state.resultIds,
+  });
+  assert.deepEqual(
+    legacyButtonAction("Tell me more about the first product", state),
+    { type: "details", productId: "mugs" },
+  );
+  assert.equal(
+    legacyButtonAction("Add the first product to my cart", state),
+    undefined,
+  );
+  assert.equal(
+    legacyButtonAction("Compare these products except mugs", state),
+    undefined,
+  );
+});

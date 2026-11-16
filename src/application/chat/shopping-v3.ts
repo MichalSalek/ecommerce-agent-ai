@@ -244,6 +244,22 @@ export const chatMetadataSchema = z.object({
   shoppingAction: shoppingActionSchema.optional(),
 });
 export type ChatMetadata = z.infer<typeof chatMetadataSchema>;
+/** Read-only compatibility for buttons emitted before user-message metadata existed. */
+export function legacyButtonAction(
+  text: string,
+  state: AgentState,
+): ShoppingAction | undefined {
+  const group = state.resultIds.length ? state.resultIds : state.lastIds;
+  if (
+    text.trim() === "Compare these products" &&
+    group.length >= 2 &&
+    group.length <= 10
+  )
+    return shoppingActionSchema.parse({ type: "compare", productIds: group });
+  if (text.trim() === "Tell me more about the first product" && group[0])
+    return shoppingActionSchema.parse({ type: "details", productId: group[0] });
+  return undefined;
+}
 
 /** State sent by the browser is a preference hint. Product facts always come from the catalog. */
 export function sanitizeState(value: unknown): AgentState {
