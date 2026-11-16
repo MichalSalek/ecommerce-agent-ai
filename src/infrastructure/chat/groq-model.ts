@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { ChatRuntime } from "./runtime";
+import type { ChatRuntime, ModelUsage } from "./runtime";
 import { windowsFetch } from "./windows-fetch";
 export interface GroqConfig {
   baseURL: string;
@@ -84,6 +84,20 @@ function estimatedTokens(
   }
 }
 
+function isNonStreamRequest(body: BodyInit | null | undefined): boolean {
+  if (typeof body !== "string") return false;
+  try {
+    const request: unknown = JSON.parse(body);
+    return (
+      !!request &&
+      typeof request === "object" &&
+      !("stream" in request && request.stream === true)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function refill(bucket: TokenBucket, now: number) {
   bucket.remaining = Math.min(
     bucket.limit,
@@ -164,6 +178,84 @@ function rateLimitResponse(seconds?: number, upstream?: Headers): Response {
   );
 }
 
+type QuotaDiagnostic = {
+  metric: "tokens" | "requests";
+  window: "day" | "minute";
+  limit: number;
+  used: number;
+  requested: number;
+};
+
+async function quotaDiagnostic(
+  response: Response,
+): Promise<QuotaDiagnostic | undefined> {
+  if (!response.body) return undefined;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 16_384) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const body: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    const error =
+      body && typeof body === "object" && "error" in body
+        ? body.error
+        : undefined;
+    const message =
+      error && typeof error === "object" && "message" in error
+        ? error.message
+        : undefined;
+    if (typeof message !== "string") return undefined;
+    const metrics = [
+      ...message.matchAll(/\b(tokens|requests)\s+per\s+(day|minute)\b/gi),
+    ];
+    if (metrics.length !== 1) return undefined;
+    const numeric = (field: string) => {
+      const matches = [
+        ...message.matchAll(
+          new RegExp(
+            `\\b${field}\\s*:?\\s*(\\d{1,3}(?:,\\d{3})+|\\d+)(?!\\d|[.,]\\d)`,
+            "gi",
+          ),
+        ),
+      ];
+      if (matches.length !== 1) return undefined;
+      const value = Number(matches[0][1].replaceAll(",", ""));
+      return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+    };
+    const limit = numeric("limit"),
+      used = numeric("used"),
+      requested = numeric("requested");
+    if (limit === undefined || used === undefined || requested === undefined)
+      return undefined;
+    return {
+      metric: metrics[0][1].toLowerCase() as QuotaDiagnostic["metric"],
+      window: metrics[0][2].toLowerCase() as QuotaDiagnostic["window"],
+      limit,
+      used,
+      requested,
+    };
+  } catch {
+    return undefined;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export function createGroqRuntime(
   config: GroqConfig,
   fetchImplementation: typeof fetch = config.windowsTransport
@@ -174,6 +266,7 @@ export function createGroqRuntime(
 ): ChatRuntime {
   if (!config.balancer && !config.apiKey)
     throw new Error("GROQ_API_KEY is required for direct Groq access.");
+  const capturedUsage: ModelUsage[] = [];
   let transportCooldowns = cooldowns.get(fetchImplementation);
   if (!transportCooldowns) {
     transportCooldowns = new Map();
@@ -249,10 +342,67 @@ export function createGroqRuntime(
           Object.assign(current, quota, { inFlight: current.inFlight });
         } else buckets.set(key, quota);
       }
+      // Cloning leaves the response untouched for the SDK, including when its
+      // subsequent tool-choice validation rejects an otherwise billed response.
+      if (
+        isNonStreamRequest(init?.body) &&
+        /^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(
+          response.headers.get("content-type") ?? "",
+        )
+      ) {
+        try {
+          const body: unknown = await response.clone().json();
+          const usage =
+            body && typeof body === "object" && "usage" in body
+              ? body.usage
+              : undefined;
+          if (
+            usage &&
+            typeof usage === "object" &&
+            "prompt_tokens" in usage &&
+            "completion_tokens" in usage
+          ) {
+            const details =
+              "prompt_tokens_details" in usage
+                ? usage.prompt_tokens_details
+                : undefined;
+            const cached =
+              details == null
+                ? 0
+                : typeof details === "object"
+                  ? "cached_tokens" in details
+                    ? details.cached_tokens
+                    : 0
+                  : undefined;
+            const input = usage.prompt_tokens;
+            const output = usage.completion_tokens;
+            if (
+              typeof input === "number" &&
+              Number.isSafeInteger(input) &&
+              input >= 0 &&
+              typeof output === "number" &&
+              Number.isSafeInteger(output) &&
+              output >= 0 &&
+              typeof cached === "number" &&
+              Number.isSafeInteger(cached) &&
+              cached >= 0 &&
+              cached <= input
+            ) {
+              if (capturedUsage.length === 8) capturedUsage.shift();
+              capturedUsage.push({
+                inputTokens: input,
+                outputTokens: output,
+                cachedInputTokens: cached,
+              });
+            }
+          }
+        } catch {
+          // Malformed or unreadable usage never changes the provider response.
+        }
+      }
     }
     if (response.status !== 429) return response;
     const upstreamHeaders = new Headers(response.headers);
-    await response.body?.cancel().catch(() => undefined);
     const current = now();
     const deadline = retryDeadline(
       response.headers.get("retry-after"),
@@ -262,12 +412,17 @@ export function createGroqRuntime(
       const until = Math.max(deadlines.get(key) ?? 0, deadline);
       deadlines.set(key, until);
       console.info("[GROQ] provider cooldown recorded: upstream Retry-After");
-      return rateLimitResponse(
-        Math.ceil((until - current) / 1000),
-        upstreamHeaders,
-      );
     }
-    const existing = (deadlines.get(key) ?? 0) - current;
+    const diagnostic = await quotaDiagnostic(response);
+    if (diagnostic) {
+      const retry = (deadlines.get(key) ?? 0) - now();
+      console.info("[GROQ] provider quota", {
+        ...diagnostic,
+        ...(retry > 0 ? { retryAfterSeconds: Math.ceil(retry / 1000) } : {}),
+      });
+    }
+    await response.body?.cancel().catch(() => undefined);
+    const existing = (deadlines.get(key) ?? 0) - now();
     return rateLimitResponse(
       existing > 0 ? Math.ceil(existing / 1000) : undefined,
       upstreamHeaders,
@@ -296,5 +451,6 @@ export function createGroqRuntime(
       },
     },
     maxOutputTokens: 1024,
+    takeUsage: () => capturedUsage.splice(0),
   };
 }

@@ -117,3 +117,17 @@ Cloudflare scopes caching to the new hostname, excludes API requests and honors 
 
 Final cache/navigation acceptance also covers public static RSC payloads with full Next-validated `_rsc` query keys. This was added after a browser idle-wait was held by background prefetches during the first restart probe. HTML and RSC variants remain separate; invalid/missing RSC hashes reach Next for validation. After warming, three fresh browser contexts during another controlled Render restart loaded complete visible HTML/CSS/scripts/all49images in523/337/336ms, with no page or HTTP errors. API chat availability remains dependent on the origin/provider; this is not a free-tier uptime SLA.
 
+
+## Shopping-v3 candidate - 2026-11-16
+
+The candidate replaces the earlier planner with sequential native tools, typed state/checkpoints, canonical result counts, ten category cards, comparisons of up to ten products and atomic multi-item cart actions. The source includes the homepage assistant hero. Product, price, stock and policy data remain authored demo data.
+
+Final local checks passed: 119 unit/integration tests, 54 dry-agent/adapter tests, strict type checking, the production build and 23 browser E2E scenarios. The dry agent uses actual MiniLM and LanceDB with controlled model responses; browser E2E mocks the API. These checks cover the native completion boundary, canonical selection and budget evidence, foreign-currency rejection, requested page sizes, independent lookups, failed local saves, idempotent retry and additive history restoration.
+
+The actual previous application readers restored the extended v1 cart lines, operation ledger, receipts, conversation text and draft. Those reader sources are identical between the previous production commit `c299a90497a714db1e02f6a5d9ac4e14239c1f39` and the hero commit `c56bfcc` used for that check.
+
+Earlier in this candidate's development, a fresh 390px Chromium session using actual Groq compared mugs/carafe, added both with one cart operation, reloaded without a duplicate addition, visited product details and returned, opened the cart and started a new conversation without losing its lines. No page errors or horizontal overflow were observed. Later completion/evidence changes are covered by the final controlled tests; that earlier browser session does not establish final-source live acceptance.
+
+The full real-provider suite remains open. A run stopped during Polish stock refinement after repeated reads and an SDK tool-choice violation; the final source introduces planned recommendation completion, bounded protocol-error recovery and canonical current-selection evidence. A subsequent probe reached the provider's daily token quota. At 04:41:36 UTC, the sanitized upstream diagnostic reported tokens/day, limit 200,000, used 199,453, requested 2,390 and Retry-After 797 seconds. The minute quota still had capacity. This is a provider organization quota; that retry time permits another attempt and does not establish a complete quota reset. See [Groq rate-limit semantics](https://console.groq.com/docs/rate-limits).
+
+Release gates remain open: the complete bilingual provider run including the twenty-turn conversation, publication to main, exact-SHA Render deployment, final production browser/semantic acceptance, scoped cache purge/warming and ten minutes of provider observation. Production continues to identify `c299a90497a714db1e02f6a5d9ac4e14239c1f39`; no candidate deployment, provider restart, account change or quota upgrade was performed.

@@ -80,6 +80,7 @@ export const resultOutcomeSchema = z.enum([
 export const searchEvidenceSchema = z
   .object({
     evidenceId: z.string().min(1).max(150),
+    evidenceKind: z.enum(["search", "selection"]).optional(),
     products: z.array(z.object({ id: z.string().min(1).max(100) })).max(10),
     appliedCriteria: criteriaSchema,
     outcome: resultOutcomeSchema,

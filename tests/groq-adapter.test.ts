@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { APICallError, generateText } from "ai";
+import { APICallError, generateText, tool, ToolChoiceViolationError } from "ai";
+import { z } from "zod";
 import { createGroqRuntime } from "../src/infrastructure/chat/groq-model";
 test("Groq balancer uses the background route and preserves purpose attribution", async () => {
   let called = false;
@@ -361,5 +362,176 @@ test("invalid, nonpositive and past Retry-After values do not create cooldowns",
     await expectLimited(run(runtime));
     assert.equal((await run(runtime)).text, "Ready.", header);
     assert.equal(calls, 2, header);
+  }
+});
+
+test("billed usage survives an SDK tool-choice violation and drains once", async () => {
+  const fetcher: typeof fetch = async () =>
+    Response.json({
+      id: "invalid-tool-choice",
+      model: "fixture-model",
+      created: 0,
+      object: "chat.completion",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "A plain answer." },
+          finish_reason: "stop",
+        },
+      ],
+      usage: {
+        prompt_tokens: 431,
+        completion_tokens: 47,
+        prompt_tokens_details: { cached_tokens: 120 },
+      },
+    });
+  const runtime = createGroqRuntime(config, fetcher);
+  await assert.rejects(
+    generateText({
+      model: runtime.model,
+      prompt: "test",
+      tools: { expected: tool({ inputSchema: z.object({}) }) },
+      toolChoice: "required",
+      maxOutputTokens: runtime.maxOutputTokens,
+      providerOptions: runtime.providerOptions,
+      maxRetries: 0,
+    }),
+    (error: unknown) => ToolChoiceViolationError.isInstance(error),
+  );
+  assert.deepEqual(runtime.takeUsage?.(), [
+    { inputTokens: 431, outputTokens: 47, cachedInputTokens: 120 },
+  ]);
+  assert.deepEqual(runtime.takeUsage?.(), []);
+});
+
+test("malformed provider usage is ignored and captured usage is bounded", async () => {
+  for (const usage of [
+    { prompt_tokens: -1, completion_tokens: 3 },
+    { prompt_tokens: 1.5, completion_tokens: 3 },
+    {
+      prompt_tokens: 4,
+      completion_tokens: 3,
+      prompt_tokens_details: { cached_tokens: 5 },
+    },
+    {
+      prompt_tokens: 4,
+      completion_tokens: 3,
+      prompt_tokens_details: { cached_tokens: "2" },
+    },
+  ]) {
+    const fetcher: typeof fetch = async () => {
+      const body = await completion().json();
+      return Response.json({ ...body, usage });
+    };
+    const runtime = createGroqRuntime(config, fetcher);
+    await run(runtime).catch(() => undefined);
+    assert.deepEqual(runtime.takeUsage?.(), []);
+  }
+  const runtime = createGroqRuntime(config, async () => completion());
+  for (let i = 0; i < 9; i++) await run(runtime);
+  assert.equal(runtime.takeUsage?.().length, 8);
+  assert.deepEqual(runtime.takeUsage?.(), []);
+});
+
+test("429 quota diagnostics log only recognized numeric metadata", async () => {
+  const captured: unknown[][] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]) => {
+    captured.push(args);
+  };
+  try {
+    const message =
+      "Rate limit reached for model model-secret in organization org-secret on tokens per day (TPD): Limit 100,000, Used 99,500, Requested 2,000. Prompt secret-prompt. Please try again in 148 seconds.";
+    let calls = 0;
+    const fetcher: typeof fetch = async () => {
+      calls++;
+      return Response.json(
+        { error: { message } },
+        { status: 429, headers: { "retry-after": "148" } },
+      );
+    };
+    const runtime = createGroqRuntime(config, fetcher, () => 1000);
+    await expectLimited(run(runtime), "148");
+    await expectLimited(run(runtime), "148");
+    assert.equal(calls, 1);
+    const quotaLogs = captured.filter(
+      (args) => args[0] === "[GROQ] provider quota",
+    );
+    assert.equal(quotaLogs.length, 1);
+    assert.deepEqual(quotaLogs[0][1], {
+      metric: "tokens",
+      window: "day",
+      limit: 100000,
+      used: 99500,
+      requested: 2000,
+      retryAfterSeconds: 148,
+    });
+    assert.doesNotMatch(
+      JSON.stringify(captured),
+      /org-secret|model-secret|secret-prompt|fixture-only/,
+    );
+  } finally {
+    console.info = original;
+  }
+});
+
+test("ambiguous or malformed quota messages are not classified", async () => {
+  const captured: unknown[][] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]) => {
+    captured.push(args);
+  };
+  try {
+    for (const message of [
+      "tokens per day and requests per minute: Limit 100, Used 90, Requested 20",
+      "tokens per day: Limit 1.5, Used 1, Requested 1",
+      "tokens per minute: Limit 100, Used 90",
+    ]) {
+      const fetcher: typeof fetch = async () =>
+        Response.json({ error: { message } }, { status: 429 });
+      await expectLimited(run(createGroqRuntime(config, fetcher)));
+    }
+    assert.equal(
+      captured.filter((args) => args[0] === "[GROQ] provider quota").length,
+      0,
+    );
+  } finally {
+    console.info = original;
+  }
+});
+
+test("classifies each supported provider metric and window", async () => {
+  const captured: unknown[][] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]) => {
+    captured.push(args);
+  };
+  try {
+    for (const metric of ["tokens", "requests"]) {
+      for (const window of ["day", "minute"]) {
+        const fetcher: typeof fetch = async () =>
+          Response.json(
+            {
+              error: {
+                message: `${metric} per ${window}: Limit 1000, Used 900, Requested 200`,
+              },
+            },
+            { status: 429 },
+          );
+        await expectLimited(run(createGroqRuntime(config, fetcher)));
+        const entry = captured
+          .filter((args) => args[0] === "[GROQ] provider quota")
+          .at(-1);
+        assert.deepEqual(entry?.[1], {
+          metric,
+          window,
+          limit: 1000,
+          used: 900,
+          requested: 200,
+        });
+      }
+    }
+  } finally {
+    console.info = original;
   }
 });

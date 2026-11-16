@@ -59,6 +59,50 @@ test("shows all five and ten results and preserves contextual follow-ups", async
   await expect(page.getByText("Showing 10 products")).toBeVisible();
 });
 
+test("selected product cards do not show catalog search counts, including after reload", async ({
+  page,
+}) => {
+  await page.route("**/api/chat", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers,
+      body: answer([
+        {
+          type: "data-products",
+          data: {
+            evidenceId: "selection",
+            evidenceKind: "selection",
+            products: [{ id: "mugs" }],
+            appliedCriteria: {},
+            outcome: "matches",
+            requestedCount: 5,
+            scopeTotal: 1,
+            totalMatches: 1,
+            unseenMatches: 1,
+            remainingMatches: 0,
+          },
+        },
+      ]),
+    });
+  });
+  await page.goto("/chat");
+  await send(page, "Tell me about the mugs");
+  const results = page.locator(".product-results");
+  const check = async () => {
+    await expect(results.locator(".product.compact")).toHaveCount(1);
+    await expect(
+      results.getByRole("link", { name: "Ceramic mugs", exact:true }),
+    ).toBeVisible();
+    await expect(results.getByText("Showing 1 product")).toBeVisible();
+    await expect(results.locator(".result-counts")).toHaveCount(0);
+    await expect(results.locator(".result-explanation")).toHaveCount(0);
+  };
+  await check();
+  await page.reload();
+  await check();
+});
+
 test("category selection sends a chat turn and product details survive Back and reload", async ({
   page,
 }) => {

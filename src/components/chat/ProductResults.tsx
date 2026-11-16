@@ -46,11 +46,13 @@ export function ProductResults({
     return current ? [current] : [];
   });
   if (!found.length && !evidence) return null;
+  const searchEvidence =
+    evidence?.evidenceKind === "selection" ? undefined : evidence;
   const explanation =
-    evidence &&
-    (outcomeText[evidence.outcome] ||
-      (found.length < evidence.requestedCount
-        ? `${evidence.requestedCount >= 1000 ? "Showing a batch from the matching collection." : `You requested ${evidence.requestedCount} products.`} ${evidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
+    searchEvidence &&
+    (outcomeText[searchEvidence.outcome] ||
+      (found.length < searchEvidence.requestedCount
+        ? `${searchEvidence.requestedCount >= 1000 ? "Showing a batch from the matching collection." : `You requested ${searchEvidence.requestedCount} products.`} ${searchEvidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
         : ""));
   return (
     <div className="product-results">
@@ -60,14 +62,16 @@ export function ProductResults({
           Showing {found.length} {found.length === 1 ? "product" : "products"}
         </span>
       </div>
-      {evidence && (
+      {searchEvidence && (
         <div className="result-counts" aria-label="Search counts">
-          <span>In scope: {evidence.scopeTotal}</span>
-          <span>Matching: {evidence.totalMatches}</span>
+          <span>In scope: {searchEvidence.scopeTotal}</span>
+          <span>Matching: {searchEvidence.totalMatches}</span>
           <span>
-            Not yet shown before this result: {evidence.unseenMatches}
+            Not yet shown before this result: {searchEvidence.unseenMatches}
           </span>
-          <span>Remaining after this result: {evidence.remainingMatches}</span>
+          <span>
+            Remaining after this result: {searchEvidence.remainingMatches}
+          </span>
         </div>
       )}
       {explanation && <p className="result-explanation">{explanation}</p>}

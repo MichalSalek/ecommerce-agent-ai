@@ -185,48 +185,343 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     ),
   );
   try {
-    await t.test("direct comparison normalizes extra lookup matches and preserves request order", async () => {
-      for (const [text, expected] of [
-        ["Compare mugs and carafe", ["mugs", "carafe"]],
-        ["Compare carafe and mugs", ["carafe", "mugs"]],
-      ] as const) {
-        const action = run(catalog, [
-          call("searchProducts", { ...nativeTransition("new", { productTypes: ["mug", "carafe"] }), mode: "lookup" }),
-          call("compareProducts", { productIds: ["mugs", "carafe", "travel-mug"] }),
-          messages => present(messages, { view: "comparison", evidenceIds: ["e1", "e2"] }),
-        ], text);
+    await t.test(
+      "current selection confirms the stock of the last five products without a catalog read",
+      async () => {
+        const ids = [
+          "mugs",
+          "carafe",
+          "travel-mug",
+          "coffee-grinder",
+          "pour-over-dripper",
+        ];
+        const state = {
+          ...initialAgentState(),
+          language: "pl" as const,
+          languageChosen: true,
+          lastIds: ids,
+        };
+        const action = run(
+          catalog,
+          [
+            call("presentAnswer", {
+              text: "Wszystkie te produkty są dostępne.",
+              language: "pl",
+              evidenceIds: ["selection"],
+              productIds: ids,
+              view: "none",
+            }),
+          ],
+          "Czy wszystkie te produkty są dostępne?",
+          state,
+        );
         const result = await action.result;
         assert.equal(result.status.status, "complete");
-        assert.equal(action.mock.count(), 3);
-        assert.ok(result.evidence[0].productIds.includes("travel-mug"));
-        assert.ok(result.evidence[0].productIds.includes("mugs"));
-        assert.ok(result.evidence[0].productIds.includes("carafe"));
-        assert.deepEqual(result.comparison?.productIds, expected);
-        assert.deepEqual(result.presentation.productIds, expected);
-        assert.deepEqual(result.checkpoint.after.comparisonIds, expected);
-      }
-    });
-    await t.test("comparison cannot fill in a missing requested product", async () => {
-      const action = run(catalog, [
-        call("searchProducts", { ...nativeTransition("new", { productTypes: ["mug", "carafe"] }), mode: "lookup" }),
-        call("compareProducts", { productIds: ["mugs", "travel-mug"] }),
-        call("compareProducts", { productIds: ["mugs", "carafe"] }),
-        messages => present(messages, { view: "comparison", evidenceIds: ["e1", "e3"] }),
-      ], "Compare mugs and carafe");
+        assert.equal(action.mock.count(), 1);
+        assert.equal(result.presentation.view, "none");
+        assert.deepEqual(result.presentation.productIds, ids);
+        assert.equal(result.search, undefined);
+        assert.ok(
+          result.evidence.some(
+            (e) => e.id === "selection" && e.tool === "currentSelection",
+          ),
+        );
+        const prompt = action.mock.requests[0].messages.find(
+          (m: any) => m.role === "user",
+        ).content;
+        assert.match(prompt, /"evidenceId":"selection"/);
+        for (const id of ids) assert.ok(prompt.includes(id));
+      },
+    );
+    await t.test(
+      "current selection cannot confirm all in stock when one product is unavailable",
+      async () => {
+        const ids = ["mugs", "compact-keyboard"];
+        const action = run(
+          catalog,
+          [
+            call("presentAnswer", {
+              text: "All these products are in stock.",
+              language: "en",
+              evidenceIds: ["selection"],
+              productIds: ids,
+              view: "none",
+            }),
+            call("presentAnswer", {
+              text: "Not all of these products are in stock.",
+              language: "en",
+              evidenceIds: ["selection"],
+              productIds: ids,
+              view: "none",
+            }),
+          ],
+          "Are these all in stock?",
+          { ...initialAgentState(), lastIds: ids },
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 2);
+        assert.equal(result.answer, "Not all of these products are in stock.");
+        assert.equal(result.presentation.view, "none");
+      },
+    );
+    await t.test(
+      "current selection does not prove catalog-wide absence",
+      async () => {
+        const action = run(
+          catalog,
+          [
+            call("presentAnswer", {
+              text: "There is no assortment.",
+              language: "en",
+              evidenceIds: ["selection"],
+              productIds: [],
+              view: "none",
+              claim: "no-assortment",
+            }),
+            call("presentAnswer", {
+              text: "I can check the assortment.",
+              language: "en",
+              evidenceIds: [],
+              productIds: [],
+              view: "none",
+            }),
+          ],
+          "Is there no assortment?",
+          { ...initialAgentState(), lastIds: ["mugs"] },
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 2);
+        assert.equal(result.answer, "I can check the assortment.");
+      },
+    );
+    await t.test(
+      "a Polish in-stock refinement finishes after one successful recommendation read",
+      async () => {
+        const state = {
+          ...initialAgentState(),
+          language: "pl" as const,
+          languageChosen: true,
+          criteria: {
+            productKind: "furniture",
+            useEnvironment: "outdoor" as const,
+            maxPrice: 150,
+          },
+          requestedCount: 5,
+        };
+        const action = run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition(
+                "refine",
+                { inStockOnly: true },
+                { language: "pl" },
+              ),
+            ),
+            (m) =>
+              present(m, { language: "pl", text: "Oto dostępne propozycje." }),
+          ],
+          "Pokaż tylko dostępne",
+          state,
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 2);
+        assert.deepEqual(action.mock.requests[1].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        assert.deepEqual(
+          action.mock.requests[1].tools.map((t: any) => t.function.name),
+          ["presentAnswer"],
+        );
+        assert.equal(result.search?.appliedCriteria.inStockOnly, true);
+        assert.equal(result.presentation.language, "pl");
+      },
+    );
+    await t.test(
+      "repeated provider tool-choice violations produce a partial turn, not a connection error",
+      async () => {
+        const search = call(
+          "searchProducts",
+          nativeTransition("new", {}, { requestedCount: 2 }),
+        );
+        const mock = scripted([search, search, search]);
+        const events = await collect(
+          createNativeAgentStream(
+            mock.runtime,
+            catalog,
+            {
+              text: "Show two products",
+              state: initialAgentState(),
+              userMessageId: `choice-${++sequence}`,
+              conversationId: `visitor-${sequence}`,
+            },
+            new AbortController().signal,
+            { contract: "shopping-v3" },
+          ),
+        );
+        const status = events.find((event) => event.type === "data-turnStatus");
+        assert.ok(status?.type === "data-turnStatus");
+        assert.equal(status.data.status, "partial");
+        assert.ok(!events.some((event) => event.type === "error"));
+        assert.equal(mock.count(), 3);
+      },
+    );
+    await t.test("foreign currency cannot become catalog advice", async () => {
+      const action = run(
+        catalog,
+        [
+          call("getProductDetails", { productId: "mugs" }),
+          call("presentAnswer", {
+            text: "The mugs cost £18.",
+            language: "en",
+            evidenceIds: ["e1"],
+            productIds: ["mugs"],
+            view: "products",
+          }),
+          call("presentAnswer", {
+            text: "The mugs cost [[price:mugs]].",
+            language: "en",
+            evidenceIds: ["e1"],
+            productIds: ["mugs"],
+            view: "products",
+          }),
+        ],
+        "How much are the mugs?",
+      );
       const result = await action.result;
       assert.equal(result.status.status, "complete");
-      assert.equal(action.mock.count(), 4);
-      assert.ok(result.evidence.some(e => e.tool === "compareProducts" && typeof (e.output as any)?.error === "string"));
-      assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+      assert.equal(action.mock.count(), 3);
+      assert.match(result.answer, /22\.00 EUR/);
+      assert.doesNotMatch(result.answer, /£/);
     });
-    await t.test("non-list mentions do not override an explicit comparison later in the request", async () => {
-      const result = await run(catalog, [
-        call("compareProducts", { productIds: ["garden-bench", "patio-sofa"] }),
-        messages => present(messages, { view: "comparison" }),
-      ], "I have mugs and carafe at home; compare garden-bench with patio-sofa").result;
-      assert.equal(result.status.status, "complete");
-      assert.deepEqual(result.comparison?.productIds, ["garden-bench", "patio-sofa"]);
-    });
+    await t.test(
+      "stored budget can be recalled from preferences evidence without a read",
+      async () => {
+        const action = run(
+          catalog,
+          [
+            call("presentAnswer", {
+              text: "Your budget is 150 EUR.",
+              language: "en",
+              evidenceIds: ["preferences"],
+              productIds: [],
+              view: "none",
+            }),
+          ],
+          "What was my budget?",
+          { ...initialAgentState(), criteria: { maxPrice: 150 } },
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 1);
+        assert.equal(result.answer, "Your budget is 150 EUR.");
+        assert.ok(
+          result.evidence.some(
+            (e) => e.id === "preferences" && e.tool === "userPreferences",
+          ),
+        );
+        assert.match(
+          action.mock.requests[0].messages.find((m: any) => m.role === "user")
+            .content,
+          /"evidenceId":"preferences"/,
+        );
+      },
+    );
+    await t.test(
+      "direct comparison normalizes extra lookup matches and preserves request order",
+      async () => {
+        for (const [text, expected] of [
+          ["Compare mugs and carafe", ["mugs", "carafe"]],
+          ["Compare carafe and mugs", ["carafe", "mugs"]],
+        ] as const) {
+          const action = run(
+            catalog,
+            [
+              call("searchProducts", {
+                ...nativeTransition("new", { productTypes: ["mug", "carafe"] }),
+                mode: "lookup",
+              }),
+              call("compareProducts", {
+                productIds: ["mugs", "carafe", "travel-mug"],
+              }),
+              (messages) =>
+                present(messages, {
+                  view: "comparison",
+                  evidenceIds: ["e1", "e2"],
+                }),
+            ],
+            text,
+          );
+          const result = await action.result;
+          assert.equal(result.status.status, "complete");
+          assert.equal(action.mock.count(), 3);
+          assert.ok(result.evidence[0].productIds.includes("travel-mug"));
+          assert.ok(result.evidence[0].productIds.includes("mugs"));
+          assert.ok(result.evidence[0].productIds.includes("carafe"));
+          assert.deepEqual(result.comparison?.productIds, expected);
+          assert.deepEqual(result.presentation.productIds, expected);
+          assert.deepEqual(result.checkpoint.after.comparisonIds, expected);
+        }
+      },
+    );
+    await t.test(
+      "comparison cannot fill in a missing requested product",
+      async () => {
+        const action = run(
+          catalog,
+          [
+            call("searchProducts", {
+              ...nativeTransition("new", { productTypes: ["mug", "carafe"] }),
+              mode: "lookup",
+            }),
+            call("compareProducts", { productIds: ["mugs", "travel-mug"] }),
+            call("compareProducts", { productIds: ["mugs", "carafe"] }),
+            (messages) =>
+              present(messages, {
+                view: "comparison",
+                evidenceIds: ["e1", "e3"],
+              }),
+          ],
+          "Compare mugs and carafe",
+        );
+        const result = await action.result;
+        assert.equal(result.status.status, "complete");
+        assert.equal(action.mock.count(), 4);
+        assert.ok(
+          result.evidence.some(
+            (e) =>
+              e.tool === "compareProducts" &&
+              typeof (e.output as any)?.error === "string",
+          ),
+        );
+        assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+      },
+    );
+    await t.test(
+      "non-list mentions do not override an explicit comparison later in the request",
+      async () => {
+        const result = await run(
+          catalog,
+          [
+            call("compareProducts", {
+              productIds: ["garden-bench", "patio-sofa"],
+            }),
+            (messages) => present(messages, { view: "comparison" }),
+          ],
+          "I have mugs and carafe at home; compare garden-bench with patio-sofa",
+        ).result;
+        assert.equal(result.status.status, "complete");
+        assert.deepEqual(result.comparison?.productIds, [
+          "garden-bench",
+          "patio-sofa",
+        ]);
+      },
+    );
     await t.test(
       "independent product lookups compare without replacing the active garden search",
       async () => {
@@ -272,7 +567,12 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           function: { name: "presentAnswer" },
         });
         assert.deepEqual(
-          result.evidence.map((e) => e.tool),
+          result.evidence
+            .filter(
+              (e) =>
+                e.tool !== "userPreferences" && e.tool !== "currentSelection",
+            )
+            .map((e) => e.tool),
           ["searchProducts", "searchProducts", "compareProducts"],
         );
         assert.ok(result.evidence[0].productIds.includes("mugs"));
@@ -1009,8 +1309,14 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         );
         assert.equal(result.status.status, "complete");
         assert.equal(bodies.length, 3);
-        assert.equal(bodies[1].tool_choice, "required");
-        assert.equal(bodies[2].tool_choice, "required");
+        assert.deepEqual(bodies[1].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        assert.deepEqual(bodies[2].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
         assert.ok(
           bodies[0].messages.some(
             (m: any) =>

@@ -5,6 +5,7 @@ import {
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
+  ToolChoiceViolationError,
 } from "ai";
 import { products } from "@/data/products";
 import { verifiedRejections } from "@/application/chat/rejections";
@@ -386,7 +387,11 @@ function validatePresentation(
         "Unverified monetary amount. Use [[price:ID]] or a verified criterion.",
       );
   }
-  if (/(?:USD|\$|PLN)\s*\d|\d+\s*(?:USD|PLN)\b/i.test(withoutReferences))
+  if (
+    /(?:USD|GBP|PLN|[$£¥₹])\s*\d|\d+\s*(?:USD|GBP|PLN|zł|zl|£|¥|₹)\b/i.test(
+      withoutReferences,
+    )
+  )
     throw new Error("The catalog is priced in EUR; do not convert currencies.");
   return numericText(answer.text, cited);
 }
@@ -533,6 +538,22 @@ async function executeAgent(
     cachedInputTokens: 0,
     calls: 0,
   };
+  const accountUsage = (fallback?: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+  }) => {
+    const measured = options.takeUsage?.() ?? [];
+    for (const sample of measured.length
+      ? measured
+      : fallback
+        ? [fallback]
+        : []) {
+      usage.inputTokens += sample.inputTokens;
+      usage.outputTokens += sample.outputTokens;
+      usage.cachedInputTokens += sample.cachedInputTokens;
+    }
+  };
   const recent: ModelMessage[] =
     turn.history
       ?.slice(-2)
@@ -542,18 +563,47 @@ async function executeAgent(
           ? [{ role: m.role, content: m.content.slice(-350) }]
           : [],
       ) ?? [];
+  const budgetCriteria = {
+    ...(before.criteria.maxPrice === undefined
+      ? {}
+      : { maxPrice: before.criteria.maxPrice }),
+    ...(before.criteria.targetPrice === undefined
+      ? {}
+      : { targetPrice: before.criteria.targetPrice }),
+  };
+  const preferenceEvidence: Evidence | undefined = Object.keys(budgetCriteria)
+    .length
+    ? {
+        id: "preferences",
+        tool: "userPreferences",
+        input: { source: "typed user budget" },
+        output: { appliedCriteria: budgetCriteria },
+        productIds: [],
+      }
+    : undefined;
+  const selectedProducts = before.lastIds
+    .flatMap((id) => products.filter((product) => product.id === id))
+    .map((product) => compactProduct(product));
+  const selectionEvidence: Evidence | undefined = selectedProducts.length
+    ? {
+        id: "selection",
+        tool: "currentSelection",
+        input: { source: "canonical records for recent IDs" },
+        output: { products: selectedProducts },
+        productIds: selectedProducts.map((product) => product.id),
+      }
+    : undefined;
   const stateForModel = Object.fromEntries(
     Object.entries({
       ...before,
+      evidenceId: preferenceEvidence?.id,
       language: before.languageChosen ? before.language : undefined,
       shownIds: undefined,
       resultIds: undefined,
       rejectedIds: before.rejectedIds,
-      last: before.lastIds.flatMap((id) =>
-        products
-          .filter((p) => p.id === id)
-          .map((p) => ({ id: p.id, name: p.name, price: p.price })),
-      ),
+      last: selectionEvidence
+        ? { evidenceId: "selection", products: selectedProducts }
+        : undefined,
       lastIds: undefined,
     }).filter(
       ([, value]) =>
@@ -601,8 +651,12 @@ async function executeAgent(
           output: cartOutput,
           productIds: localCart.map((line) => line.id),
         };
-  const verifiedEvidence = () =>
-    deviceCartEvidence ? [...evidence, deviceCartEvidence] : evidence;
+  const verifiedEvidence = () => [
+    ...evidence,
+    ...(preferenceEvidence ? [preferenceEvidence] : []),
+    ...(selectionEvidence ? [selectionEvidence] : []),
+    ...(deviceCartEvidence ? [deviceCartEvidence] : []),
+  ];
   const cartContext = deviceCartEvidence
     ? {
         evidenceId: "cart",
@@ -685,15 +739,17 @@ async function executeAgent(
         abortSignal: signal,
       });
     } catch (error) {
+      accountUsage();
       const invalidCall =
-        error &&
-        typeof error === "object" &&
-        "statusCode" in error &&
-        error.statusCode === 400 &&
-        "responseBody" in error &&
-        typeof error.responseBody === "string" &&
-        (error.responseBody.includes("tool_use_failed") ||
-          /tool choice.*required/i.test(error.responseBody));
+        ToolChoiceViolationError.isInstance(error) ||
+        (error &&
+          typeof error === "object" &&
+          "statusCode" in error &&
+          error.statusCode === 400 &&
+          "responseBody" in error &&
+          typeof error.responseBody === "string" &&
+          (error.responseBody.includes("tool_use_failed") ||
+            /tool choice.*required/i.test(error.responseBody)));
       if (!invalidCall) throw error;
       if (correction || step === 3) break;
       correction = true;
@@ -704,10 +760,12 @@ async function executeAgent(
       });
       continue;
     }
-    usage.inputTokens += generated.usage.inputTokens ?? 0;
-    usage.outputTokens += generated.usage.outputTokens ?? 0;
-    usage.cachedInputTokens +=
-      generated.usage.inputTokenDetails?.cacheReadTokens ?? 0;
+    accountUsage({
+      inputTokens: generated.usage.inputTokens ?? 0,
+      outputTokens: generated.usage.outputTokens ?? 0,
+      cachedInputTokens:
+        generated.usage.inputTokenDetails?.cacheReadTokens ?? 0,
+    });
     console.log(
       "[AGENT] inference",
       JSON.stringify({
@@ -970,6 +1028,12 @@ async function executeAgent(
             ),
           };
           effectReferences = search.products.map((product) => product.id);
+          if (
+            (call.input as { continueWith?: string }).continueWith ===
+              "presentAnswer" &&
+            !hasCartInstruction(turn.text)
+          )
+            terminalOnly = true;
           break;
         }
         case "getCatalogOverview": {
@@ -1381,6 +1445,7 @@ export function createNativeAgentStream(
             writer.write({
               type: "data-products",
               data: {
+                evidenceKind: "selection",
                 evidenceId: result.presentation.evidenceIds[0] ?? "",
                 products: result.presentation.productIds.map((id) => ({ id })),
                 appliedCriteria: {},
