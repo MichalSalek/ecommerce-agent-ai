@@ -10,6 +10,56 @@ import { ComparisonResults } from "@/components/chat/ComparisonResults";
 import { useCart, type ActionResult } from "@/components/CartProvider";
 import { products } from "@/data/products";
 import { WELCOME_ID } from "@/application/chat/history";
+import type {
+  TurnStatus,
+  ChatProgress,
+  ShoppingAction,
+} from "@/application/chat/shopping-v3";
+import type { ChatMessage } from "@/types/shop";
+function isFailedMessage(message: ChatMessage): boolean {
+  return (
+    message.role === "assistant" &&
+    message.parts.some(
+      (part) =>
+        part.type === "data-turnStatus" && part.data.status !== "complete",
+    )
+  );
+}
+const progressLabels: Record<
+  ChatProgress["phase"] | "provider-switch",
+  string
+> = {
+  understanding: "Understanding your request…",
+  catalog: "Searching the collection…",
+  details: "Checking product details…",
+  comparison: "Comparing products…",
+  cart: "Preparing your cart selection…",
+  answer: "Putting your response together…",
+  "provider-wait": "Waiting for the assistant to become available…",
+  "provider-switch": "Switching to an available model…",
+};
+function failureMessage(failure: TurnStatus): string {
+  if (failure.providerLimit) {
+    const { metric, window } = failure.providerLimit;
+    return `The model provider has reached its ${window === "day" ? "daily" : "per-minute"} ${metric === "tokens" ? "token" : "request"} limit.`;
+  }
+  if (failure.message) return failure.message;
+  if (failure.code === "REQUEST_LIMIT")
+    return "This demo has reached its hourly request limit.";
+  if (failure.code === "BUSY")
+    return "The assistant is helping other visitors.";
+  if (failure.code === "TIMEOUT")
+    return "The response took too long. Your message is saved.";
+  if (failure.status === "partial")
+    return "The response is incomplete. You can try again.";
+  if (failure.status === "provider-limit")
+    return "The model provider has reached its limit.";
+  return "The response could not be completed. Please try again.";
+}
+function waitLabel(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
 const starters = [
   {
     label: "My morning coffee",
@@ -37,6 +87,9 @@ export default function ChatView() {
     newConversation,
     threadPosition,
     cartFeedback,
+    progress,
+    httpFailure,
+    cooldown,
   } = useConversation();
   const { applyAction } = useCart();
   const router = useRouter();
@@ -48,11 +101,28 @@ export default function ChatView() {
   const retryAllowed = useRef(true);
   const [showLatest, setShowLatest] = useState(false);
   const [copied, setCopied] = useState<string>();
+  const [clock, setClock] = useState(() => Date.now());
   const [cartRetryStatus, setCartRetryStatus] = useState<
     Record<string, ActionResult>
   >({});
   const busy = status === "submitted" || status === "streaming";
   const started = messages.some((m) => m.role === "user");
+  const retrySeconds = Math.max(
+    0,
+    Math.ceil(((cooldown?.retryAt ?? 0) - clock) / 1000),
+  );
+  const limited = retrySeconds > 0;
+  useEffect(() => {
+    setClock(Date.now());
+    if (!cooldown?.retryAt || cooldown.retryAt <= Date.now()) return;
+    const end = cooldown.retryAt;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      if (now >= end) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown?.retryAt]);
   useEffect(() => {
     retryAllowed.current = true;
   }, [conversationId]);
@@ -119,12 +189,22 @@ export default function ChatView() {
     });
     setShowLatest(false);
   }
-  function send(text: string) {
-    if (!ready || busy || conversationClosed || !text.trim()) return;
+  function send(text: string, shoppingAction?: ShoppingAction) {
+    if (
+      !ready ||
+      busy ||
+      conversationClosed ||
+      (cooldown?.retryAt ?? 0) > Date.now() ||
+      !text.trim()
+    )
+      return;
     nearBottom.current = true;
     threadPosition.current.follow = true;
     setDraft("");
-    void sendMessage({ text: text.trim() });
+    void sendMessage({
+      text: text.trim(),
+      ...(shoppingAction ? { metadata: { shoppingAction } } : {}),
+    });
     field.current?.focus();
   }
   async function reset() {
@@ -158,7 +238,18 @@ export default function ChatView() {
       ),
   );
   const unanswered = !busy && visible.at(-1)?.role === "user";
-  const lastSearch = [...visible]
+  const lastUserIndex = messages.findLastIndex(
+    (message) => message.role === "user",
+  );
+  const latestTypedFailure = messages
+    .slice(lastUserIndex + 1)
+    .flatMap((message) => (message.role === "assistant" ? message.parts : []))
+    .findLast(
+      (part) =>
+        part.type === "data-turnStatus" && part.data.status !== "complete",
+    );
+  const latestFailed = Boolean(latestTypedFailure || error || httpFailure);
+  const candidates = [...visible]
     .reverse()
     .filter((message) => message.role === "assistant")
     .flatMap((message) => {
@@ -186,7 +277,12 @@ export default function ChatView() {
               part.type === "tool-searchProducts" &&
               part.state === "output-available"),
         );
-    })[0];
+    });
+  const lastSearch =
+    candidates.find(
+      (part) =>
+        part.type !== "data-products" || part.data.evidenceKind !== "selection",
+    ) ?? candidates[0];
   const lastOutput =
     lastSearch?.type === "data-products"
       ? lastSearch.data
@@ -200,14 +296,34 @@ export default function ChatView() {
     Array.isArray(lastOutput.products)
       ? lastOutput
       : null;
-  const resultCount =
+  const resultIds =
     lastSearch?.type === "data-comparison"
-      ? lastSearch.data.productIds.length
+      ? lastSearch.data.productIds
       : resultEnvelope && Array.isArray(resultEnvelope.products)
-        ? resultEnvelope.products.length
+        ? resultEnvelope.products.flatMap((item: unknown) =>
+            item &&
+            typeof item === "object" &&
+            "id" in item &&
+            typeof item.id === "string"
+              ? [item.id]
+              : [],
+          )
         : Array.isArray(lastOutput)
-          ? lastOutput.length
-          : 0;
+          ? lastOutput.flatMap((item: unknown) =>
+              item &&
+              typeof item === "object" &&
+              "id" in item &&
+              typeof item.id === "string"
+                ? [item.id]
+                : [],
+            )
+          : [];
+  const resultNames = resultIds.flatMap((id) =>
+    products
+      .filter((product) => product.id === id)
+      .map((product) => product.name),
+  );
+  const resultCount = resultNames.length;
   const remaining =
     resultEnvelope &&
     "remainingMatches" in resultEnvelope &&
@@ -296,7 +412,10 @@ export default function ChatView() {
                   )}
                   {message.role === "assistant" &&
                     message.id !== WELCOME_ID &&
-                    message.parts.some((p) => p.type === "text" && p.text) && (
+                    !isFailedMessage(message) &&
+                    message.parts.some(
+                      (p) => p.type === "text" && p.text.trim(),
+                    ) && (
                       <button
                         className="copy-reply"
                         onClick={() => {
@@ -318,7 +437,10 @@ export default function ChatView() {
                   ...message.parts.filter((p) => p.type === "text"),
                   ...message.parts.filter((p) => p.type !== "text"),
                 ].map((part, i) => {
-                  if (part.type === "text") return <p key={i}>{part.text}</p>;
+                  if (part.type === "text")
+                    return isFailedMessage(message) ? null : (
+                      <p key={i}>{part.text}</p>
+                    );
                   if (part.type === "data-products")
                     return (
                       <ProductResults
@@ -332,7 +454,9 @@ export default function ChatView() {
                       <CategoryResults
                         key={i}
                         categories={part.data}
-                        disabled={!ready || busy || conversationClosed}
+                        disabled={
+                          !ready || busy || conversationClosed || limited
+                        }
                         onSelect={(name) =>
                           send(`Show me products in category ${name}`)
                         }
@@ -343,27 +467,36 @@ export default function ChatView() {
                   if (
                     part.type === "data-turnStatus" &&
                     part.data.status !== "complete"
-                  )
+                  ) {
+                    if (
+                      part !==
+                      message.parts.findLast(
+                        (item) =>
+                          item.type === "data-turnStatus" &&
+                          item.data.status !== "complete",
+                      )
+                    )
+                      return null;
                     return (
-                      <div className="result-explanation" role="status" key={i}>
-                        <p>
-                          {part.data.status === "partial"
-                            ? "The response is incomplete. You can try again."
-                            : part.data.status === "provider-limit"
-                              ? `The model provider has reached its limit. ${part.data.retryAfter ? `Retry in ${part.data.retryAfter} seconds.` : "Please retry later."}`
-                              : "The connection was interrupted. Please try again."}
-                        </p>
-                        {part.data.status === "partial" &&
-                          message.id === visible.at(-1)?.id && (
-                            <button
-                              disabled={busy}
-                              onClick={() => void regenerate()}
-                            >
-                              Retry last message
-                            </button>
-                          )}
+                      <div className="chat-error" role="status" key={i}>
+                        <p>{failureMessage(part.data)}</p>
+                        {message.id === visible.at(-1)?.id && limited && (
+                          <p>Retry in {waitLabel(retrySeconds)}.</p>
+                        )}
+                        {message.id === visible.at(-1)?.id && (
+                          <button
+                            disabled={busy || limited}
+                            onClick={() => {
+                              if ((cooldown?.retryAt ?? 0) <= Date.now())
+                                void regenerate();
+                            }}
+                          >
+                            Retry last message
+                          </button>
+                        )}
                       </div>
                     );
+                  }
                   if (
                     !message.parts.some((p) =>
                       [
@@ -463,38 +596,56 @@ export default function ChatView() {
               </div>
             );
           })}
-          {resultCount > 0 && !busy && !conversationClosed && (
-            <div
-              className="chat-followups"
-              aria-label="Suggested follow-up questions"
-            >
-              {resultCount > 1 && (
-                <button onClick={() => send("Compare these products")}>
-                  Compare these
-                </button>
-              )}
-              {remaining > 0 && (
-                <button onClick={() => send("Show me other options")}>
-                  Show other options
-                </button>
-              )}
-              <button
-                onClick={() => send("Tell me more about the first product")}
+          {resultCount > 0 &&
+            !busy &&
+            !conversationClosed &&
+            !latestFailed &&
+            !limited && (
+              <div
+                className="chat-followups"
+                aria-label="Suggested follow-up questions"
               >
-                More details
-              </button>
-              <button onClick={() => send("Add the first product to my cart")}>
-                Add the first to cart
-              </button>
-            </div>
-          )}
+                {resultCount > 1 && (
+                  <button
+                    onClick={() =>
+                      send(`Compare ${resultNames.join(", ")}`, {
+                        type: "compare",
+                        productIds: resultIds,
+                      })
+                    }
+                  >
+                    Compare these
+                  </button>
+                )}
+                {remaining > 0 && (
+                  <button onClick={() => send("Show me other options")}>
+                    Show other options
+                  </button>
+                )}
+                <button
+                  onClick={() =>
+                    send(`Tell me more about ${resultNames[0]}`, {
+                      type: "details",
+                      productId: resultIds[0],
+                    })
+                  }
+                >
+                  More details
+                </button>
+                <button
+                  onClick={() => send(`Add ${resultNames[0]} to my cart`)}
+                >
+                  Add the first to cart
+                </button>
+              </div>
+            )}
           {!started && ready && (
             <div className="chat-starters" aria-label="Conversation starters">
               {starters.map((s) => (
                 <button
                   key={s.label}
                   onClick={() => send(s.text)}
-                  disabled={busy || conversationClosed}
+                  disabled={busy || conversationClosed || limited}
                 >
                   {s.label}
                 </button>
@@ -506,18 +657,24 @@ export default function ChatView() {
               <span className="progress-dots" aria-hidden="true">
                 •••
               </span>
-              {status === "submitted"
-                ? "Thinking about your request…"
-                : "Putting your response together…"}
+              {progress
+                ? progressLabels[progress.phase]
+                : status === "submitted"
+                  ? "Thinking about your request…"
+                  : "Putting your response together…"}
             </div>
           )}
-          {error && (
+          {error && !latestTypedFailure && (
             <div role="alert" className="chat-error">
               <strong>Let's try that again.</strong>
-              <p>The response could not be completed. Please try again.</p>
+              <p>
+                {failureMessage(httpFailure ?? { status: "connection-error" })}
+              </p>
+              {limited && <p>Retry in {waitLabel(retrySeconds)}.</p>}
               <button
-                disabled={busy}
+                disabled={busy || limited}
                 onClick={() => {
+                  if ((cooldown?.retryAt ?? 0) > Date.now()) return;
                   nearBottom.current = true;
                   threadPosition.current.follow = true;
                   void regenerate();
@@ -527,7 +684,13 @@ export default function ChatView() {
               </button>
             </div>
           )}
-          {unanswered && !error && ready && !conversationClosed && (
+          {limited && !latestTypedFailure && !error && cooldown && (
+            <div role="status" className="chat-error">
+              <p>{failureMessage(cooldown)}</p>
+              <p>Retry in {waitLabel(retrySeconds)}.</p>
+            </div>
+          )}
+          {unanswered && !error && !limited && ready && !conversationClosed && (
             <div className="chat-recovery">
               <p>Your last message has no saved response.</p>
               <button
@@ -609,7 +772,9 @@ export default function ChatView() {
             ) : (
               <button
                 className="send-message"
-                disabled={!ready || conversationClosed || !draft.trim()}
+                disabled={
+                  !ready || conversationClosed || limited || !draft.trim()
+                }
                 aria-label="Send message"
                 type="submit"
               >
@@ -647,7 +812,7 @@ export default function ChatView() {
           ].map(([title, prompt]) => (
             <button
               key={title}
-              disabled={!ready || busy || conversationClosed}
+              disabled={!ready || busy || conversationClosed || limited}
               onClick={() => {
                 send(prompt);
                 thread.current?.scrollIntoView({

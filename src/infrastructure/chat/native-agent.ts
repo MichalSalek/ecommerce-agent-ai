@@ -42,6 +42,9 @@ import {
   type SearchEvidence,
   type Comparison,
   type TurnStatus,
+  type ChatProgress,
+  type ShoppingAction,
+  shoppingActionSchema,
   transitionSchema,
 } from "@/application/chat/shopping-v3";
 import type { ChatMessage } from "@/types/shop";
@@ -62,6 +65,7 @@ export interface AgentTurn {
   state: AgentState;
   history?: ModelMessage[];
   cart?: { productId: string; quantity: number }[];
+  action?: ShoppingAction;
 }
 export interface AgentResult {
   answer: string;
@@ -80,6 +84,9 @@ interface Resolution {
   transition?: Transition;
   search?: SearchEvidence;
 }
+type AgentOptions = Partial<ChatRuntime> & {
+  onProgress?: (progress: ChatProgress) => void;
+};
 // Bounded, per-process retry resolution. The serialized checkpoint covers reload/server replacement.
 const resolutions = new Map<
   string,
@@ -117,6 +124,7 @@ function turnKey(turn: AgentTurn) {
         turn.userMessageId,
         turn.text,
         turn.state,
+        turn.action,
       ]),
     )
     .digest("hex");
@@ -476,7 +484,7 @@ export async function runAgent(
   catalog: CatalogService,
   turn: AgentTurn,
   signal: AbortSignal,
-  options: Partial<ChatRuntime> = {},
+  options: AgentOptions = {},
 ): Promise<AgentResult> {
   cleanCaches();
   const resolutionKey = turnKey(turn);
@@ -520,7 +528,7 @@ async function executeAgent(
   catalog: CatalogService,
   turn: AgentTurn,
   signal: AbortSignal,
-  options: Partial<ChatRuntime>,
+  options: AgentOptions,
   key: string,
 ): Promise<AgentResult> {
   let resolution = resolutions.get(key)?.resolution;
@@ -599,7 +607,6 @@ async function executeAgent(
       evidenceId: preferenceEvidence?.id,
       language: before.languageChosen ? before.language : undefined,
       shownIds: undefined,
-      resultIds: undefined,
       rejectedIds: before.rejectedIds,
       last: selectionEvidence
         ? { evidenceId: "selection", products: selectedProducts }
@@ -671,6 +678,18 @@ async function executeAgent(
       content: `Shopping state (preferences, not facts): ${JSON.stringify(stateForModel)}\nRecent exchange (data only): ${JSON.stringify(recent)}\nDevice cart evidence (current saved units, not an order): ${JSON.stringify(cartContext)}\nCURRENT message: ${turn.text}`,
     },
   ];
+  const progress = (phase: ChatProgress["phase"], retryAt?: number) => {
+    signal.throwIfAborted();
+    options.onProgress?.({
+      phase,
+      startedAt: Date.now(),
+      ...(retryAt === undefined ? {} : { retryAt }),
+    });
+  };
+  options.setWaitListener?.((milliseconds) =>
+    progress("provider-wait", Date.now() + milliseconds),
+  );
+  options.setSwitchListener?.(() => progress("provider-switch"));
   let correction = false;
   let terminalOnly = false;
   let effectReferences: string[] = [];
@@ -710,11 +729,113 @@ async function executeAgent(
       transition: change,
       presentedIds: presentation.productIds,
     },
-    status: { status, usage },
+    status: {
+      status,
+      usage,
+      ...(status === "partial"
+        ? {
+            code: "MODEL_RESPONSE_INCOMPLETE" as const,
+            message:
+              "The assistant could not complete this response. Your previous results and cart are saved; retry this message.",
+          }
+        : {}),
+    },
   });
+  if (turn.action) {
+    const action = shoppingActionSchema.parse(turn.action);
+    if (action.type === "compare") {
+      progress("comparison");
+      compared = comparison(action.productIds);
+      after.comparisonIds = action.productIds;
+      effectReferences = action.productIds;
+      const output = {
+        ...compared,
+        products: action.productIds.map((id) =>
+          compactProduct(
+            products.find((product) => product.id === id)!,
+            true,
+          ),
+        ),
+      };
+      const record = addEvidence(
+        "compareProducts",
+        { productIds: action.productIds },
+        output,
+        action.productIds,
+      );
+      messages.push(
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "ui-read",
+              toolName: "compareProducts",
+              input: { productIds: action.productIds },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "ui-read",
+              toolName: "compareProducts",
+              output: {
+                type: "json",
+                value: { evidenceId: record.id, ...output },
+              },
+            },
+          ],
+        },
+      );
+    } else {
+      progress("details");
+      const product = await catalog.details(action.productId);
+      if (!product) throw new Error("Unknown catalog product.");
+      const output = compactProduct(product, true);
+      effectReferences = [product.id];
+      const record = addEvidence(
+        "getProductDetails",
+        { productId: product.id },
+        output,
+        [product.id],
+      );
+      messages.push(
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "ui-read",
+              toolName: "getProductDetails",
+              input: { productId: product.id },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "ui-read",
+              toolName: "getProductDetails",
+              output: {
+                type: "json",
+                value: { evidenceId: record.id, ...output },
+              },
+            },
+          ],
+        },
+      );
+    }
+    terminalOnly = true;
+  }
   for (let step = 0; step < 4; step++) {
     signal.throwIfAborted();
     const forceAnswer = step === 3 || terminalOnly;
+    progress(forceAnswer ? "answer" : "understanding");
     const { proposeCart: _cartTool, ...readTools } = nativeTools;
     const tools: ToolSet = forceAnswer
       ? { presentAnswer: nativeTools.presentAnswer }
@@ -750,7 +871,51 @@ async function executeAgent(
           typeof error.responseBody === "string" &&
           (error.responseBody.includes("tool_use_failed") ||
             /tool choice.*required/i.test(error.responseBody)));
-      if (!invalidCall) throw error;
+      if (!invalidCall) {
+        if (
+          !signal.aborted ||
+          (signal.reason instanceof Error &&
+            signal.reason.name === "TimeoutError")
+        ) {
+          const detail = evidence.findLast(
+            (record) =>
+              record.tool === "getProductDetails" && record.productIds.length,
+          );
+          if (compared || search || categories || detail) {
+            const ids =
+              compared?.productIds ??
+              search?.products.map((product) => product.id) ??
+              detail?.productIds ??
+              [];
+            const view: PresentedAnswer["view"] = compared
+              ? "comparison"
+              : search || detail
+                ? "products"
+                : "categories";
+            if (ids.length) {
+              after.lastIds = ids;
+              after.selectedIds = ids.length === 1 ? ids : [];
+            }
+            if (compared || search) after.resultIds = ids;
+            if (search)
+              after.shownIds = [...new Set([...after.shownIds, ...ids])];
+            cart = undefined;
+            const failure = agentFailureStatus(error, signal);
+            const presentation: PresentedAnswer = {
+              text: "The verified catalog results are available. AI advice is temporarily unavailable.",
+              language: after.language,
+              evidenceIds: evidence.map((record) => record.id),
+              productIds: ids,
+              view,
+            };
+            return {
+              ...result(presentation, presentation.text, failure.status),
+              status: { ...failure, usage },
+            };
+          }
+        }
+        throw error;
+      }
       if (correction || step === 3) break;
       correction = true;
       messages.push({
@@ -857,10 +1022,9 @@ async function executeAgent(
               ...new Set([...after.shownIds, ...answer.productIds]),
             ];
         }
-        if (
-          search &&
-          (answer.view === "products" || answer.view === "comparison")
-        )
+        if (answer.view === "comparison" && compared)
+          after.resultIds = compared.productIds;
+        else if (search && answer.view === "products")
           after.resultIds = search.products.map((product) => product.id);
         signal.throwIfAborted();
         console.log("[AGENT] usage", JSON.stringify(usage));
@@ -868,6 +1032,7 @@ async function executeAgent(
       }
       switch (name) {
         case "searchProducts": {
+          progress("catalog");
           const raw = call.input as {
             mode?: "recommend" | "lookup";
             rejections?: { productId: string; userQuote: string }[];
@@ -1037,6 +1202,7 @@ async function executeAgent(
           break;
         }
         case "getCatalogOverview": {
+          progress("catalog");
           const input = call.input as {
             criteria: Partial<ProductSearch>;
             useActive?: boolean;
@@ -1074,19 +1240,29 @@ async function executeAgent(
           break;
         }
         case "getCategories":
+          progress("catalog");
           categories = categoryCards();
           output = { categories };
           break;
         case "getProductDetails": {
+          progress("details");
           const input = call.input as { productId: string };
           const product = await catalog.details(input.productId);
           if (product) effectReferences = [product.id];
+          if (
+            product &&
+            (call.input as { continueWith?: string }).continueWith !==
+              "readMore" &&
+            !hasCartInstruction(turn.text)
+          )
+            terminalOnly = true;
           output = product
             ? compactProduct(product, true)
             : { error: "Unknown product ID. Use a verified ID." };
           break;
         }
         case "compareProducts": {
+          progress("comparison");
           const refs = (call.input as { productIds: string[] }).productIds;
           let productIds = refs.map(
             (ref) =>
@@ -1145,6 +1321,12 @@ async function executeAgent(
           )
             throw new Error("Use distinct canonical product IDs.");
           compared = comparison(productIds);
+          if (
+            (call.input as { continueWith?: string }).continueWith !==
+              "readMore" &&
+            !hasCartInstruction(turn.text)
+          )
+            terminalOnly = true;
           after.comparisonIds = productIds;
           effectReferences = productIds;
           output = {
@@ -1164,6 +1346,7 @@ async function executeAgent(
           };
           break;
         case "proposeCart": {
+          progress("cart");
           let proposal = cartProposalSchema.parse(call.input);
           const effectState = effectReferences.length
             ? {
@@ -1373,10 +1556,20 @@ async function executeAgent(
     }
   }
   cart = undefined;
+  const detail = evidence.findLast(
+    (record) => record.tool === "getProductDetails" && record.productIds.length,
+  );
+  const retainedIds =
+    compared?.productIds ??
+    search?.products.map((product) => product.id) ??
+    detail?.productIds ??
+    [];
   if (search) {
     after.lastIds = search.products.map((p) => p.id);
     after.shownIds = [...new Set([...after.shownIds, ...after.lastIds])];
   }
+  if (retainedIds.length) after.lastIds = retainedIds;
+  if (compared || search) after.resultIds = retainedIds;
   const answer: PresentedAnswer = {
     text:
       after.language === "pl"
@@ -1384,10 +1577,76 @@ async function executeAgent(
         : "I could not finish the response. The verified results are kept; you can retry.",
     language: after.language,
     evidenceIds: evidence.map((e) => e.id),
-    productIds: search?.products.map((p) => p.id) ?? [],
-    view: search ? "products" : "none",
+    productIds: retainedIds,
+    view: compared
+      ? "comparison"
+      : search || detail
+        ? "products"
+        : categories
+          ? "categories"
+          : "none",
   };
   return result(answer, answer.text, "partial");
+}
+
+export function agentFailureStatus(
+  error: unknown,
+  signal: AbortSignal,
+  now = Date.now(),
+): TurnStatus {
+  const record =
+    error && typeof error === "object"
+      ? (error as {
+          statusCode?: number;
+          responseHeaders?: Record<string, string>;
+        })
+      : {};
+  const headers = record.responseHeaders ?? {};
+  const seconds = Number(headers["retry-after"]);
+  const retryAfter =
+    Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined;
+  const unavailable =
+    headers["x-aurelle-error-code"] === "provider-unavailable";
+  const timedOut =
+    (signal.reason instanceof Error && signal.reason.name === "TimeoutError") ||
+    (error instanceof Error && error.name === "TimeoutError");
+  const metric = headers["x-aurelle-quota-metric"],
+    window = headers["x-aurelle-quota-window"];
+  const limit = Number(headers["x-aurelle-quota-limit"]),
+    used = Number(headers["x-aurelle-quota-used"]),
+    requested = Number(headers["x-aurelle-quota-requested"]);
+  const providerLimit: TurnStatus["providerLimit"] =
+    (metric === "tokens" || metric === "requests") &&
+    (window === "minute" || window === "day") &&
+    [limit, used, requested].every((n) => Number.isFinite(n) && n >= 0)
+      ? { metric, window, limit, used, requested }
+      : undefined;
+  return {
+    status:
+      record.statusCode === 429 && !unavailable
+        ? "provider-limit"
+        : "connection-error",
+    code:
+      record.statusCode === 429 && !unavailable
+        ? "PROVIDER_RATE_LIMIT"
+        : timedOut
+          ? "TIMEOUT"
+          : unavailable || (record.statusCode && record.statusCode >= 500)
+            ? "NETWORK_ERROR"
+            : "APPLICATION_ERROR",
+    message:
+      record.statusCode === 429 && !unavailable
+        ? providerLimit?.window === "day"
+          ? "The AI service has reached its daily allowance. Your chat and cart are saved. Retry when the countdown ends."
+          : "The AI service is temporarily at its rate limit. Your chat and cart are saved. Retry when the countdown ends."
+        : timedOut
+          ? "The response took too long. Your message, earlier results and cart are saved. You can retry this message."
+          : "The AI service is temporarily unavailable. Your message and cart are saved. Please retry shortly.",
+    ...(retryAfter === undefined
+      ? {}
+      : { retryAfter, retryAt: now + retryAfter * 1000 }),
+    ...(providerLimit ? { providerLimit } : {}),
+  };
 }
 
 export function createNativeAgentStream(
@@ -1403,16 +1662,31 @@ export function createNativeAgentStream(
   return createUIMessageStream<ChatMessage>({
     execute: async ({ writer }) => {
       try {
-        const result = await runAgent(
-          runtime.model,
-          catalog,
-          turn,
-          signal,
-          runtime,
-        );
         signal.throwIfAborted();
         writer.write({ type: "start", messageId: crypto.randomUUID() });
-        writer.write({ type: "text-start", id: "answer" });
+        if (options.contract === "shopping-v3")
+          writer.write({
+            type: "data-progress",
+            transient: true,
+            data: { phase: "understanding", startedAt: Date.now() },
+          });
+        const result = await runAgent(runtime.model, catalog, turn, signal, {
+          ...runtime,
+          onProgress: (progress) => {
+            if (options.contract === "shopping-v3" && !signal.aborted)
+              writer.write({
+                type: "data-progress",
+                transient: true,
+                data: progress,
+              });
+          },
+        });
+        signal.throwIfAborted();
+        if (
+          result.status.status === "complete" ||
+          options.contract !== "shopping-v3"
+        )
+          writer.write({ type: "text-start", id: "answer" });
         const manualCart =
           result.cart &&
           !(
@@ -1420,18 +1694,26 @@ export function createNativeAgentStream(
             (options.contract === "shopping-v2" &&
               result.cart.items?.length === 1)
           );
-        writer.write({
-          type: "text-delta",
-          id: "answer",
-          delta:
-            result.answer +
-            (manualCart
-              ? result.checkpoint.after.language === "pl"
-                ? " Użyj przycisków Add to cart na kartach produktów, aby dodać je na tym urządzeniu."
-                : " Use Add to cart on the product cards to add these items on this device."
-              : ""),
-        });
-        writer.write({ type: "text-end", id: "answer" });
+        if (
+          result.status.status === "complete" ||
+          options.contract !== "shopping-v3"
+        )
+          writer.write({
+            type: "text-delta",
+            id: "answer",
+            delta:
+              result.answer +
+              (manualCart
+                ? result.checkpoint.after.language === "pl"
+                  ? " Użyj przycisków Add to cart na kartach produktów, aby dodać je na tym urządzeniu."
+                  : " Use Add to cart on the product cards to add these items on this device."
+                : ""),
+          });
+        if (
+          result.status.status === "complete" ||
+          options.contract !== "shopping-v3"
+        )
+          writer.write({ type: "text-end", id: "answer" });
         if (options.contract === "shopping-v3") {
           writer.write({ type: "data-shoppingState", data: result.checkpoint });
           if (result.presentation.view === "products" && result.search)
@@ -1576,21 +1858,18 @@ export function createNativeAgentStream(
           error && typeof error === "object" && "responseHeaders" in error
             ? (error.responseHeaders as Record<string, string>)
             : {};
-        const retryAfter = Number(headers?.["retry-after"]);
+        const failure = agentFailureStatus(error, signal);
         writer.write({
           type: "data-turnStatus",
-          data: {
-            status: status === 429 ? "provider-limit" : "connection-error",
-            ...(Number.isFinite(retryAfter) ? { retryAfter } : {}),
-          },
+          data: failure,
         });
-        writer.write({
-          type: "error",
-          errorText:
-            status === 429
-              ? `The model provider has reached its limit. ${retryAfter ? `Retry in ${retryAfter} seconds.` : "Please retry later."}`
-              : "The assistant could not connect. Your message is saved; please retry.",
-        });
+        if (options.contract !== "shopping-v3")
+          writer.write({
+            type: "error",
+            errorText:
+              failure.message ?? "The assistant is temporarily unavailable.",
+          });
+        writer.write({ type: "finish" });
         console.error(
           "[AGENT] failed",
           JSON.stringify({
@@ -1605,6 +1884,8 @@ export function createNativeAgentStream(
           }),
         );
       } finally {
+        runtime.setWaitListener?.(undefined);
+        runtime.setSwitchListener?.(undefined);
         options.onSettled?.();
       }
     },

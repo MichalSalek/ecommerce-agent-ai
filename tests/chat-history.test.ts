@@ -14,6 +14,67 @@ import {
 } from "../src/application/chat/shopping-v3";
 import { stateFromMessages } from "../src/infrastructure/chat/native-agent";
 import type { ChatMessage } from "../src/types/shop";
+test("validated UI read metadata survives history restore and request serialization", () => {
+  const details = { type: "details", productId: "mugs" };
+  const compare = {
+    type: "compare",
+    productIds: [
+      "mugs",
+      "carafe",
+      "travel-mug",
+      "coffee-grinder",
+      "pour-over-dripper",
+    ],
+  };
+  const snapshot = restoreConversation(
+    JSON.stringify({
+      version: 1,
+      id: "ui-actions",
+      draft: "",
+      messages: [
+        {
+          id: "user-detail",
+          role: "user",
+          metadata: { shoppingAction: details },
+          parts: [{ type: "text", text: "Tell me more about Ceramic mugs" }],
+        },
+        {
+          id: "assistant-detail",
+          role: "assistant",
+          parts: [{ type: "text", text: "Details." }],
+        },
+        {
+          id: "user-compare",
+          role: "user",
+          metadata: { shoppingAction: compare },
+          parts: [
+            { type: "text", text: "Compare Ceramic mugs and other products" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.ok(snapshot);
+  assert.equal(snapshot.messages[0].id, "user-detail");
+  assert.deepEqual(snapshot.messages[0].metadata?.shoppingAction, details);
+  assert.equal(snapshot.messages[2].id, "user-compare");
+  assert.deepEqual(snapshot.messages[2].metadata?.shoppingAction, compare);
+  const request = requestMessages(snapshot.messages);
+  assert.deepEqual(
+    request.find((message) => message.id === "user-detail")?.metadata
+      ?.shoppingAction,
+    details,
+  );
+  assert.deepEqual(
+    request.find((message) => message.id === "user-compare")?.metadata
+      ?.shoppingAction,
+    compare,
+  );
+  assert.equal(
+    request.find((message) => message.id === "user-compare")?.parts[0]?.type,
+    "text",
+  );
+});
 test("conversation restores completed tools with canonical prices and drops corrupt/incomplete parts", () => {
   const saved = {
     version: 1,

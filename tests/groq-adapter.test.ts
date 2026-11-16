@@ -101,12 +101,26 @@ const run = (
 async function expectLimited(
   promise: ReturnType<typeof run>,
   retryAfter?: string,
+  diagnostic?: {
+    metric: string;
+    window: string;
+    limit: string;
+    used: string;
+    requested: string;
+  },
 ) {
   await assert.rejects(promise, (error: unknown) => {
     assert.ok(APICallError.isInstance(error));
     assert.equal(error.statusCode, 429);
     assert.equal(error.responseHeaders?.["retry-after"], retryAfter);
     assert.doesNotMatch(error.message, /private fixture body/);
+    if (diagnostic)
+      for (const [key, value] of Object.entries(diagnostic))
+        assert.equal(error.responseHeaders?.[`x-aurelle-quota-${key}`], value);
+    assert.doesNotMatch(
+      JSON.stringify(error.responseHeaders),
+      /org-secret|model-secret|secret-prompt|fixture-only/,
+    );
     return true;
   });
 }
@@ -157,7 +171,10 @@ test("successful token headers pace a later request across recreated runtimes", 
     time += ms;
   };
   await run(createGroqRuntime(config, fetcher, () => time, wait));
-  await run(createGroqRuntime(config, fetcher, () => time, wait));
+  const second = createGroqRuntime(config, fetcher, () => time, wait);
+  const progress: number[] = [];
+  second.setWaitListener?.((ms) => progress.push(ms));
+  await run(second);
   assert.equal(bodies.length, 2);
   const body = bodies[1];
   const prompt = JSON.stringify({
@@ -168,6 +185,8 @@ test("successful token headers pace a later request across recreated runtimes", 
   const estimate =
     Math.ceil(new TextEncoder().encode(prompt).length / 4) + body.max_tokens;
   assert.deepEqual(waits, [Math.ceil((Math.min(estimate, 2000) - 100) / 0.1)]);
+  assert.deepEqual(progress, waits);
+  second.setWaitListener?.(undefined);
 });
 
 test("cancelling a quota wait prevents the next upstream request", async () => {
@@ -194,6 +213,8 @@ test("cancelling a quota wait prevents the next upstream request", async () => {
         });
     });
   const runtime = createGroqRuntime(config, fetcher, () => 1000, wait);
+  const progress: number[] = [];
+  runtime.setWaitListener?.((ms) => progress.push(ms));
   await run(runtime);
   const controller = new AbortController();
   const pending = run(runtime, controller.signal);
@@ -201,6 +222,12 @@ test("cancelling a quota wait prevents the next upstream request", async () => {
   controller.abort();
   await assert.rejects(pending);
   assert.equal(calls, 1);
+  assert.equal(progress.length, 1);
+  assert.ok(progress[0] > 0);
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  await assert.rejects(run(runtime, alreadyAborted.signal));
+  assert.equal(progress.length, 1);
 });
 
 test("concurrent requests reserve shared token capacity before calling upstream", async () => {
@@ -450,9 +477,20 @@ test("429 quota diagnostics log only recognized numeric metadata", async () => {
         { status: 429, headers: { "retry-after": "148" } },
       );
     };
+    const diagnostic = {
+      metric: "tokens",
+      window: "day",
+      limit: "100000",
+      used: "99500",
+      requested: "2000",
+    };
     const runtime = createGroqRuntime(config, fetcher, () => 1000);
-    await expectLimited(run(runtime), "148");
-    await expectLimited(run(runtime), "148");
+    await expectLimited(run(runtime), "148", diagnostic);
+    await expectLimited(
+      run(createGroqRuntime(config, fetcher, () => 1000)),
+      "148",
+      diagnostic,
+    );
     assert.equal(calls, 1);
     const quotaLogs = captured.filter(
       (args) => args[0] === "[GROQ] provider quota",

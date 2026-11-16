@@ -171,7 +171,29 @@ export const checkpointSchema = z.object({
 export type TurnCheckpoint = z.infer<typeof checkpointSchema>;
 export const turnStatusSchema = z.object({
   status: z.enum(["complete", "partial", "provider-limit", "connection-error"]),
+  code: z
+    .enum([
+      "MODEL_RESPONSE_INCOMPLETE",
+      "PROVIDER_RATE_LIMIT",
+      "TIMEOUT",
+      "NETWORK_ERROR",
+      "APPLICATION_ERROR",
+      "BUSY",
+      "REQUEST_LIMIT",
+    ])
+    .optional(),
+  message: z.string().max(500).optional(),
+  retryAt: z.number().int().nonnegative().optional(),
   retryAfter: z.number().nonnegative().optional(),
+  providerLimit: z
+    .object({
+      metric: z.enum(["tokens", "requests"]),
+      window: z.enum(["minute", "day"]),
+      limit: z.number().nonnegative(),
+      used: z.number().nonnegative(),
+      requested: z.number().nonnegative(),
+    })
+    .optional(),
   usage: z
     .object({
       inputTokens: z.number(),
@@ -182,6 +204,46 @@ export const turnStatusSchema = z.object({
     .optional(),
 });
 export type TurnStatus = z.infer<typeof turnStatusSchema>;
+export const chatProgressSchema = z.object({
+  phase: z.enum([
+    "understanding",
+    "catalog",
+    "details",
+    "comparison",
+    "cart",
+    "answer",
+    "provider-wait",
+    "provider-switch",
+  ]),
+  startedAt: z.number().int().nonnegative(),
+  retryAt: z.number().int().nonnegative().optional(),
+});
+export type ChatProgress = z.infer<typeof chatProgressSchema>;
+const catalogId = z
+  .string()
+  .refine(
+    (id) => products.some((product) => product.id === id),
+    "Unknown catalog product.",
+  );
+export const shoppingActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("compare"),
+    productIds: z
+      .array(catalogId)
+      .min(2)
+      .max(10)
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        "Choose distinct products.",
+      ),
+  }),
+  z.object({ type: z.literal("details"), productId: catalogId }),
+]);
+export type ShoppingAction = z.infer<typeof shoppingActionSchema>;
+export const chatMetadataSchema = z.object({
+  shoppingAction: shoppingActionSchema.optional(),
+});
+export type ChatMetadata = z.infer<typeof chatMetadataSchema>;
 
 /** State sent by the browser is a preference hint. Product facts always come from the catalog. */
 export function sanitizeState(value: unknown): AgentState {

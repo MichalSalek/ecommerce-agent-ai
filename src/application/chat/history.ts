@@ -11,6 +11,7 @@ import {
   comparisonSchema,
   comparison,
   turnStatusSchema,
+  chatMetadataSchema,
 } from "./shopping-v3";
 import {
   searchInput,
@@ -212,6 +213,7 @@ const baseMessage = z.object({
   id: z.string().min(1).max(150),
   role: z.enum(["user", "assistant"]),
   parts: z.array(z.unknown()).max(40),
+  metadata: chatMetadataSchema.optional(),
 });
 export interface ConversationSnapshot {
   version: 1;

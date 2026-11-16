@@ -10,4 +10,10 @@ export interface ChatRuntime {
   providerOptions: Record<string, Record<string, JSONValue>>;
   maxOutputTokens: number;
   takeUsage?: () => ModelUsage[];
+  setWaitListener?: (
+    listener: ((milliseconds: number) => void) | undefined,
+  ) => void;
+  setSwitchListener?: (
+    listener: ((modelId: string) => void) | undefined,
+  ) => void;
 }

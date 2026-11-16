@@ -92,7 +92,7 @@ test("selected product cards do not show catalog search counts, including after 
   const check = async () => {
     await expect(results.locator(".product.compact")).toHaveCount(1);
     await expect(
-      results.getByRole("link", { name: "Ceramic mugs", exact:true }),
+      results.getByRole("link", { name: "Ceramic mugs", exact: true }),
     ).toBeVisible();
     await expect(results.getByText("Showing 1 product")).toBeVisible();
     await expect(results.locator(".result-counts")).toHaveCount(0);
@@ -101,6 +101,362 @@ test("selected product cards do not show catalog search counts, including after 
   await check();
   await page.reload();
   await check();
+});
+
+test("comparison after details names the original five displayed products", async ({
+  page,
+}) => {
+  let calls = 0;
+  const prompts: string[] = [];
+  await page.route("**/api/chat", async (route) => {
+    const body = route.request().postDataJSON();
+    calls++;
+    prompts.push(body.messages.at(-1).parts[0].text);
+    const part =
+      calls === 1
+        ? { type: "data-products", data: evidence(5) }
+        : calls === 2
+          ? {
+              type: "data-products",
+              data: {
+                ...evidence(1),
+                evidenceKind: "selection",
+                products: [{ id: products[0].id }],
+                scopeTotal: 1,
+                totalMatches: 1,
+                unseenMatches: 1,
+                remainingMatches: 0,
+              },
+            }
+          : {
+              type: "text-delta",
+              id: "reply",
+              delta: "Comparing your selection.",
+            };
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers,
+      body: answer(
+        calls >= 3
+          ? [
+              { type: "text-start", id: "reply" },
+              part,
+              { type: "text-end", id: "reply" },
+            ]
+          : [part],
+      ),
+    });
+  });
+  await page.goto("/chat");
+  await send(page, "Find coffee products");
+  await expect(
+    page.locator(".chat-products").last().locator(".product"),
+  ).toHaveCount(5);
+  await page.getByRole("button", { name: "More details" }).click();
+  await expect(
+    page.locator(".chat-products").last().locator(".product"),
+  ).toHaveCount(1);
+  expect(prompts[1]).toBe(`Tell me more about ${products[0].name}`);
+  await page.getByRole("button", { name: "Compare these" }).click();
+  await expect.poll(() => calls).toBe(3);
+  expect(prompts[2]).toBe(
+    `Compare ${products
+      .slice(0, 5)
+      .map((product) => product.name)
+      .join(", ")}`,
+  );
+  await page.getByRole("button", { name: "Add the first to cart" }).click();
+  await expect.poll(() => calls).toBe(4);
+  expect(prompts[3]).toBe(`Add ${products[0].name} to my cart`);
+});
+
+test("restored legacy failure shows one panel without stale reply text and keeps cards", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    ({ savedEvidence }) => {
+      localStorage.setItem(
+        "aurelle.conversation.v1",
+        JSON.stringify({
+          version: 1,
+          id: "legacy-failure",
+          draft: "",
+          messages: [
+            {
+              id: "user-legacy",
+              role: "user",
+              parts: [{ type: "text", text: "Find a mug" }],
+            },
+            {
+              id: "assistant-legacy",
+              role: "assistant",
+              parts: [
+                {
+                  type: "text",
+                  text: "OLD GENERIC FAILURE secret-provider-detail",
+                },
+                { type: "data-products", data: savedEvidence },
+                { type: "data-turnStatus", data: { status: "partial" } },
+                {
+                  type: "data-turnStatus",
+                  data: {
+                    status: "connection-error",
+                    code: "NETWORK_ERROR",
+                    message:
+                      "The connection was interrupted. Please try again.",
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    },
+    { savedEvidence: evidence(1) },
+  );
+  await page.goto("/chat");
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(
+    page.getByText("The connection was interrupted. Please try again."),
+  ).toHaveCount(1);
+  await expect(
+    page.getByText(/OLD GENERIC FAILURE|secret-provider-detail/),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy reply" })).toHaveCount(0);
+  await expect(page.locator(".product-results .product.compact")).toHaveCount(
+    1,
+  );
+});
+
+test("unknown HTTP error details are never shown in the conversation", async ({
+  page,
+}) => {
+  await page.route("**/api/chat", async (route) =>
+    route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      headers: { "Retry-After": "30" },
+      body: JSON.stringify({ error: "raw-secret-provider-error" }),
+    }),
+  );
+  await page.goto("/chat");
+  await send(page, "Find coffee");
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(
+    page.getByText("The model provider has reached its limit."),
+  ).toBeVisible();
+  await expect(page.getByText(/raw-secret-provider-error/)).toHaveCount(0);
+});
+
+test("provider cooldown blocks retry and sending across reload and new chat", async ({
+  page,
+}) => {
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
+  let calls = 0;
+  await page.route("**/api/chat", async (route) => {
+    calls++;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers,
+      body: answer([
+        {
+          type: "data-turnStatus",
+          data: {
+            status: "provider-limit",
+            code: "PROVIDER_RATE_LIMIT",
+            retryAt: now + 180_000,
+            message: "The provider limit was reached.",
+            providerLimit: {
+              metric: "tokens",
+              window: "day",
+              limit: 200000,
+              used: 199453,
+              requested: 2390,
+            },
+          },
+        },
+      ]),
+    });
+  });
+  await page.goto("/chat");
+  await send(page, "Find coffee");
+  await expect(page.getByText(/daily token limit/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry last message" }),
+  ).toBeDisabled();
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  const thread = page.getByRole("log", { name: "Conversation messages" });
+  await expect(thread.getByRole("alert")).toHaveCount(0);
+  await expect(
+    thread.getByText("The response could not be completed. Please try again."),
+  ).toHaveCount(0);
+  await page.getByRole("textbox").fill("Keep this draft");
+  await expect(
+    page.getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  await page.getByRole("textbox").press("Enter");
+  expect(calls).toBe(1);
+  const firstCountdown = await page.getByText(/^Retry in /).textContent();
+  await page.clock.fastForward("00:02");
+  await expect(page.getByText(/^Retry in /)).not.toHaveText(
+    firstCountdown ?? "",
+  );
+  await page.reload();
+  await expect(page.getByText(/daily token limit/)).toBeVisible();
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(thread.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("Find coffee", { exact: true })).toBeVisible();
+  await expect(page.getByText(/no saved response/)).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Resume response" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Retry last message" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("textbox")).toHaveValue("Keep this draft");
+  await expect(
+    page.getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "New conversation" }).click();
+  await expect(page.getByText(/daily token limit/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "My morning coffee", exact: true }),
+  ).toBeDisabled();
+  await page.clock.fastForward("03:01");
+  await expect(
+    page.getByRole("button", { name: "My morning coffee", exact: true }),
+  ).toBeEnabled();
+  expect(calls).toBe(1);
+});
+
+test("transient progress animates and stopped or reset streams cannot update it", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    const original = window.fetch;
+    window.fetch = async (input, init) => {
+      if (new URL(String(input), location.href).pathname !== "/api/chat")
+        return original(input, init);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          const sendPart = (part: object) =>
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(part)}\n\n`),
+            );
+          sendPart({ type: "start", messageId: crypto.randomUUID() });
+          sendPart({
+            type: "data-progress",
+            transient: true,
+            data: { phase: "catalog", startedAt: Date.now() },
+          });
+          (window as unknown as { emitSwitch: () => void }).emitSwitch = () =>
+            sendPart({
+              type: "data-progress",
+              transient: true,
+              data: { phase: "provider-switch", startedAt: Date.now() },
+            });
+          (window as unknown as { emitLate: () => void }).emitLate = () => {
+            try {
+              sendPart({
+                type: "data-progress",
+                transient: true,
+                data: { phase: "cart", startedAt: Date.now() },
+              });
+            } catch {}
+          };
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              try {
+                controller.error(new DOMException("Aborted", "AbortError"));
+              } catch {}
+            },
+            { once: true },
+          );
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "content-type": "text/event-stream",
+          "x-vercel-ai-ui-message-stream": "v1",
+        },
+      });
+    };
+  });
+  await page.goto("/chat");
+  await send(page, "Find products");
+  await expect(page.getByText("Searching the collection…")).toBeVisible();
+  expect(
+    await page
+      .locator(".progress-dots")
+      .evaluate((element) => getComputedStyle(element).animationName),
+  ).not.toBe("none");
+  await page.evaluate(() =>
+    (window as unknown as { emitSwitch: () => void }).emitSwitch(),
+  );
+  await expect(
+    page.getByText("Switching to an available model…"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Stop response" }).click();
+  await page.evaluate(() =>
+    (window as unknown as { emitLate: () => void }).emitLate(),
+  );
+  await expect(page.locator(".chat-progress")).toHaveCount(0);
+  await send(page, "Try another search");
+  await expect(page.getByText("Searching the collection…")).toBeVisible();
+  await page.getByRole("button", { name: "New conversation" }).click();
+  await page.evaluate(() =>
+    (window as unknown as { emitLate: () => void }).emitLate(),
+  );
+  await expect(page.locator(".chat-progress")).toHaveCount(0);
+  await expect(page.getByText("Preparing your cart selection…")).toHaveCount(0);
+});
+
+test("pre-stream request limit uses one disabled failure panel", async ({
+  page,
+}) => {
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
+  let calls = 0;
+  await page.route("**/api/chat", async (route) => {
+    calls++;
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      headers: { "Retry-After": "30" },
+      body: JSON.stringify({
+        code: "REQUEST_LIMIT",
+        message: "The demo has reached its hourly request limit.",
+        retryAt: now + 30_000,
+        retryAfter: 30,
+      }),
+    });
+  });
+  await page.goto("/chat");
+  await send(page, "Find coffee");
+  await expect(
+    page.getByText("The demo has reached its hourly request limit."),
+  ).toBeVisible();
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Retry last message" }),
+  ).toBeDisabled();
+  await page.getByRole("textbox").fill("Keep this text");
+  await page.getByRole("textbox").press("Enter");
+  expect(calls).toBe(1);
+  await page.reload();
+  await expect(
+    page.getByText("The demo has reached its hourly request limit."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  expect(calls).toBe(1);
 });
 
 test("category selection sends a chat turn and product details survive Back and reload", async ({

@@ -86,6 +86,9 @@ export async function POST(request: Request) {
     if (admission && !admission.allowed)
       return Response.json(
         {
+          code: admission.reason === "busy" ? "BUSY" : "REQUEST_LIMIT",
+          retryAfter: admission.retryAfter,
+          retryAt: Date.now() + admission.retryAfter * 1000,
           error:
             admission.reason === "busy"
               ? "The assistant is helping other visitors. Please retry in a few seconds."
@@ -117,6 +120,7 @@ export async function POST(request: Request) {
           userMessageId: user.id,
           conversationId: body.conversationId,
           state: stateFromMessages(normalized, user.id),
+          action: user.metadata?.shoppingAction,
           cart: body.cart?.lines,
           history: normalized
             .slice(0, -1)

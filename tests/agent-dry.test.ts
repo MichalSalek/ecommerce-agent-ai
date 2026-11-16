@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { env } from "@huggingface/transformers";
 import { products } from "../src/data/products";
 import { CatalogService } from "../src/application/catalog/catalog-service";
+import { restoreConversation } from "../src/application/chat/history";
 import {
   initialAgentState,
   transitionState,
@@ -185,6 +186,365 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     ),
   );
   try {
+    await t.test("429 after a UI comparison keeps verified comparison cards and one failed status", async () => {
+      const ids = ["mugs", "carafe", "travel-mug", "coffee-grinder", "pour-over-dripper"];
+      let calls = 0;
+      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", balancer: true, windowsTransport: false }, async () => {
+        calls++;
+        return Response.json({ error: { message: "tokens per minute: Limit 1000, Used 900, Requested 200" } }, { status: 429, headers: { "retry-after": "8" } });
+      });
+      const state = { ...initialAgentState(), criteria: { functionalGroup: "coffee" as const }, resultIds: ids, lastIds: [ids[0]], shownIds: ids };
+      const events = await collect(createNativeAgentStream(runtime, catalog, {
+        text: "Compare the five coffee products", userMessageId: `compare-limit-${++sequence}`, conversationId: `visitor-${sequence}`, state,
+        action: { type: "compare", productIds: ids },
+      }, new AbortController().signal, { contract: "shopping-v3" }));
+      assert.equal(calls, 1);
+      const comparisons = events.filter(event => event.type === "data-comparison");
+      assert.equal(comparisons.length, 1);
+      assert.ok(comparisons[0].type === "data-comparison");
+      assert.deepEqual(comparisons[0].data.productIds, ids);
+      const statuses = events.filter(event => event.type === "data-turnStatus");
+      assert.equal(statuses.length, 1);
+      assert.ok(statuses[0].type === "data-turnStatus");
+      assert.equal(statuses[0].data.status, "provider-limit");
+      assert.equal(statuses[0].data.code, "PROVIDER_RATE_LIMIT");
+      assert.equal(statuses[0].data.retryAfter, 8);
+      assert.ok(!events.some(event => event.type === "error" || event.type === "data-cartAction"));
+      assert.equal(events.at(-1)?.type, "finish");
+      const checkpoint = events.find(event => event.type === "data-shoppingState");
+      assert.ok(checkpoint?.type === "data-shoppingState");
+      assert.deepEqual(checkpoint.data.after.resultIds, ids);
+      assert.deepEqual(checkpoint.data.after.criteria, state.criteria);
+    });
+    await t.test("exhausted presentation corrections retain the loaded comparison as partial", async () => {
+      const ids = ["mugs", "carafe", "travel-mug", "coffee-grinder", "pour-over-dripper"];
+      const bad = call("presentAnswer", { text: "[[price:invented]]", language: "en", evidenceIds: ["e1"], productIds: [], view: "comparison" });
+      const mock = scripted([bad, bad]);
+      const events = await collect(createNativeAgentStream(mock.runtime, catalog, {
+        text: "Compare the five coffee products", userMessageId: `compare-partial-${++sequence}`, state: { ...initialAgentState(), resultIds: ids },
+        action: { type: "compare", productIds: ids },
+      }, new AbortController().signal, { contract: "shopping-v3" }));
+      assert.equal(mock.count(), 2);
+      const comparison = events.find(event => event.type === "data-comparison");
+      assert.ok(comparison?.type === "data-comparison");
+      assert.deepEqual(comparison.data.productIds, ids);
+      const statuses = events.filter(event => event.type === "data-turnStatus");
+      assert.equal(statuses.length, 1);
+      assert.ok(statuses[0].type === "data-turnStatus");
+      assert.equal(statuses[0].data.status, "partial");
+      assert.equal(statuses[0].data.code, "MODEL_RESPONSE_INCOMPLETE");
+      assert.ok(!events.some(event => event.type === "error" || event.type === "data-cartAction"));
+      assert.equal(events.at(-1)?.type, "finish");
+    });
+    await t.test(
+      "validated UI detail and comparison actions use canonical preload and one model inference",
+      async () => {
+        const ids = [
+          "mugs",
+          "carafe",
+          "travel-mug",
+          "coffee-grinder",
+          "pour-over-dripper",
+        ];
+        const state = {
+          ...initialAgentState(),
+          criteria: { functionalGroup: "coffee" as const, maxPrice: 150 },
+          resultIds: ids,
+          lastIds: ids,
+          shownIds: ids,
+        };
+        const detailModel = scripted([
+          (m) =>
+            present(m, {
+              evidenceIds: ["e1"],
+              productIds: [ids[0]],
+              view: "products",
+            }),
+        ]);
+        const detailTurn = {
+          text: "Tell me more about Ceramic mugs",
+          userMessageId: `ui-detail-${++sequence}`,
+          state,
+          action: { type: "details" as const, productId: ids[0] },
+        };
+        const detail = await runAgent(
+          detailModel.runtime.model,
+          catalog,
+          detailTurn,
+          new AbortController().signal,
+          detailModel.runtime,
+        );
+        assert.equal(detail.status.status, "complete");
+        assert.equal(detailModel.count(), 1);
+        assert.deepEqual(detailModel.requests[0].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        assert.equal(lastTool(detailModel.requests[0].messages).id, ids[0]);
+        assert.equal(
+          lastTool(detailModel.requests[0].messages).priceEUR,
+          products.find((p) => p.id === ids[0])?.price,
+        );
+        assert.ok(
+          detailModel.requests[0].messages.some(
+            (m: any) => m.role === "user" && m.content.includes("Ceramic mugs"),
+          ),
+        );
+        assert.deepEqual(detail.checkpoint.after.criteria, state.criteria);
+        assert.deepEqual(detail.checkpoint.after.resultIds, ids);
+        assert.deepEqual(detail.checkpoint.after.lastIds, [ids[0]]);
+        const compareModel = scripted([
+          (m) => present(m, { evidenceIds: ["e1"], view: "comparison" }),
+        ]);
+        const compareTurn = {
+          text: "Compare Ceramic mugs, Glass carafe, Travel mug, Coffee grinder and Pour-over dripper",
+          userMessageId: `ui-compare-${++sequence}`,
+          state: detail.checkpoint.after,
+          action: { type: "compare" as const, productIds: ids },
+        };
+        const compared = await runAgent(
+          compareModel.runtime.model,
+          catalog,
+          compareTurn,
+          new AbortController().signal,
+          compareModel.runtime,
+        );
+        assert.equal(compared.status.status, "complete");
+        assert.equal(compareModel.count(), 1);
+        assert.deepEqual(compareModel.requests[0].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        assert.deepEqual(
+          lastTool(compareModel.requests[0].messages).products.map(
+            (p: { id: string }) => p.id,
+          ),
+          ids,
+        );
+        assert.ok(
+          compareModel.requests[0].messages.some(
+            (m: any) => m.role === "user" && m.content.includes("Ceramic mugs"),
+          ),
+        );
+        assert.deepEqual(compared.comparison?.productIds, ids);
+        assert.deepEqual(compared.checkpoint.after.criteria, state.criteria);
+        assert.deepEqual(compared.checkpoint.after.resultIds, ids);
+      },
+    );
+    await t.test(
+      "invalid UI action IDs and comparison lengths fail before model inference",
+      async () => {
+        for (const action of [
+          { type: "details", productId: "invented" },
+          { type: "compare", productIds: ["mugs", "invented"] },
+          { type: "compare", productIds: ["mugs"] },
+          { type: "compare", productIds: ["mugs", "mugs"] },
+          {
+            type: "compare",
+            productIds: products.slice(0, 11).map((p) => p.id),
+          },
+        ]) {
+          const mock = scripted([]);
+          await assert.rejects(
+            runAgent(
+              mock.runtime.model,
+              catalog,
+              {
+                text: "Details",
+                userMessageId: `invalid-ui-${++sequence}`,
+                state: initialAgentState(),
+                action: action as any,
+              },
+              new AbortController().signal,
+              mock.runtime,
+            ),
+          );
+          assert.equal(mock.count(), 0);
+        }
+      },
+    );
+    await t.test(
+      "five coffee results survive one-product detail before comparing the original group",
+      async () => {
+        const first = await run(
+          catalog,
+          [
+            call(
+              "searchProducts",
+              nativeTransition(
+                "new",
+                { functionalGroup: "coffee" },
+                { requestedCount: 5 },
+              ),
+            ),
+            present,
+          ],
+          "Show five coffee products",
+        ).result;
+        assert.equal(first.status.status, "complete");
+        const ids = first.search!.products.map((p) => p.id);
+        assert.equal(ids.length, 5);
+        assert.deepEqual(first.checkpoint.after.resultIds, ids);
+        const detail = run(
+          catalog,
+          [
+            call("getProductDetails", { productId: ids[0] }),
+            (m) =>
+              present(m, {
+                evidenceIds: ["e1"],
+                productIds: [ids[0]],
+                view: "products",
+              }),
+          ],
+          "Tell me more about the first one",
+          first.checkpoint.after,
+        );
+        const inspected = await detail.result;
+        assert.equal(inspected.status.status, "complete");
+        assert.deepEqual(inspected.checkpoint.after.lastIds, [ids[0]]);
+        assert.deepEqual(inspected.checkpoint.after.resultIds, ids);
+        assert.deepEqual(detail.mock.requests[1].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        const action = run(
+          catalog,
+          [
+            call("compareProducts", { productIds: ids }),
+            (m) => present(m, { view: "comparison" }),
+          ],
+          "Compare these five products",
+          inspected.checkpoint.after,
+        );
+        const compared = await action.result;
+        assert.equal(compared.status.status, "complete");
+        assert.equal(action.mock.count(), 2);
+        assert.deepEqual(compared.comparison?.productIds, ids);
+        assert.deepEqual(compared.checkpoint.after.resultIds, ids);
+        assert.deepEqual(action.mock.requests[1].tool_choice, {
+          type: "function",
+          function: { name: "presentAnswer" },
+        });
+        assert.deepEqual(
+          compared.evidence
+            .filter(
+              (e) => !["userPreferences", "currentSelection"].includes(e.tool),
+            )
+            .map((e) => e.tool),
+          ["compareProducts"],
+        );
+        const userMessage = action.mock.requests[0].messages.find(
+          (m: any) => m.role === "user",
+        ).content;
+        const match = userMessage.match(
+          /Shopping state \(preferences, not facts\): ([^\n]+)/,
+        );
+        assert.ok(match);
+        const sent = JSON.parse(match[1]);
+        assert.deepEqual(sent.resultIds, ids);
+        assert.deepEqual(
+          sent.last.products.map((p: { id: string }) => p.id),
+          [ids[0]],
+        );
+      },
+    );
+    await t.test(
+      "v3 quota failure sends progress and one typed status that survives history restore",
+      async () => {
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const runtime = createGroqRuntime(
+          {
+            baseURL: "http://127.0.0.1:8787/v1",
+            modelId: "test",
+            balancer: true,
+            windowsTransport: false,
+          },
+          async () => {
+            await blocked;
+            return Response.json(
+              {
+                error: {
+                  message:
+                    "tokens per day: Limit 200000, Used 199453, Requested 2390 private-content",
+                },
+              },
+              { status: 429, headers: { "retry-after": "55" } },
+            );
+          },
+        );
+        const userMessageId = `quota-${++sequence}`;
+        const stream = createNativeAgentStream(
+          runtime,
+          catalog,
+          { text: "show products", state: initialAgentState(), userMessageId },
+          new AbortController().signal,
+          { contract: "shopping-v3" },
+        );
+        const reader = stream.getReader();
+        const start = await reader.read();
+        const progress = await reader.read();
+        assert.equal(start.value?.type, "start");
+        assert.equal(progress.value?.type, "data-progress");
+        assert.ok(
+          progress.value?.type === "data-progress" &&
+            progress.value.transient === true,
+        );
+        const before = Date.now();
+        release();
+        const events = [];
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          events.push(next.value);
+        }
+        reader.releaseLock();
+        const after = Date.now();
+        const statuses = events.filter((e) => e.type === "data-turnStatus");
+        assert.equal(statuses.length, 1);
+        const failure = statuses[0];
+        assert.ok(failure.type === "data-turnStatus");
+        assert.equal(failure.data.status, "provider-limit");
+        assert.equal(failure.data.code, "PROVIDER_RATE_LIMIT");
+        assert.deepEqual(failure.data.providerLimit, {
+          metric: "tokens",
+          window: "day",
+          limit: 200000,
+          used: 199453,
+          requested: 2390,
+        });
+        assert.ok(
+          failure.data.retryAt !== undefined &&
+            failure.data.retryAt >= before + 55_000 &&
+            failure.data.retryAt <= after + 55_000,
+        );
+        assert.ok(
+          !events.some((e) => e.type === "error" || e.type === "text-delta"),
+        );
+        assert.equal(events.at(-1)?.type, "finish");
+        assert.doesNotMatch(JSON.stringify(events), /private-content/);
+        const snapshot = restoreConversation(
+          JSON.stringify({
+            version: 1,
+            id: "quota-history",
+            draft: "",
+            messages: [
+              {
+                id: userMessageId,
+                role: "user",
+                parts: [{ type: "text", text: "show products" }],
+              },
+              { id: "assistant-failed", role: "assistant", parts: [failure] },
+            ],
+          }),
+        );
+        assert.ok(snapshot);
+        assert.equal(snapshot.messages[0].id, userMessageId);
+        assert.deepEqual(snapshot.messages[1].parts, [failure]);
+      },
+    );
     await t.test(
       "current selection confirms the stock of the last five products without a catalog read",
       async () => {
@@ -2030,16 +2390,16 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
             });
           },
         );
-        await assert.rejects(
-          runAgent(
-            failed.model,
-            catalog,
-            turn,
-            new AbortController().signal,
-            failed,
-          ),
+        const interrupted = await runAgent(
+          failed.model,
+          catalog,
+          turn,
+          new AbortController().signal,
+          failed,
         );
         assert.equal(firstPage.length, 2);
+        assert.equal(interrupted.status.status, "connection-error");
+        assert.deepEqual(interrupted.search?.products.map((p) => p.id), firstPage);
         const retry = scripted([
           call("searchProducts", nativeTransition("more")),
           present,

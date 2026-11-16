@@ -1,16 +1,20 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { ChatRuntime, ModelUsage } from "./runtime";
 import { windowsFetch } from "./windows-fetch";
+import { createHash } from "node:crypto";
+import { makeGroqFailover } from "./groq-failover";
 export interface GroqConfig {
   baseURL: string;
   modelId: string;
   apiKey?: string;
   balancer: boolean;
   windowsTransport: boolean;
+  fallback?: { modelId: string; apiKey: string };
 }
 // Runtime objects are created per request. Share only by underlying transport and
 // endpoint/model identity, without retaining credentials in the cooldown key.
-const cooldowns = new WeakMap<typeof fetch, Map<string, number>>();
+type Cooldown = { deadline: number; diagnostic?: QuotaDiagnostic };
+const cooldowns = new WeakMap<typeof fetch, Map<string, Cooldown>>();
 type TokenBucket = {
   limit: number;
   remaining: number;
@@ -160,7 +164,11 @@ function retryDeadline(value: string | null, now: number): number | undefined {
   return Number.isFinite(deadline) && deadline > now ? deadline : undefined;
 }
 
-function rateLimitResponse(seconds?: number, upstream?: Headers): Response {
+function rateLimitResponse(
+  seconds?: number,
+  upstream?: Headers,
+  diagnostic?: QuotaDiagnostic,
+): Response {
   return Response.json(
     { error: { message: "The model provider is temporarily rate limited." } },
     {
@@ -173,6 +181,15 @@ function rateLimitResponse(seconds?: number, upstream?: Headers): Response {
         ),
         "cache-control": "no-store",
         ...(seconds === undefined ? {} : { "retry-after": String(seconds) }),
+        ...(diagnostic
+          ? {
+              "x-aurelle-quota-metric": diagnostic.metric,
+              "x-aurelle-quota-window": diagnostic.window,
+              "x-aurelle-quota-limit": String(diagnostic.limit),
+              "x-aurelle-quota-used": String(diagnostic.used),
+              "x-aurelle-quota-requested": String(diagnostic.requested),
+            }
+          : {}),
       },
     },
   );
@@ -263,10 +280,41 @@ export function createGroqRuntime(
     : fetch,
   now: () => number = Date.now,
   wait: Waiter = waitForTokens,
+  options?: {
+    quotaWaitMaxMs?: number;
+    primaryTimeoutMs?: number;
+    fallbackTimeoutMs?: number;
+  },
 ): ChatRuntime {
   if (!config.balancer && !config.apiKey)
     throw new Error("GROQ_API_KEY is required for direct Groq access.");
+  if (config.fallback) {
+    const { fallback, ...primaryConfig } = config;
+    const primary = createGroqRuntime(
+      primaryConfig,
+      fetchImplementation,
+      now,
+      wait,
+      { quotaWaitMaxMs: 0 },
+    );
+    const alternative = createGroqRuntime(
+      { ...primaryConfig, modelId: fallback.modelId, apiKey: fallback.apiKey },
+      fetchImplementation,
+      now,
+      wait,
+      { quotaWaitMaxMs: 10_000 },
+    );
+    return makeGroqFailover(
+      primary,
+      alternative,
+      config,
+      fetchImplementation,
+      now,
+      options,
+    );
+  }
   const capturedUsage: ModelUsage[] = [];
+  let waitListener: ((milliseconds: number) => void) | undefined;
   let transportCooldowns = cooldowns.get(fetchImplementation);
   if (!transportCooldowns) {
     transportCooldowns = new Map();
@@ -283,17 +331,26 @@ export function createGroqRuntime(
     config.baseURL.replace(/\/+$/, ""),
     config.modelId,
     config.balancer,
+    createHash("sha256")
+      .update(config.apiKey ?? "")
+      .digest("hex"),
   ]);
   const transport: typeof fetch = async (input, init) => {
     init?.signal?.throwIfAborted();
-    const remaining = (deadlines.get(key) ?? 0) - now();
+    const cooldown = deadlines.get(key);
+    const remaining = (cooldown?.deadline ?? 0) - now();
     if (remaining > 0) {
       console.info("[GROQ] provider cooldown: upstream Retry-After");
-      return rateLimitResponse(Math.ceil(remaining / 1000));
+      return rateLimitResponse(
+        Math.ceil(remaining / 1000),
+        undefined,
+        cooldown?.diagnostic,
+      );
     }
     deadlines.delete(key);
     const estimate = estimatedTokens(init?.body);
     let reserved: TokenBucket | undefined;
+    let waited = 0;
     while (estimate !== undefined) {
       init?.signal?.throwIfAborted();
       const bucket = buckets.get(key);
@@ -307,17 +364,53 @@ export function createGroqRuntime(
         break;
       }
       const delay = Math.ceil((needed - bucket.remaining) / bucket.refillPerMs);
+      if (
+        options?.quotaWaitMaxMs !== undefined &&
+        waited + delay > options.quotaWaitMaxMs
+      ) {
+        return Response.json(
+          {
+            error: {
+              message: "The model provider is temporarily rate limited.",
+            },
+          },
+          {
+            status: 429,
+            headers: {
+              "retry-after": String(Math.ceil(delay / 1000)),
+              "x-aurelle-local-capacity": "1",
+              "x-aurelle-quota-metric": "tokens",
+              "x-aurelle-quota-window": "minute",
+              "x-aurelle-quota-limit": String(bucket.limit),
+              "x-aurelle-quota-requested": String(estimate),
+              "x-aurelle-quota-estimated": "1",
+            },
+          },
+        );
+      }
       console.info(
         "[GROQ] waiting for reported token quota",
         JSON.stringify({ milliseconds: delay }),
       );
+      init?.signal?.throwIfAborted();
+      try {
+        waitListener?.(delay);
+      } catch {
+        /* Progress reporting must not break transport. */
+      }
       await wait(delay, init?.signal);
+      waited += delay;
     }
     init?.signal?.throwIfAborted();
-    const cooldownRemaining = (deadlines.get(key) ?? 0) - now();
+    const cooldownAfterWait = deadlines.get(key);
+    const cooldownRemaining = (cooldownAfterWait?.deadline ?? 0) - now();
     if (cooldownRemaining > 0) {
       if (reserved) reserved.inFlight--;
-      return rateLimitResponse(Math.ceil(cooldownRemaining / 1000));
+      return rateLimitResponse(
+        Math.ceil(cooldownRemaining / 1000),
+        undefined,
+        cooldownAfterWait?.diagnostic,
+      );
     }
     // Background traffic preserves the balancer's dictation reservation; never use its cleanup route.
     const url = String(input).replace(
@@ -408,24 +501,32 @@ export function createGroqRuntime(
       response.headers.get("retry-after"),
       current,
     );
+    let ownCooldown: Cooldown | undefined;
     if (deadline !== undefined) {
-      const until = Math.max(deadlines.get(key) ?? 0, deadline);
-      deadlines.set(key, until);
+      const existing = deadlines.get(key);
+      if (!existing || deadline >= existing.deadline) {
+        ownCooldown = { deadline };
+        deadlines.set(key, ownCooldown);
+      }
       console.info("[GROQ] provider cooldown recorded: upstream Retry-After");
     }
     const diagnostic = await quotaDiagnostic(response);
     if (diagnostic) {
-      const retry = (deadlines.get(key) ?? 0) - now();
+      if (ownCooldown && deadlines.get(key) === ownCooldown) {
+        ownCooldown.diagnostic = diagnostic;
+      }
+      const retry = (deadlines.get(key)?.deadline ?? 0) - now();
       console.info("[GROQ] provider quota", {
         ...diagnostic,
         ...(retry > 0 ? { retryAfterSeconds: Math.ceil(retry / 1000) } : {}),
       });
     }
     await response.body?.cancel().catch(() => undefined);
-    const existing = (deadlines.get(key) ?? 0) - now();
+    const existing = (deadlines.get(key)?.deadline ?? 0) - now();
     return rateLimitResponse(
       existing > 0 ? Math.ceil(existing / 1000) : undefined,
       upstreamHeaders,
+      diagnostic,
     );
   };
   const provider = createOpenAICompatible({
@@ -452,5 +553,8 @@ export function createGroqRuntime(
     },
     maxOutputTokens: 1024,
     takeUsage: () => capturedUsage.splice(0),
+    setWaitListener: (listener) => {
+      waitListener = listener;
+    },
   };
 }

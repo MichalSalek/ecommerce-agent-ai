@@ -39,7 +39,7 @@ Search combines category, product kind and type, environment, price, availabilit
 
 A typed checkpoint records language, criteria, preferences, shown products and selections across turns. The `shopping-v3` stream carries the checkpoint, result evidence, category cards, comparisons and turn status. Older clients have adapters for the earlier result format. An explicit cart request can produce a proposal for one or more items; the browser validates and saves it before reporting success.
 
-The engine allows up to four model calls per turn, including presentation, with up to 1,024 output tokens per call. The Groq adapter requests low reasoning effort. Provider errors and incomplete responses remain visible as such. These limits do not make model output infallible.
+The engine allows up to four model calls per turn, including presentation, with up to 1,024 output tokens per call. The Groq adapter requests low reasoning effort for GPT-OSS and disables reasoning for the configured Qwen alternative. Provider errors and incomplete responses remain visible as such. These limits do not make model output infallible.
 
 The catalog's short purpose text and fuller product specifications are embedded separately, then their vectors are averaged with equal weight and normalized. Two CPU profiles are supported: pinned BGE small and MiniLM. The Docker/Render profile uses MiniLM. Each has a calibrated cutoff; a result must be within both its profile cutoff and 0.2 cosine distance of the best eligible neighbor. These are demo relevance rules, not a guarantee of accuracy.
 
@@ -95,7 +95,9 @@ GROQ_MODEL=openai/gpt-oss-120b
 GROQ_API_KEY=your-existing-key
 ```
 
-Keep credentials in `.env.local` or the hosting secret store, never in source. An optional OpenAI-compatible balancer can be selected with `GROQ_BALANCER=true`; `GROQ_TRANSPORT=windows` enables the loopback-only Windows transport when applicable. See `.env.example` for settings. Groq is an inference provider, distinct from xAI Grok. There is no silent provider fallback.
+Keep credentials in `.env.local` or the hosting secret store, never in source. An optional OpenAI-compatible balancer can be selected with `GROQ_BALANCER=true`; `GROQ_TRANSPORT=windows` enables the loopback-only Windows transport when applicable. See `.env.example` for settings. Groq is an inference provider, distinct from xAI Grok.
+
+An explicitly configured `GROQ_FALLBACK_MODEL=qwen/qwen3.8-27b` and `GROQ_FALLBACK_API_KEY` enable model failover within Groq. The production policy keeps 120B primary and uses Qwen after a quota, provider or attempt-timeout failure. Daily or unclassified quota failures suppress primary probes for at least ten minutes; minute-capacity and transient failures use at least one minute. A longer `Retry-After` always wins. One request probes recovery while concurrent requests keep using Qwen. This state is in process memory and resets after restart; it uses no database or background timer. Only the failed model inference is replayed, with the same user/tool context; application tools and cart writes are not replayed.
 
 A coding agent can also use [STARTER_PROMPT.md](STARTER_PROMPT.md) to inspect the project and guide setup. The [initial brief](docs/INITIAL_BRIEF.md) records the original assignment.
 

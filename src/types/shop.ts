@@ -6,10 +6,12 @@ import type {
   CategoryCard,
   Comparison,
   TurnStatus,
+  ChatProgress,
+  ChatMetadata,
 } from "@/application/chat/shopping-v3";
 export type { Product } from "@/domain/catalog/product";
 export type ChatMessage = UIMessage<
-  unknown,
+  ChatMetadata,
   {
     cartAction: CartAction;
     shoppingState: TurnCheckpoint;
@@ -17,5 +19,6 @@ export type ChatMessage = UIMessage<
     categories: CategoryCard[];
     comparison: Comparison;
     turnStatus: TurnStatus;
+    progress: ChatProgress;
   }
 >;

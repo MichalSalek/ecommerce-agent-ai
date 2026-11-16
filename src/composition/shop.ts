@@ -40,6 +40,14 @@ export function chatConfig() {
       baseURL: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
       modelId: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
       apiKey: process.env.GROQ_API_KEY,
+      ...(process.env.GROQ_FALLBACK_MODEL && process.env.GROQ_FALLBACK_API_KEY
+        ? {
+            fallback: {
+              modelId: process.env.GROQ_FALLBACK_MODEL,
+              apiKey: process.env.GROQ_FALLBACK_API_KEY,
+            },
+          }
+        : {}),
       balancer: process.env.GROQ_BALANCER === "true",
       windowsTransport: process.env.GROQ_TRANSPORT === "windows",
     },
