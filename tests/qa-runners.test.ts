@@ -69,21 +69,31 @@ test('facet-only resume rejects any prior search naming a canonical kind and unr
   try {
     git('init'); mkdirSync(join(dir,'scripts')); mkdirSync(join(dir,'src/application/chat'),{recursive:true}); mkdirSync(join(dir,'src/domain/catalog'),{recursive:true});
     copyFileSync('scripts/agent-local.mjs',join(dir,'scripts/agent-local.mjs')); write('scripts/agent-local-core.ts','export {};\n');
-    const facets='export const unchanged=1;\n', taxonomy='export const productKinds={furniture:{en:"furniture",pl:"meble",aliases:["furnishing","mebl"]},lighting:{en:"lighting",pl:"oświetlenie",aliases:["lampy"]}};\n';
-    write('src/application/chat/explicit-facets.ts',facets); write('src/domain/catalog/taxonomy.ts',taxonomy); write('src/other.ts','export const value=1;\n'); write('package-lock.json','{}\n');
+    const facets='export function resolveExplicitFacets(_text: string, _before: unknown, change: unknown, _filters: unknown[]) { return {change}; }\n', taxonomy='export const productKinds={furniture:{en:"furniture",pl:"meble",aliases:["furnishing","mebl"]},lighting:{en:"lighting",pl:"oświetlenie",aliases:["lampy"]}};\n';
+    write('src/application/chat/explicit-facets.ts',facets); write('src/application/chat/query-language.ts','export function queryLanguageError(q: string | undefined) { return q === "bad" ? {error:"invalid"} : undefined; }\n'); write('src/domain/catalog/taxonomy.ts',taxonomy); write('src/other.ts','export const value=1;\n'); write('package-lock.json','{}\n');
     symlinkSync(join(process.cwd(),'node_modules'),join(dir,'node_modules'),'dir');
     git('add','scripts','src','package-lock.json'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
     const revision=git('rev-parse','HEAD'), artifact=join(dir,'prior.json');
-    const turn={text:'I need something for my morning coffee',validated:true,operation:{kind:'search'},checkpoint:{after:{criteria:{query:'morning coffee'}}}};
-    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/v1',batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
+    const turn={text:'I need something for my morning coffee',validated:true,operation:{kind:'search'},checkpoint:{before:{criteria:{}},transition:{operation:'new',language:'en',criteria:{query:'morning coffee'}},after:{criteria:{query:'morning coffee'}}}};
+    const prior={fingerprint:digest(['src/application/chat/explicit-facets.ts','src/application/chat/query-language.ts','src/domain/catalog/taxonomy.ts','src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/v1',batches:[{name:'coffee',passed:true,turns:[turn]},{name:'failed',passed:false,turns:[{...turn,text:'garden furniture'}]}]};
     writeFileSync(artifact,JSON.stringify(prior)); write('src/application/chat/explicit-facets.ts',`${facets}// bounded fix\n`);
     const invoke=(extra:string[]=[])=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--facet-guard-revision',revision,'--inspect-resume',...extra],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
     const accepted=invoke(); assert.equal(accepted.status,0,accepted.stderr);
-    const proof=JSON.parse(accepted.stdout); assert.equal(proof.kind,'facet-guard-only'); assert.equal(proof.originalRevision,revision); assert.deepEqual(proof.reusedBatches,['coffee']); assert.deepEqual(proof.checkedSearches.map((row:{text:string})=>row.text),[turn.text]);
+    const proof=JSON.parse(accepted.stdout); assert.equal(proof.kind,'facet-guard-only'); assert.equal(proof.originalRevision,revision); assert.deepEqual(proof.reusedBatches,['coffee']); assert.deepEqual(proof.checkedSearches.map((row:{text:string})=>row.text),[turn.text]); assert.equal(proof.replayedSearches,1);
     for(const text of ['Show me garden furniture','Bez mebli proszę','Pokaż oswietlenie']) {
       writeFileSync(artifact,JSON.stringify({...prior,batches:[{name:'unsafe',passed:true,turns:[{...turn,text}]}]}));
       const rejected=invoke(); assert.notEqual(rejected.status,0); assert.match(rejected.stderr,/previously passing search contains a canonical kind alias/);
     }
+    writeFileSync(artifact,JSON.stringify(prior));
+    write('src/application/chat/explicit-facets.ts','export function resolveExplicitFacets(_t: string, _b: unknown, change: any) { return {change:{...change,criteria:{...change.criteria,maxPrice:150}}}; }\n');
+    const changedReplay=invoke(); assert.notEqual(changedReplay.status,0); assert.match(changedReplay.stderr,/previously passing search fails facet replay/);
+    write('src/application/chat/explicit-facets.ts','export function resolveExplicitFacets() { return {error:"invalid"}; }\n');
+    const errorReplay=invoke(); assert.notEqual(errorReplay.status,0); assert.match(errorReplay.stderr,/previously passing search fails facet replay/);
+    write('src/application/chat/explicit-facets.ts',`${facets}// bounded fix\n`);
+    writeFileSync(artifact,JSON.stringify({...prior,batches:[{name:'missing',passed:true,turns:[{...turn,checkpoint:{before:turn.checkpoint.before,after:turn.checkpoint.after}}]}]}));
+    const missingTransition=invoke(); assert.notEqual(missingTransition.status,0); assert.match(missingTransition.stderr,/Missing search transition or prior state/);
+    writeFileSync(artifact,JSON.stringify({...prior,batches:[{name:'query',passed:true,turns:[{...turn,checkpoint:{...turn.checkpoint,after:{criteria:{query:'bad'}}}}]}]}));
+    const invalidQuery=invoke(); assert.notEqual(invalidQuery.status,0); assert.match(invalidQuery.stderr,/previously passing search fails facet replay/);
     writeFileSync(artifact,JSON.stringify(prior));
     const combined=invoke(['--query-guard-revision',revision]); assert.notEqual(combined.status,0); assert.match(combined.stderr,/exceptions cannot be combined/);
     write('src/domain/catalog/taxonomy.ts',`${taxonomy}// changed\n`); const other=invoke(); assert.notEqual(other.status,0); assert.match(other.stderr,/Only the explicit-facets guard may differ/); write('src/domain/catalog/taxonomy.ts',taxonomy);

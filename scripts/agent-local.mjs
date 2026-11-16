@@ -87,10 +87,16 @@ if (old) {
     }
     let checked;
     if(facetRevision) {
-      const searches=[];
+      const searches=[], replay=[];
       for(const batch of passed) for(const [index,turn] of batch.turns.entries()) {
         assert.ok(typeof turn.text==='string' && turn.text.trim() && typeof turn.operation?.kind==='string',`Missing turn text or operation in ${batch.name}`);
-        if(turn.operation.kind==='search') searches.push({batch:batch.name,turn:index+1,text:turn.text});
+        if(turn.operation.kind==='search') {
+          assert.ok(turn.checkpoint.before && turn.checkpoint.transition && typeof turn.checkpoint.before==='object' && typeof turn.checkpoint.transition==='object',`Missing search transition or prior state in ${batch.name}`);
+          searches.push({batch:batch.name,turn:index+1,text:turn.text});
+          const queries=[turn.checkpoint.after.criteria.query,turn.result?.appliedCriteria?.query,turn.products?.appliedCriteria?.query].filter(query=>query!==undefined);
+          assert.ok(queries.every(query=>typeof query==='string'),`Invalid recorded query in ${batch.name}`);
+          replay.push({text:turn.text,before:turn.checkpoint.before,transition:turn.checkpoint.transition,queries});
+        }
       }
       // A substring detector deliberately over-approximates mentions, including
       // negations and inflections. Taxonomy is byte-identical to the old run.
@@ -98,7 +104,13 @@ if (old) {
       let outcome;
       try {outcome=JSON.parse(execFileSync(join(root,'node_modules/.bin/tsx'),['-e',probe],{cwd:root,input:JSON.stringify(searches),stdio:['pipe','pipe','pipe'],encoding:'utf8'}));}
       catch {throw new Error('A previously passing search contains a canonical kind alias or taxonomy could not be evaluated');}
-      checked={checkedSearches:searches,checkedKindAliasCount:outcome.aliasCount};
+      // The newer facet guard also projects stock, counts and price caps. Replay
+      // the exact saved transition to prove those paths are idempotent for every
+      // reused search. JSON canonicalization ignores undefined object members.
+      const replayProbe=`import {resolveExplicitFacets} from './src/application/chat/explicit-facets'; import {queryLanguageError} from './src/application/chat/query-language'; (async()=>{let s='';for await(const c of process.stdin)s+=c;const rows=JSON.parse(s);const canonical=x=>JSON.stringify(x,(_k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);for(const row of rows){for(const q of row.queries)if(queryLanguageError(q)!==undefined)throw new Error('query rejected');if(queryLanguageError(undefined)!==undefined)throw new Error('undefined query rejected');const result=resolveExplicitFacets(row.text,structuredClone(row.before),structuredClone(row.transition),[]);if(!result||result.error||!result.change||canonical(result.change)!==canonical(row.transition))throw new Error('replayed change differs');}})()`;
+      try {execFileSync(join(root,'node_modules/.bin/tsx'),['-e',replayProbe],{cwd:root,input:JSON.stringify(replay),stdio:['pipe','pipe','pipe']});}
+      catch {throw new Error('A previously passing search fails facet replay or query validation');}
+      checked={checkedSearches:searches,checkedKindAliasCount:outcome.aliasCount,replayedSearches:replay.length,queryValidation:'accepted'};
     } else {
       const queries=new Set(); let sawUndefined=false;
       for(const batch of passed) for(const turn of batch.turns) for(const query of [turn.checkpoint.after.criteria.query,turn.result?.appliedCriteria?.query,turn.products?.appliedCriteria?.query]) {

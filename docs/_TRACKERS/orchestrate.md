@@ -31,6 +31,8 @@ ABSORBED: the real local garden cases reproduced a pre-existing query-language f
 
 The same live cases then exposed a missing hard-kind projection: a model query for `garden furniture` without a kind filter returned a hand trowel. The existing facet resolver now recovers a unique, positive canonical kind named in both CURRENT and the semantic query. Quotes, negation, hypothetical/relational requests and mixed kinds/types do not silently narrow the result. A separate reviewed resume proof confirms that earlier coffee/category batches contain no affected kind terms.
 
+The garden rerun also exposed an omitted EUR 150 cap. The same resolver now preserves explicit bilingual EUR caps, known requested result counts and only-in-stock requirements from CURRENT. Currency conversion and conflicting caps require clarification. A count phrase such as `up to 10 products` is removed from the semantic query before the existing budget parser can mistake it for EUR 10. Reuse now additionally replays every successful saved search transition and requires the identical resolved transition.
+
 ## Acceptance boundaries
 
 The full local conversation suite also runs directly against the real engine through `scripts/agent-local-core.ts`, using a longer functional-test boundary. The production API retains its thirty-second timeout; its wire protocol, cancellation, browser storage and real Groq latency are separate acceptance evidence. Engine artifacts explicitly identify their mode and cannot reuse HTTP-mode batches. No functional conversation family is waived by this separation.

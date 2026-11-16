@@ -54,13 +54,70 @@ function aliases(facet: ExplicitFacet): string[] {
 function positiveClauses(text: string): string[] {
   return fold(text)
     .replace(/"[^"\n]*"|“[^”\n]*”|„[^”\n]*”|'[^'\n]*'/g, " ")
-    .split(/[.!?;\n]+|\b(?:but|ale|jednak)\b/)
+    .split(/(?<!\d)\.|\.(?!\d)|[!?;\n]+|\b(?:but|ale|jednak)\b/)
     .filter(
       (clause) =>
         !/\b(?:if|unless|suppose|hypothetically|jesli|jezeli|gdyby|hipotetycznie)\b/.test(
           clause,
         ),
     );
+}
+function negatedAt(clause: string, index: number): boolean {
+  return /\b(?:not|no|never|without|dont|don't|nie|bez|zadn\w*)(?:\s+\w+){0,2}\s*$/.test(clause.slice(0, index));
+}
+function explicitConstraints(text: string): {
+  maxPrice?: number;
+  requestedCount?: number;
+  inStockOnly?: true;
+  issues: string[];
+} {
+  const clauses = positiveClauses(text);
+  const amounts = new Set<number>();
+  const counts = new Set<number>();
+  const issues: string[] = [];
+  let inStockOnly: true | undefined;
+  const currency = "(?:eur|euros?|€|usd|gbp|pln|dollars?|pounds?|zlot(?:y|ych|e)?|zl|\\$|£)";
+  const budget = new RegExp(
+    `\\b(?:under|below|up\\s+to|at\\s+most|maximum|max|ponizej|do|maksymalnie|maksimum|nie\\s+wiecej\\s+niz)\\s*(?:(${currency})\\s*)?(\\d+(?:[.,]\\d{1,2})?)(?!\\d|[.,]\\d)\\s*(?:(${currency})(?![a-z]))?`,
+    "g",
+  );
+  const numbers: Record<string, number> = {
+    "4": 4, four: 4, cztery: 4,
+    "5": 5, five: 5, piec: 5,
+    "10": 10, ten: 10, dziesiec: 10,
+    "20": 20, twenty: 20, dwadziescia: 20,
+    all: 1000, wszystkie: 1000, wszystkich: 1000,
+  };
+  const countPattern = /\b(4|5|10|20|four|five|ten|twenty|cztery|piec|dziesiec|dwadziescia|all|wszystkie|wszystkich)\s+(?:the\s+)?(?:(?!(?:eur|usd|gbp|pln|euro|dollars?|people|persons?|osob|cm|mm|kg)\b)[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?|produkty|produktow|produkt|propozycj\w*|opcj\w*)\b/g;
+  for (const clause of clauses) {
+    for (const match of clause.matchAll(budget)) {
+      if (negatedAt(clause, match.index ?? 0)) continue;
+      const following = clause.slice((match.index ?? 0) + match[0].length);
+      if (!match[1] && !match[3] && /^(?:[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?|produkty|produktow|propozycj\w*|opcj\w*|people|persons?|osob|cm|mm|kg|meters?|metrow)\b/.test(following.trimStart())) continue;
+      const currencies = [match[1], match[3]].filter(Boolean);
+      if (currencies.some((value) => !/^(?:eur|euros?|€)$/.test(value))) {
+        issues.push("The stated budget uses a currency other than EUR; clarify the amount without conversion.");
+        continue;
+      }
+      const amount = Number(match[2].replace(",", "."));
+      if (Number.isFinite(amount) && amount >= 0) amounts.add(amount);
+    }
+    for (const match of clause.matchAll(countPattern)) {
+      if (!negatedAt(clause, match.index ?? 0)) counts.add(numbers[match[1]]);
+    }
+    if (/\b(?:show|list|display|pokaz|wyswietl)\s+(?:me\s+)?(?:everything|wszystko)\b/.test(clause)) counts.add(1000);
+    const stock = /\b(?:only\s+(?:(?:currently|available)\s+)?(?:in[ -]stock|available)|only\s+(?:products|items)\s+(?:in[ -]stock|available)|tylko\s+(?:obecnie\s+)?dostepn\w*|tylko\s+produkty\s+dostepn\w*)\b/g;
+    for (const match of clause.matchAll(stock))
+      if (!negatedAt(clause, match.index ?? 0)) inStockOnly = true;
+  }
+  if (amounts.size > 1) issues.push("Multiple price limits were stated; clarify the intended maximum.");
+  if (counts.size > 1) issues.push("Multiple result counts were stated; clarify the intended count.");
+  return {
+    maxPrice: amounts.size === 1 ? [...amounts][0] : undefined,
+    requestedCount: counts.size === 1 ? [...counts][0] : undefined,
+    inStockOnly,
+    issues,
+  };
 }
 function positivelyMentions(
   clause: string,
@@ -138,6 +195,32 @@ export function resolveExplicitFacets(
 ) {
   const issues: string[] = [];
   const criteria = { ...change.criteria };
+  const explicit = explicitConstraints(text);
+  issues.push(...explicit.issues);
+  const retained = new Set([...(change.remove ?? [])]);
+  if (explicit.maxPrice !== undefined) {
+    criteria.maxPrice = explicit.maxPrice;
+    delete criteria.targetPrice;
+    retained.delete("maxPrice");
+    retained.delete("targetPrice");
+  }
+  if (explicit.inStockOnly) {
+    criteria.inStockOnly = true;
+    retained.delete("inStockOnly");
+  }
+  if (explicit.requestedCount !== undefined && criteria.query) {
+    // The catalog's legacy budget parser also understands "up to N". Do not
+    // pass it a result-count bound in the semantic query as if it were EUR.
+    criteria.query = criteria.query.replace(
+      /\b(?:under|below|up to|less than)\s+(?:4|5|10|20)\s+(?=(?:(?!(?:eur|usd|gbp|pln)\b)[a-z]+\s+){0,2}(?:products?|items?|options?|proposals?|recommendations?)\b)/gi,
+      "",
+    );
+  }
+  change = {
+    ...change,
+    ...(explicit.requestedCount === undefined ? {} : { requestedCount: explicit.requestedCount }),
+    ...(change.remove ? { remove: [...retained] } : {}),
+  };
   const fresh = change.operation === "new" || change.operation === "browse";
   const oldTypes = new Set(
     before.criteria.productTypes ??

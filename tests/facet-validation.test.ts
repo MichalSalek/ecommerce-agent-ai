@@ -5,6 +5,7 @@ import {
   transitionState,
 } from "../src/application/chat/shopping-v3";
 import { resolveExplicitFacets } from "../src/application/chat/explicit-facets";
+import { parseSearchIntent } from "../src/application/catalog/search-intent";
 const before = initialAgentState();
 test("hard facet proofs reject implicit subtype narrowing and decorative adjectives", () => {
   const previous = {
@@ -192,4 +193,85 @@ test("existing or explicit type scopes are not overwritten by inferred kind", ()
     [{ facet: "type", value: "mug" }],
   );
   assert.ok("error" in conflict);
+});
+
+test("current EUR upper bound corrects omitted or wrong model budget", () => {
+  for (const [text, language, amount] of [
+    ["Show me garden furniture under EUR150", "en", 150],
+    ["Pokaż meble ogrodowe do 150 EUR", "pl", 150],
+    ["Show products at most €125.50", "en", 125.5],
+    ["Pokaż produkty nie więcej niż 125,50 euro", "pl", 125.5],
+  ] as const) {
+    for (const wrong of [undefined, 90]) {
+      const result = resolveExplicitFacets(text, before, {
+        operation: "new", language,
+        criteria: { query: "garden furniture", useEnvironment: "outdoor", maxPrice: wrong, targetPrice: 200 },
+        remove: ["maxPrice", "targetPrice"],
+      }, []);
+      assert.ok("change" in result && result.change);
+      assert.equal(result.change.criteria.maxPrice, amount);
+      assert.equal(result.change.criteria.targetPrice, undefined);
+      assert.ok(!result.change.remove?.includes("maxPrice"));
+      assert.equal(transitionState(before, result.change).criteria.maxPrice, amount);
+      assert.equal(result.change.criteria.useEnvironment, "outdoor");
+    }
+  }
+});
+
+test("explicit counts and stock constraints survive missing model fields", () => {
+  for (const [text, count] of [
+    ["Show 4 products under EUR 150", 4],
+    ["Show five options", 5],
+    ["Show 10 products", 10],
+    ["Pokaż 20 propozycji", 20],
+    ["Pokaż do 20 produktów", 20],
+    ["Show up to 10 coffee products", 10],
+    ["Show all products", 1000],
+    ["Pokaż wszystkie produkty", 1000],
+    ["Show everything", 1000],
+  ] as const) {
+    const result = resolveExplicitFacets(text, before, {
+      operation: "new", language: "en", criteria: { query: "garden" },
+    }, []);
+    assert.ok("change" in result && result.change);
+    assert.equal(result.change.requestedCount, count, text);
+    if (/do 20|up to 10/.test(text)) assert.equal(result.change.criteria.maxPrice, undefined);
+  }
+  for (const text of ["Show only in-stock products", "Pokaż tylko dostępne produkty"]) {
+    const result = resolveExplicitFacets(text, before, {
+      operation: "refine", language: "en", criteria: { query: "garden", inStockOnly: false }, remove: ["inStockOnly"],
+    }, []);
+    assert.ok("change" in result && result.change);
+    assert.equal(result.change.criteria.inStockOnly, true);
+    assert.ok(!result.change.remove?.includes("inStockOnly"));
+  }
+  const boundedCount = resolveExplicitFacets("Show up to 10 coffee products", before, {
+    operation: "new", language: "en", criteria: { query: "up to 10 coffee products", functionalGroup: "coffee" },
+  }, []);
+  assert.ok("change" in boundedCount && boundedCount.change);
+  assert.equal(parseSearchIntent({ query: boundedCount.change.criteria.query ?? "" }).maxPrice, undefined);
+});
+
+test("constraint projection ignores quotes, negations, units and ambiguous limits", () => {
+  for (const text of ['Show products; "under 150 EUR" was an example', "Show products not under 150 EUR", "If I wanted products under 150 EUR, show them", "Show products for 20 people under 150 EUR", "Show products below 20 cm"]) {
+    const result = resolveExplicitFacets(text, before, { operation: "new", language: "en", criteria: { query: "products" } }, []);
+    assert.ok("change" in result && result.change);
+    assert.equal(result.change.requestedCount, undefined, text);
+    assert.equal(result.change.criteria.maxPrice, text.includes("20 people") ? 150 : undefined, text);
+  }
+  for (const text of ["Show products under USD 150", "Show products under 150 PLN", "Show products below £150", "Show products under $150"]) {
+    const result = resolveExplicitFacets(text, before, { operation: "new", language: "en", criteria: { query: "products", maxPrice: 150 } }, []);
+    assert.ok("error" in result, text);
+  }
+  const ambiguous = resolveExplicitFacets("Show products under 100 EUR and below 150 EUR", before, { operation: "new", language: "en", criteria: { query: "products" } }, []);
+  assert.ok("error" in ambiguous);
+  for (const text of ['Show products; "only in stock" was an example', "Show products, not only in stock"]) {
+    const result = resolveExplicitFacets(text, before, { operation: "new", language: "en", criteria: { query: "products" } }, []);
+    assert.ok("change" in result && result.change);
+    assert.equal(result.change.criteria.inStockOnly, undefined);
+  }
+  const coffee = resolveExplicitFacets("Show coffee products", before, { operation: "new", language: "en", criteria: { query: "coffee", functionalGroup: "coffee" } }, []);
+  assert.ok("change" in coffee && coffee.change);
+  assert.deepEqual(coffee.change.criteria, { query: "coffee", functionalGroup: "coffee" });
+  assert.equal(coffee.change.requestedCount, undefined);
 });
