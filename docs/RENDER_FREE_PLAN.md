@@ -60,3 +60,9 @@ Deploy that exact commit to the existing service with auto-deploy off. Verify `l
 ### Publication for owner evaluation - 2026-11-16
 
 The owner explicitly requested publication of the current shopping-v3 implementation to the existing production service for manual testing before completion of the full real-provider suite. This authorization supersedes that suite's pre-publication gate for this release. Source/container CI, exact-revision deployment, scoped cache invalidation, browser/runtime checks and provider observation still apply. The incomplete bilingual/twenty-turn acceptance and shared Groq daily quota remain recorded limitations. The provider, model, credentials and service plan stay unchanged.
+
+### Active availability repair - 2026-11-16
+
+Application `8c8d7d3d61769b596a3447adc439b54f87587383` is published in Render deployment `dep-dbtd14rm8hqs73aieprg`. The owner authorized 120B-primary / Qwen-3.8-27B fallback using an existing second Groq profile. Set `GROQ_FALLBACK_MODEL` and `GROQ_FALLBACK_API_KEY` in the service's protected runtime environment. Keep the local Windows balancer loopback-only and preserve its configuration. The fallback state is in process memory; restart permits a new primary attempt. Daily quota failures use at least ten minutes, minute/transient failures at least one minute, and longer provider Retry-After deadlines are preserved. No database or background polling is needed.
+
+The real four-turn public coffee/details/comparison/cart check and scoped failure/cooldown tests are recorded in VERIFICATION.md. Extended bilingual/twenty-turn acceptance remains distinct from this incident repair; avoid spending the remaining production quota on another mass acceptance run while the demo is being evaluated.
