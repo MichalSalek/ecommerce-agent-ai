@@ -367,3 +367,47 @@ test('canary records unexpectedly high actual usage and freezes the release', ()
     assert.match(retry.stderr, /Unsettled usage or reservation/);
   } finally { rmSync(dir, {recursive:true, force:true}); }
 });
+
+test('overview guard resume pins the exact delta and rejects affected or unproven batches', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-overview-resume-'));
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  const write=(path:string,value:string)=>writeFileSync(join(dir,path),value);
+  const digest=(paths:string[])=>{const h=createHash('sha256'); for(const path of paths){const content=readFileSync(join(dir,path));h.update(`${path.length}:${path}:${content.length}:`);h.update(content);} return h.digest('hex');};
+  try {
+    git('init'); mkdirSync(join(dir,'scripts')); mkdirSync(join(dir,'src/infrastructure/chat'),{recursive:true});
+    for(const name of ['agent-local.mjs','agent-local-core.ts','revalidate-local-qa.mjs']) copyFileSync(`scripts/${name}`,join(dir,'scripts',name));
+    const native='src/infrastructure/chat/native-agent.ts';
+    const before='export const overviewGuard = false;\n';
+    const after='export const overviewGuard = true;\n';
+    const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
+    const fixtureRunner=readFileSync(join(dir,'scripts/agent-local.mjs'),'utf8');
+    const originalPin=/sha\(revisionContent\(nativePath\)\),'[a-f0-9]{64}'/;
+    const currentPin=/sha\(await readFile\(join\(root,nativePath\)\)\),'[a-f0-9]{64}'/;
+    assert.match(fixtureRunner,originalPin); assert.match(fixtureRunner,currentPin);
+    write('scripts/agent-local.mjs',fixtureRunner.replace(originalPin,`sha(revisionContent(nativePath)),'${sha(before)}'`).replace(currentPin,`sha(await readFile(join(root,nativePath))),'${sha(after)}'`));
+    write(native,before); write('src/other.ts','export {};\n'); write('package-lock.json','{}\n');
+    git('add','scripts','src','package-lock.json'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','baseline');
+    const revision=git('rev-parse','HEAD'), artifact=join(dir,'prior.json');
+    const turn=(text:string,seconds:number,calls:number)=>({text,startedAt:`2026-01-01T00:00:${String(seconds).padStart(2,'0')}.000Z`,elapsedMs:900,usage:{calls},validated:true,checkpoint:{after:{criteria:{}}}});
+    const batches=[{name:'safe',passed:true,turns:[turn('Compare mugs and carafe',1,1)]},{name:'affected',passed:true,turns:[turn('Porównaj kubki i karafkę',3,1)]},{name:'missing',passed:true,turns:[turn('Compare products',5,1)]},{name:'inherited',passed:true,reused:true,turns:[turn('Products',7,0)]},{name:'failed',passed:false,turns:[]}];
+    const prior={fingerprint:digest([native,'src/other.ts','package-lock.json']),runnerHash:digest(['scripts/agent-local.mjs','scripts/agent-local-core.ts','scripts/revalidate-local-qa.mjs']),execution:'engine-functional-QA',model:'qwen38-uncensored',upstream:'http://172.20.0.1:8090/upstream/qwen38-uncensored/v1',profile:{reasoningDisabled:true,probe:'content-without-reasoning-v1'},batches};
+    writeFileSync(artifact,JSON.stringify(prior));
+    const request=(second:string)=>({kind:'request',at:`2026-01-01T00:00:${second}.100Z`,body:{}});
+    const response=(second:string,name:string)=>({kind:'response',at:`2026-01-01T00:00:${second}.200Z`,status:200,choices:[{toolCalls:[{function:{name}}]}]});
+    const events=[request('01'),response('01','searchProducts'),request('03'),response('03','getCatalogOverview'),request('05')];
+    const saveTrace=()=>writeFileSync(artifact+'.provider.jsonl',events.map(e=>JSON.stringify(e)).join('\n')+'\n'); saveTrace();
+    write(native,after);
+    const invoke=()=>spawnSync(process.execPath,[join(dir,'scripts/agent-local.mjs'),'--engine','--resume',artifact,'--overview-guard-revision',revision,'--inspect-resume'],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV},timeout:15000});
+    let result=invoke(); assert.equal(result.status,0,result.stderr); let proof=JSON.parse(result.stdout);
+    assert.deepEqual(proof.reusedBatches,['safe']);
+    const decisions=new Map(proof.decisions.map((row:{name:string})=>[row.name,row]));
+    for(const [name,reason] of [['affected','overview-during-comparison'],['missing','unattributable-provider-trace'],['inherited','inherited-proof-not-revalidated'],['failed','previously-failed-or-unfinished']] as const) assert.ok((decisions.get(name) as {reasons:string[]}).reasons.includes(reason));
+    events[1]=response('01','getCatalogOverview'); saveTrace(); result=invoke(); assert.equal(result.status,0,result.stderr); proof=JSON.parse(result.stdout); assert.deepEqual(proof.reusedBatches,[]);
+    events[1]=response('01','searchProducts'); saveTrace();
+    write(native,after+'\n// unrelated change\n'); result=invoke(); assert.notEqual(result.status,0); assert.match(result.stderr,/Unreviewed overview guard delta/); write(native,after);
+    write('src/other.ts','export const changed=1;\n'); result=invoke(); assert.notEqual(result.status,0); assert.match(result.stderr,/only the reviewed native agent change/); write('src/other.ts','export {};\n');
+    write('scripts/revalidate-local-qa.mjs',readFileSync('scripts/revalidate-local-qa.mjs','utf8')+'\n// changed'); result=invoke(); assert.notEqual(result.status,0); assert.match(result.stderr,/QA validator changed/);
+    copyFileSync('scripts/revalidate-local-qa.mjs',join(dir,'scripts/revalidate-local-qa.mjs'));
+    writeFileSync(artifact,JSON.stringify({...prior,runnerHash:'0'.repeat(64)})); result=invoke(); assert.notEqual(result.status,0); assert.match(result.stderr,/Original revision does not match artifact runner fingerprint/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});

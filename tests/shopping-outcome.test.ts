@@ -115,6 +115,58 @@ test("comparison button completes without a model and preserves its group", asyn
   assert.match(result.answer, /EUR|€/);
   assert.deepEqual(result.checkpoint.after.resultIds, ["mugs", "carafe"]);
 });
+
+test("a comparison recovers from an overview carrying the previous topic's filters", async () => {
+  const mock = model([
+    response("getCatalogOverview", {
+      criteria: { query: "garden furniture", functionalGroup: "seating", maxPrice: 150, useEnvironment: "outdoor", inStockOnly: true },
+      explicitFilters: [{ facet: "category", value: "kitchen", userQuote: "kubki i karafkę" }],
+    }),
+    response("searchProducts", {
+      operation: "browse", language: "pl", mode: "lookup", continueWith: "compareProducts",
+      criteria: { query: "cups and carafe", functionalGroup: "coffee", maxPrice: 150, useEnvironment: "outdoor", requiredFeatures: [], inStockOnly: true },
+      explicitFilters: [{ facet: "category", value: "kitchen", userQuote: "kubki i karafkę" }],
+    }),
+    response("compareProducts", { productIds: ["mugs", "carafe"] }),
+    response("presentAnswer", {
+      text: "Kubki mają uchwyty, a karafka wąską szyjkę.", language: "pl", evidenceIds: ["e3"], productIds: ["mugs", "carafe"], view: "comparison",
+    }),
+  ]);
+  const searches: any[] = [];
+  const service = {
+    ...catalog,
+    searchResult: async (criteria: any) => { searches.push(criteria); return { products: products.filter(p => ["mugs", "carafe"].includes(p.id)), totalMatches: 2 }; },
+  } as CatalogService;
+  const state = { ...initialAgentState(), language: "pl" as const, languageChosen: true, criteria: { query: "garden furniture", functionalGroup: "seating" as const, maxPrice: 150, useEnvironment: "outdoor" as const, inStockOnly: true }, resultIds: ["folding-garden-chair", "garden-bench", "sun-lounger"], lastIds: ["folding-garden-chair", "garden-bench", "sun-lounger"] };
+  const result = await runAgent(mock.runtime.model, service, { text: "Porównaj kubki i karafkę.", userMessageId: "comparison-overview", conversationId: "comparison-overview", state }, new AbortController().signal, mock.runtime);
+  assert.equal(result.operation.status, "completed");
+  assert.equal(result.operation.kind, "comparison");
+  assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+  assert.equal(searches.length, 1);
+  assert.equal(searches[0].maxPrice, undefined);
+  assert.equal(searches[0].functionalGroup, undefined);
+  assert.equal(searches[0].useEnvironment, undefined);
+  assert.equal(searches[0].inStockOnly, undefined);
+  assert.equal(searches[0].category, undefined);
+  assert.equal(searches[0].query, "cups and carafe");
+  assert.deepEqual(mock.requests[1].tools.map((tool: any) => tool.function.name), ["searchProducts"]);
+  assert.equal(result.cart, undefined);
+  assert.equal(mock.calls(), 4);
+});
+
+test("category overview comparisons keep their ordinary read path", async () => {
+  for (const text of ["Compare Kitchen and Home category counts", 'Compare "mugs and carafe" as a quoted example', "Compare delivery policies, not mugs or carafe"]) {
+    const mock = model([
+      response("getCatalogOverview", { criteria: {} }),
+      response("presentAnswer", { text: "There are [[count:e1:total]] products.", language: "en", evidenceIds: ["e1"], productIds: [], view: "none" }),
+    ]);
+    const service = { ...catalog, overview: async () => ({ total: 86 }) } as CatalogService;
+    const result = await runAgent(mock.runtime.model, service, { text, userMessageId: `category-overview-${text}`, state: initialAgentState() }, new AbortController().signal, mock.runtime);
+    assert.equal(result.operation.status, "completed");
+    assert.equal(result.comparison, undefined);
+    assert.ok(mock.requests[1].tools.some((tool: any) => tool.function.name === "getCatalogOverview"));
+  }
+});
 test("a complete comparison survives truncated optional advice without an automatic correction", async () => {
   const mock = model([
     response("compareProducts", { productIds: ["mugs", "carafe"] }),

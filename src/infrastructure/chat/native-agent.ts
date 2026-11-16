@@ -231,6 +231,16 @@ function directComparisonRequest(text: string): boolean {
     foldComparison(text).trim(),
   );
 }
+function hasDistinctComparisonSubjects(text: string): boolean {
+  const candidates = products.filter((product) =>
+    queryListGrounded([product.id], text),
+  );
+  return candidates.some((product, index) =>
+    candidates.slice(index + 1).some((other) =>
+      queryListGrounded([product.id, other.id], text),
+    ),
+  );
+}
 function cleanCaches() {
   for (const map of [resolutions, completed, operationResults]) {
     for (const [key, value] of map)
@@ -1071,6 +1081,7 @@ async function executeAgent(
   let committed: AgentResult | undefined;
   let expectedRead: "compareProducts" | "getProductDetails" | undefined;
   let productComparisonPending = false;
+  let comparisonLookupRequired = false;
   const addEvidence = (
     tool: string,
     input: unknown,
@@ -1736,11 +1747,13 @@ async function executeAgent(
     const { proposeCart: _cartTool, ...readTools } = nativeTools;
     const tools: ToolSet | undefined = committed
       ? undefined
-      : forceAnswer
-        ? { presentAnswer: nativeTools.presentAnswer }
-        : hasCartInstruction(turn.text)
-          ? nativeTools
-          : readTools;
+      : comparisonLookupRequired
+        ? { searchProducts: nativeTools.searchProducts }
+        : forceAnswer
+          ? { presentAnswer: nativeTools.presentAnswer }
+          : hasCartInstruction(turn.text)
+            ? nativeTools
+            : readTools;
     if (terminalOnly) {
       finishCatalog();
       if (committed && (cart || (turn.action && turn.action.type !== "advice")))
@@ -1884,6 +1897,17 @@ async function executeAgent(
       productComparisonPending = true;
       expectedRead = "compareProducts";
     }
+    if (
+      name === "getCatalogOverview" &&
+      !turn.action &&
+      !hasCartInstruction(turn.text) &&
+      directComparisonRequest(turn.text) &&
+      hasDistinctComparisonSubjects(turn.text)
+    ) {
+      productComparisonPending = true;
+      expectedRead = "compareProducts";
+      comparisonLookupRequired = true;
+    }
     // Optional advice can never execute a catalog or cart tool.
     if (committed && name !== "presentAnswer")
       return unavailableAdvice("UNEXPECTED_ADVICE_TOOL");
@@ -2022,6 +2046,8 @@ async function executeAgent(
       }
       switch (name) {
         case "searchProducts": {
+          const recoveringComparisonLookup = comparisonLookupRequired;
+          comparisonLookupRequired = false;
           progress("catalog");
           const continuation = (call.input as { continueWith?: string })
             .continueWith;
@@ -2045,13 +2071,21 @@ async function executeAgent(
               raw.rejections ?? [],
             ),
           });
+          if (recoveringComparisonLookup) {
+            // This is reference resolution for CURRENT, independent of recommendation filters.
+            proposed = {
+              operation: "new",
+              language,
+              criteria: { query: proposed.criteria.query ?? "" },
+            };
+          }
           if (raw.mode === "lookup" || productComparisonPending) {
             const fresh = initialAgentState();
             const checked = resolveExplicitFacets(
               turn.text,
               fresh,
               { ...proposed, operation: "new" },
-              raw.explicitFilters ?? [],
+              recoveringComparisonLookup ? [] : raw.explicitFilters ?? [],
             );
             if ("error" in checked) {
               output = checked;
@@ -2228,6 +2262,13 @@ async function executeAgent(
           break;
         }
         case "getCatalogOverview": {
+          if (comparisonLookupRequired) {
+            output = {
+              error: "A product comparison needs product IDs, not inventory counts. Use searchProducts in lookup mode with an English query for the products named in CURRENT. Omit filters from the earlier topic, then compare the resolved products.",
+              code: "COMPARISON_LOOKUP_REQUIRED",
+            };
+            break;
+          }
           progress("catalog");
           const input = call.input as {
             criteria: Partial<ProductSearch>;

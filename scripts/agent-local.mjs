@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { validateGardenTurn } from './revalidate-local-qa.mjs';
 
 if (process.argv.includes('--help')) {
-  console.log('Usage: node scripts/agent-local.mjs [--engine] [--smoke|--suite] [--resume /tmp/artifact.json] [--query-guard-revision <old-SHA> | --facet-guard-revision <old-SHA> | --contract-revision <old-SHA>] [--artifact /tmp/artifact.json] [--inspect-resume]\n  node scripts/agent-local.mjs --inspect-profile <fixture.json>\n--engine: source-based ENGINE functional QA with 600s test turns; not HTTP latency acceptance. Cross-revision reuse requires exactly one explicit revision and a scoped compatibility proof. --inspect-profile and --inspect-resume do not call the model.');
+  console.log('Usage: node scripts/agent-local.mjs [--engine] [--smoke|--suite] [--resume /tmp/artifact.json] [--query-guard-revision <old-SHA> | --facet-guard-revision <old-SHA> | --contract-revision <old-SHA> | --overview-guard-revision <old-SHA>] [--artifact /tmp/artifact.json] [--inspect-resume]\n  node scripts/agent-local.mjs --inspect-profile <fixture.json>\n--engine: source-based ENGINE functional QA with 600s test turns; not HTTP latency acceptance. Cross-revision reuse requires exactly one explicit revision and a scoped compatibility proof. --inspect-profile and --inspect-resume do not call the model.');
   process.exit(0);
 }
 const args = process.argv.slice(2);
@@ -35,8 +35,8 @@ if (args[0] === '--inspect-profile') {
   process.exit(0);
 }
 for (let i = 0; i < args.length; i++) {
-  assert.ok(['--engine', '--smoke', '--suite', '--resume', '--artifact', '--query-guard-revision', '--facet-guard-revision', '--contract-revision', '--inspect-resume'].includes(args[i]), `Unknown option: ${args[i]}`);
-  if (['--resume', '--artifact', '--query-guard-revision', '--facet-guard-revision', '--contract-revision'].includes(args[i])) assert.ok(args[++i] && !args[i].startsWith('--'), 'Missing option value');
+  assert.ok(['--engine', '--smoke', '--suite', '--resume', '--artifact', '--query-guard-revision', '--facet-guard-revision', '--contract-revision', '--overview-guard-revision', '--inspect-resume'].includes(args[i]), `Unknown option: ${args[i]}`);
+  if (['--resume', '--artifact', '--query-guard-revision', '--facet-guard-revision', '--contract-revision', '--overview-guard-revision'].includes(args[i])) assert.ok(args[++i] && !args[i].startsWith('--'), 'Missing option value');
 }
 assert.ok(!(args.includes('--smoke') && args.includes('--suite')), 'Choose smoke or suite');
 const option = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
@@ -50,9 +50,9 @@ const privatePath = (value) => {
 };
 const artifact = privatePath(option('--artifact') ?? join(tmpdir(), `aurelle-local-${Date.now()}.json`));
 const resume = option('--resume') && privatePath(option('--resume'));
-const queryRevision = option('--query-guard-revision'), facetRevision = option('--facet-guard-revision'), contractRevision = option('--contract-revision');
-assert.ok([queryRevision,facetRevision,contractRevision].filter(Boolean).length<=1, 'Guard revision exceptions cannot be combined');
-const guardRevision = queryRevision ?? facetRevision ?? contractRevision;
+const queryRevision = option('--query-guard-revision'), facetRevision = option('--facet-guard-revision'), contractRevision = option('--contract-revision'), overviewRevision = option('--overview-guard-revision');
+assert.ok([queryRevision,facetRevision,contractRevision,overviewRevision].filter(Boolean).length<=1, 'Guard revision exceptions cannot be combined');
+const guardRevision = queryRevision ?? facetRevision ?? contractRevision ?? overviewRevision;
 assert.ok(!guardRevision || (engine && resume && /^[a-f0-9]{40}$/.test(guardRevision)), 'Guard revision requires --engine, --resume and a full lowercase Git SHA');
 assert.ok(!args.includes('--inspect-resume') || (guardRevision && resume), '--inspect-resume requires one guard revision and --resume');
 assert.notEqual(artifact, resume, 'Resume and output must differ');
@@ -106,7 +106,8 @@ if (old) {
     assert.ok((await readFile(join(root,'scripts/agent-local-core.ts'))).equals(revisionContent('scripts/agent-local-core.ts')),'Engine helper changed from original revision');
     const changed=[];
     for(const path of [...sourcePaths,'package-lock.json']) if(!(await readFile(join(root,path))).equals(revisionContent(path))) changed.push(path);
-    if(contractRevision) assert.ok(changed.length>0 && changed.every(path=>contractPaths.includes(path)),'Contract resume permits only the five reviewed application files');
+    if(overviewRevision) assert.deepEqual(changed,['src/infrastructure/chat/native-agent.ts'],'Overview resume permits only the reviewed native agent change');
+    else if(contractRevision) assert.ok(changed.length>0 && changed.every(path=>contractPaths.includes(path)),'Contract resume permits only the five reviewed application files');
     else assert.deepEqual(changed,[guardPath],`Only the ${facetRevision?'explicit-facets':'query-language'} guard may differ from the original revision`);
     const passed=old.batches.filter(batch=>batch.passed===true);
     assert.ok(passed.length>0,'No successful batches to reuse');
@@ -114,7 +115,42 @@ if (old) {
       assert.ok(Array.isArray(batch.turns) && batch.turns.length>0 && batch.turns.every(turn=>turn.validated===true && turn.checkpoint?.after?.criteria),`Incomplete successful batch ${batch.name}`);
     }
     let checked;
-    if(contractRevision) {
+    if(overviewRevision) {
+      // These exact file digests pin both sides of the reviewed guard and recovery lookup.
+      // Any additional source edit, including a prompt or model option, fails closed.
+      const nativePath='src/infrastructure/chat/native-agent.ts';
+      const sha=content=>createHash('sha256').update(content).digest('hex');
+      assert.equal(sha(revisionContent(nativePath)),'785edcde8a41594c2edce19d4749f9fc42fca1b2c9135d0bd25b078d817aca75','Unreviewed original native agent');
+      assert.equal(sha(await readFile(join(root,nativePath))),'5a40a89767676465ed9f75bf43a8e2c63ef3259a9232edd34eb464ea836eac3d','Unreviewed overview guard delta');
+      assert.ok((await readFile(join(root,'scripts/revalidate-local-qa.mjs'))).equals(revisionContent('scripts/revalidate-local-qa.mjs')),'QA validator changed from original revision');
+      let trace;
+      try {trace=(await readFile(resume+'.provider.jsonl','utf8')).trim().split('\n').map(line=>JSON.parse(line));}
+      catch {throw new Error('Missing or invalid provider trace');}
+      assert.ok(trace.length>0 && trace.every(e=>['request','response'].includes(e.kind) && Number.isFinite(Date.parse(e.at))),'Invalid provider trace events');
+      const windows=[];
+      for(const batch of passed.filter(b=>!b.reused)) for(const turn of batch.turns) {
+        const start=Date.parse(turn.startedAt), end=start+turn.elapsedMs;
+        if(Number.isFinite(start) && Number.isFinite(turn.elapsedMs) && turn.elapsedMs>=0) windows.push({batch:batch.name,turn,start,end});
+      }
+      const decisions=old.batches.map(batch=>{
+        const reasons=[];
+        if(batch.passed!==true) reasons.push('previously-failed-or-unfinished');
+        else if(batch.reused) reasons.push('inherited-proof-not-revalidated');
+        else for(const turn of batch.turns) {
+          const start=Date.parse(turn.startedAt), end=start+turn.elapsedMs;
+          if(typeof turn.text!=='string' || !Number.isFinite(start) || !Number.isFinite(turn.elapsedMs) || turn.elapsedMs<0 || !Number.isSafeInteger(turn.usage?.calls) || turn.usage.calls<0) {reasons.push('missing-turn-evidence');continue;}
+          if(windows.some(w=>w.turn!==turn && start<=w.end && w.start<=end)) {reasons.push('overlapping-turns');continue;}
+          const events=trace.filter(e=>{const at=Date.parse(e.at);return at>=start && at<=end;});
+          if(events.length!==turn.usage.calls*2 || events.some((e,i)=>e.kind!==(i%2?'response':'request')) || events.some((e,i)=>i%2 && (!Array.isArray(e.choices) || e.choices.length===0 || e.status!==200 || e.choices.some(c=>c.toolCalls!==undefined && (!Array.isArray(c.toolCalls) || c.toolCalls.some(call=>typeof call.function?.name!=='string'))))) || events.some((e,i)=>i>0 && Date.parse(e.at)<Date.parse(events[i-1].at))) {reasons.push('unattributable-provider-trace');continue;}
+          const text=turn.text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replaceAll('ł','l').trim();
+          const direct=/^(?:(?:please|prosze|could you|can you|czy mozesz)\s+)*(?:compare|porownaj)\b/.test(text);
+          if(!turn.action && direct && events.some(e=>e.kind==='response' && e.choices.some(c=>Array.isArray(c.toolCalls) && c.toolCalls.some(call=>call.function?.name==='getCatalogOverview')))) reasons.push('overview-during-comparison');
+        }
+        return {name:batch.name,reuse:reasons.length===0,reasons:[...new Set(reasons)]};
+      });
+      eligibleNames=new Set(decisions.filter(d=>d.reuse).map(d=>d.name));
+      checked={changedPaths:changed,traceHash:sha(await readFile(resume+'.provider.jsonl')),decisions};
+    } else if(contractRevision) {
       const nativePath='src/infrastructure/chat/native-agent.ts';
       const beforeNative=revisionContent(nativePath).toString('utf8'), afterNative=await readFile(join(root,nativePath),'utf8');
       const section=(text,start,end)=>{const i=text.indexOf(start),j=text.indexOf(end,i+start.length); assert.ok(i>=0 && j>i && text.indexOf(start,i+start.length)<0,`Cannot verify model input section: ${start}`);return text.slice(i,j+end.length);};
@@ -173,7 +209,7 @@ if (old) {
       checked={checkedQueries,checkedUndefined:sawUndefined};
     }
     assert.equal(await hash([...sourcePaths,'package-lock.json']),fingerprint,'Source changed during resume verification');
-    resumeCompatibility={kind:contractRevision?'reviewed-contract':facetRevision?'facet-guard-only':'query-guard-only',originalRevision:guardRevision,originalFingerprint:old.fingerprint,currentFingerprint:fingerprint,originalRunnerHash:old.runnerHash,currentRunnerHash:runnerHash,...(!contractRevision?{changedPath:guardPath}:{}),...checked,sourceArtifact:resume,reusedBatches:passed.filter(batch=>!contractRevision || eligibleNames.has(batch.name)).map(batch=>batch.name)};
+    resumeCompatibility={kind:overviewRevision?'reviewed-overview-guard':contractRevision?'reviewed-contract':facetRevision?'facet-guard-only':'query-guard-only',originalRevision:guardRevision,originalFingerprint:old.fingerprint,currentFingerprint:fingerprint,originalRunnerHash:old.runnerHash,currentRunnerHash:runnerHash,...(!contractRevision && !overviewRevision?{changedPath:guardPath}:{}),...checked,sourceArtifact:resume,reusedBatches:passed.filter(batch=>!(contractRevision || overviewRevision) || eligibleNames.has(batch.name)).map(batch=>batch.name)};
   }
 }
 if (args.includes('--inspect-resume')) {console.log(JSON.stringify(resumeCompatibility)); process.exit(0);}
@@ -315,7 +351,7 @@ try {
     };
   }
   async function batch(name, fn) {
-    const prior=old?.batches?.find(x=>x.name===name && x.passed && (!contractRevision || eligibleNames.has(name)));
+    const prior=old?.batches?.find(x=>x.name===name && x.passed && (!(contractRevision || overviewRevision) || eligibleNames.has(name)));
     if (prior) { report.batches.push({...prior,reused:true,reusedFrom:{artifact:resume,...(guardRevision?{revision:guardRevision}:{}),fingerprint:old.fingerprint}}); await save(); console.log(`[RESUME] ${name}`); return; }
     const record={name,passed:false,turns:[]}; report.batches.push(record); activeBatch=record;
     const started=performance.now();
