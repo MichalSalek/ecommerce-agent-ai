@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,9 +28,45 @@ test('canary refuses malformed releases and missing caller credentials', () => {
   const invalid = run('groq-canary', ['--release', 'invalid']);
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /full lowercase Git SHA/);
-  const missing = run('groq-canary', ['--release', 'a'.repeat(40)]);
+  const head = execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+  const missing = run('groq-canary', ['--release', head]);
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /GROQ_API_KEY must be present/);
+});
+
+test('continuation preserves the root ledger and public usage is reserved and settled', () => {
+  const dir=mkdtempSync(join(tmpdir(),'aurelle-qa-release-'));
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  let ledgerPath='';
+  try {
+    git('init');
+    mkdirSync(join(dir,'scripts'));
+    copyFileSync('scripts/groq-canary.mjs',join(dir,'scripts/groq-canary.mjs'));
+    writeFileSync(join(dir,'change.txt'),'first'); git('add','change.txt');
+    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','first');
+    const root=git('rev-parse','HEAD');
+    writeFileSync(join(dir,'change.txt'),'second'); git('add','change.txt');
+    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','second');
+    const head=git('rev-parse','HEAD');
+    ledgerPath=join('/tmp',`aurelle-groq-canary-${root}.json`);
+    writeFileSync(ledgerPath,JSON.stringify({release:root,limit:8000,charged:3517,requests:[]}));
+    // A changed TMPDIR must never start a fresh release budget.
+    const invoke=(args:string[])=>spawnSync(process.execPath,[join(dir,'scripts/groq-canary.mjs'),...args],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,TMPDIR:dir,GROQ_API_KEY:'fixture-only'},timeout:5000});
+    const reset=invoke(['--release',head]);
+    assert.notEqual(reset.status,0); assert.match(reset.stderr,/Existing ancestor release ledger/);
+    const missingProof=invoke(['--release',head,'--continue-release',root,'--advice-only']);
+    assert.notEqual(missingProof.status,0); assert.match(missingProof.stderr,/Missing or invalid previous free-message evidence/);
+    const reserved=invoke(['--release',head,'--continue-release',root,'--reserve-public','--amount','500']);
+    assert.equal(reserved.status,0,reserved.stderr);
+    const pending=JSON.parse(readFileSync(ledgerPath,'utf8'));
+    assert.equal(pending.charged,4017); assert.equal(pending.requests[0].stage,'public');
+    assert.equal(pending.requests[0].sourceRevision,head);
+    const id=pending.requests[0].id;
+    const settled=invoke(['--release',head,'--continue-release',root,'--settle-public','--reservation',id,'--input','200','--cached','50','--output','100']);
+    assert.equal(settled.status,0,settled.stderr);
+    const result=JSON.parse(readFileSync(ledgerPath,'utf8'));
+    assert.equal(result.charged,3767); assert.equal(result.requests[0].usage.uncached,250);
+  } finally { if(ledgerPath) rmSync(ledgerPath,{force:true}); rmSync(dir,{recursive:true,force:true}); }
 });
 
 test('canary reserves before traffic and settles actual uncached usage across invocations', () => {

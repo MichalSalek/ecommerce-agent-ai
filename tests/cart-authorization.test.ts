@@ -43,6 +43,16 @@ test("explicit both and cheaper selections validate operands independent of desc
 });
 test("unresolved nouns, negated selectors and proposal quantities do not authorize a different purchase", () => {
   assert.ok(
+    authorizeCart(
+      "Add the first one to my cart, actually the second instead",
+      state,
+      {
+        selection: "first",
+        items: [{ productId: "mugs", quantity: 1 }],
+      },
+    ),
+  );
+  assert.ok(
     authorizeCart("Add the first unicorn to my cart", state, {
       selection: "first",
       items: [{ productId: "mugs", quantity: 1 }],

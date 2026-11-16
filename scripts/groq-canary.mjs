@@ -2,18 +2,21 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, rmdirSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 const LIMIT = 8000;
 const MODEL = 'openai/gpt-oss-120b';
+// A caller-selected TMPDIR must not silently create a fresh release budget.
+const releaseDir = '/tmp';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: GROQ_API_KEY=... node scripts/groq-canary.mjs --release <full-HEAD-SHA>\n  node scripts/groq-canary.mjs --inspect-budget <fixture.json>\nUses primary GPT-OSS 120B only. Estimates reserve from its tokenizer with framing margin; provider-reported uncached input and output settle actual usage. Ledger and crash lock persist in /tmp per release; unknown usage permanently retains its reservation. --inspect-budget uses only a private fixture, with no tokenizer or network access.');
+  console.log('Usage: GROQ_API_KEY=... node scripts/groq-canary.mjs --release <full-HEAD-SHA> [--continue-release <root-SHA> --advice-only]\n  node scripts/groq-canary.mjs --release <HEAD-SHA> --continue-release <root-SHA> --reserve-public --amount <max-tokens>\n  node scripts/groq-canary.mjs --release <HEAD-SHA> --continue-release <root-SHA> --settle-public --reservation <id> --input <n> --cached <n> --output <n>\n  node scripts/groq-canary.mjs --inspect-budget <fixture.json>\nContinuation uses the root ledger, preserving earlier spend and explicitly reusing prior free-message evidence. Public calls are outside the proxy and require a separate prior reservation and measured settlement; use --unknown-usage instead of counts to retain an unresolved reservation. Uses primary GPT-OSS 120B only. Tokenized input plus margin is an estimate; actual reported uncached input and output settle usage.');
   process.exit(0);
 }
 
@@ -32,7 +35,7 @@ function loadBudget(path, release) {
   assert.ok(Number.isSafeInteger(value.charged) && value.charged >= 0 && Array.isArray(value.requests), 'Invalid budget ledger');
   return value;
 }
-function reserveBudget(ledger, path, model, tokenCount, maxOutput) {
+function reserveBudget(ledger, path, model, tokenCount, maxOutput, metadata = {}) {
   assert.ok(!ledger.requests.some(r => r.status !== 'settled'), 'Unsettled usage or reservation blocks further calls');
   assert.ok(Number.isSafeInteger(tokenCount) && tokenCount > 0 && Number.isSafeInteger(maxOutput) && maxOutput > 0 && maxOutput <= 512, 'Invalid token reservation');
   // The exact tokenizer is applied to serialized outbound JSON. Provider framing
@@ -40,7 +43,7 @@ function reserveBudget(ledger, path, model, tokenCount, maxOutput) {
   const inputReserve = Math.max(2 * tokenCount, tokenCount + 1500);
   const reserved = inputReserve + maxOutput;
   assert.ok(reserved <= LIMIT - ledger.charged, `Budget exhausted: need ${reserved}, remaining ${Math.max(0, LIMIT-ledger.charged)}`);
-  const row = {model, tokenCount, inputReserve, maxOutput, reserved, at:new Date().toISOString(), status:'reserved'};
+  const row = {model, tokenCount, inputReserve, maxOutput, reserved, at:new Date().toISOString(), status:'reserved', ...metadata};
   ledger.charged += reserved; ledger.requests.push(row); persist(path, ledger);
   return row;
 }
@@ -80,22 +83,64 @@ if (args[0] === '--inspect-budget') {
   console.log(JSON.stringify(ledger));
   process.exit(0);
 }
-assert.ok(args.length === 2 && args[0] === '--release' && /^[a-f0-9]{40}$/.test(args[1]), 'Provide --release followed by a full lowercase Git SHA');
-const key = process.env.GROQ_API_KEY;
-assert.ok(key, 'GROQ_API_KEY must be present in caller environment');
-const release = args[1];
+const {values} = parseArgs({args, options:{release:{type:'string'}, 'continue-release':{type:'string'}, 'advice-only':{type:'boolean'}, 'reserve-public':{type:'boolean'}, 'settle-public':{type:'boolean'}, reservation:{type:'string'}, amount:{type:'string'}, input:{type:'string'}, cached:{type:'string'}, output:{type:'string'}, 'unknown-usage':{type:'boolean'}}});
+assert.ok(/^[a-f0-9]{40}$/.test(values.release ?? ''), 'Provide --release followed by a full lowercase Git SHA');
+const release = values.release;
 assert.equal(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(), release, 'Release must be the current checkout HEAD');
+const rootRelease = values['continue-release'] ?? release;
+assert.ok(/^[a-f0-9]{40}$/.test(rootRelease), 'Invalid root release SHA');
+const isAncestor = (ancestor, descendant) => { try { execFileSync('git',['merge-base','--is-ancestor',ancestor,descendant],{cwd:root,stdio:'ignore'}); return true; } catch { return false; } };
+assert.ok(isAncestor(rootRelease, release), 'Root release must be an ancestor of current HEAD');
+const ancestors = readdirSync(releaseDir).map(name=>name.match(/^aurelle-groq-canary-([a-f0-9]{40})\.json$/)?.[1]).filter(Boolean).filter(sha=>isAncestor(sha,release));
+if (!values['continue-release']) assert.ok(ancestors.every(sha=>sha===release),'Existing ancestor release ledger found; use --continue-release to preserve its budget');
+else assert.ok(ancestors.every(sha=>sha===rootRelease), 'Multiple ancestor ledgers exist; reconcile their spending before continuing');
+assert.ok(!(values['reserve-public'] && values['settle-public']), 'Choose one public ledger action');
+const publicAction = values['reserve-public'] || values['settle-public'];
+assert.ok(!publicAction || (values['continue-release'] && !values['advice-only']), 'Public accounting requires --continue-release and no --advice-only');
+assert.ok(publicAction || Boolean(values['continue-release']) === Boolean(values['advice-only']), 'Continuation requires both --continue-release and --advice-only');
+const key = process.env.GROQ_API_KEY;
+if (!publicAction) assert.ok(key, 'GROQ_API_KEY must be present in caller environment');
 assert.ok(!process.env.GROQ_MODEL || process.env.GROQ_MODEL === MODEL, `Canary supports ${MODEL} only`);
-const ledgerPath = join(tmpdir(), `aurelle-groq-canary-${release}.json`);
-const lockPath = join(tmpdir(), `aurelle-groq-canary-${release}.lock`);
+const ledgerPath = join(releaseDir, `aurelle-groq-canary-${rootRelease}.json`);
+const lockPath = join(releaseDir, `aurelle-groq-canary-${rootRelease}.lock`);
+if (values['continue-release']) assert.ok(existsSync(ledgerPath), 'Root release ledger is missing; refusing to create a new budget');
 // Crash leaves lock and reservation for manual investigation; no silent reset.
 mkdirSync(lockPath, {mode:0o700});
 let ledger;
-try { ledger=loadBudget(ledgerPath, release); } catch(e) { rmdirSync(lockPath); throw e; }
+try { ledger=loadBudget(ledgerPath, rootRelease); } catch(e) { rmdirSync(lockPath); throw e; }
+if (publicAction) {
+  try {
+    const integer = (value, name) => { assert.ok(/^\d+$/.test(value ?? ''), `Invalid ${name}`); const n=Number(value); assert.ok(Number.isSafeInteger(n), `Invalid ${name}`); return n; };
+    if (values['reserve-public']) {
+      assert.ok(!ledger.requests.some(r=>r.status!=='settled'), 'Unsettled usage or reservation blocks further calls');
+      const reserved=integer(values.amount,'amount');
+      assert.ok(reserved>0 && reserved<=LIMIT-ledger.charged, 'Public reservation exceeds remaining budget');
+      const row={id:randomUUID(), sourceRevision:release, stage:'public', model:'public-runtime', reserved, at:new Date().toISOString(), status:'reserved'};
+      ledger.charged+=reserved; ledger.requests.push(row); persist(ledgerPath,ledger);
+      console.log(`[PUBLIC RESERVED] ${row.id}; ${reserved} reserved, ${LIMIT-ledger.charged} remains; root ${rootRelease}. Public requests bypass the proxy.`);
+    } else {
+      const row=ledger.requests.find(r=>r.id===values.reservation && r.stage==='public');
+      assert.ok(row && row.sourceRevision===release && row.status==='reserved', 'Matching pending public reservation not found');
+      const usage=values['unknown-usage'] ? undefined : {input:integer(values.input,'input'),cached:integer(values.cached,'cached'),output:integer(values.output,'output')};
+      settleBudget(ledger,ledgerPath,row,usage);
+      console.log(`[PUBLIC ${usage?'SETTLED':'UNRESOLVED'}] ${row.id}; total ${ledger.charged}/${LIMIT}, root ${rootRelease}.`);
+    }
+  } finally { rmdirSync(lockPath); }
+  process.exit(0);
+}
+if (values['advice-only']) {
+  const proof=ledger.freeTextPassed, row=ledger.requests[proof?.requestIndex];
+  try {
+    assert.ok(proof && /^[a-f0-9]{40}$/.test(proof.revision) && isAncestor(proof.revision,release), 'Missing or invalid previous free-message evidence');
+    assert.ok(row?.status==='settled' && row.http===200 && row.model===MODEL && row.sourceRevision===proof.revision && row.stage==='free-message', 'Free-message evidence does not match settled provider usage');
+    if (proof.log) assert.equal(createHash('sha256').update(readFileSync(proof.log.path)).digest('hex'),proof.log.sha256,'Previous free-message log changed');
+    console.log(`[REUSE] Free message passed on ${proof.revision}, request ${proof.requestIndex}; current revision ${release}; root budget ${rootRelease}.`);
+  } catch(e) { rmdirSync(lockPath); throw e; }
+}
 let child, proxy;
 for (const signal of ['SIGINT','SIGTERM']) process.once(signal, () => { child?.kill('SIGTERM'); proxy?.close(); process.exit(signal === 'SIGINT' ? 130 : 143); });
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
-let busy = false;
+let busy = false, stage = 'not-started';
 try {
   assert.ok(!ledger.requests.some(r=>r.status!=='settled'), 'Existing unresolved reservation blocks canary');
   console.log(`[TOKENIZER] ${MODEL}; downloading tokenizer files to private /tmp cache if necessary`);
@@ -120,7 +165,8 @@ try {
       if (body.stream) body.stream_options={...(body.stream_options??{}),include_usage:true};
       const outbound=JSON.stringify(body);
       const tokenCount=tokenizer.encode(outbound,{add_special_tokens:false}).length;
-      row=reserveBudget(ledger,ledgerPath,body.model,tokenCount,maxOutput);
+      assert.ok(stage==='free-message' || stage==='advice', `Unexpected provider call during ${stage}`);
+      row=reserveBudget(ledger,ledgerPath,body.model,tokenCount,maxOutput,{sourceRevision:release,stage});
       console.log(`[BUDGET] estimated input ${tokenCount}, reserved ${row.reserved}; remaining ${LIMIT-ledger.charged}; route ${body.model}`);
       const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${key}`},body:outbound,redirect:'error',signal:AbortSignal.timeout(60000)});
       // Read even if SDK times out; persist usage before delivering the response.
@@ -165,15 +211,23 @@ try {
     return {op,advice,comparison:get('comparison')};
   }
   const before=ledger.requests.length;
-  await turn('Hello, how can you help me?');
-  assert.ok(ledger.requests.length===before+1 && ledger.requests[before].status==='settled', 'Free message must produce exactly one measured provider call');
+  if (!values['advice-only']) {
+    stage='free-message';
+    await turn('Hello, how can you help me?');
+    assert.ok(ledger.requests.length===before+1 && ledger.requests[before].status==='settled' && ledger.requests[before].http===200, 'Free message must produce exactly one measured provider call');
+    ledger.freeTextPassed={revision:release,requestIndex:before,recordedAt:new Date().toISOString(),evidence:'runner-validated'};
+    persist(ledgerPath,ledger);
+  }
+  const afterFree=ledger.requests.length;
+  stage='deterministic-comparison';
   const comparison=await turn('Compare mugs and carafe',{type:'compare',productIds:['mugs','carafe']});
   assert.equal(comparison.comparison?.productIds.length,2);
-  assert.equal(ledger.requests.length,before+1,'Deterministic comparison unexpectedly invoked the provider');
+  assert.equal(ledger.requests.length,afterFree,'Deterministic comparison unexpectedly invoked the provider');
+  stage='advice';
   const advised=await turn('Explain differences',{type:'advice',operationId:comparison.op.id});
   assert.equal(advised.advice?.status,'included','Explicit advice was unavailable');
-  assert.ok(ledger.requests.length===before+2 && ledger.requests[before+1].status==='settled', 'Advice must produce exactly one measured provider call');
+  assert.ok(ledger.requests.length===afterFree+1 && ledger.requests[afterFree].status==='settled', 'Advice must produce exactly one measured provider call');
   assert.ok(ledger.charged<=LIMIT, 'Release budget exceeded');
-  console.log(`[PASS] Groq canary route ${MODEL}; release ${release}; ${ledger.charged}/${LIMIT} uncached input + output charged; ledger ${ledgerPath}.`);
+  console.log(`[PASS] Groq canary route ${MODEL}; advice revision ${release}; free message ${values['advice-only']?`reused from ${ledger.freeTextPassed.revision}`:`fresh on ${release}`}; root ${rootRelease}; ${ledger.charged}/${LIMIT} uncached input + output charged; ledger ${ledgerPath}.`);
 } catch(e) {console.error(`[FAIL] ${e.message}; ${ledger.charged}/${LIMIT} charged; ledger ${ledgerPath}`); process.exitCode=1;}
 finally {child?.kill('SIGTERM'); proxy?.close(); if(child && child.exitCode===null) await Promise.race([new Promise(r=>child.once('exit',r)),sleep(3000).then(()=>child.kill('SIGKILL'))]); rmdirSync(lockPath);}

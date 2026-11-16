@@ -1,5 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { resolveLlamaModel } from "../src/infrastructure/chat/llama-model";
+
+test("an explicit local model does not need availability discovery before a catalog result can request advice", async () => {
+  const model = await resolveLlamaModel(
+    { baseURL: "http://127.0.0.1:1/v1", modelId: "known-local-model" },
+    new AbortController().signal,
+  );
+  assert.equal(model.modelId, "known-local-model");
+});
 import { parseWindowsCurlResponse } from "../src/infrastructure/chat/windows-fetch";
 test("Windows curl preserves actual provider cooldown and rate headers", async () => {
   const response = parseWindowsCurlResponse(
@@ -22,12 +31,31 @@ test("malformed status or header payload is not accepted as a provider response"
 
 test("llama transport disables thinking in the serialized chat request", async () => {
   const { generateText } = await import("ai");
-  const { createLlamaModel } = await import("../src/infrastructure/chat/llama-model");
+  const { createLlamaModel } = await import(
+    "../src/infrastructure/chat/llama-model"
+  );
   let request: any;
-  const model = createLlamaModel("http://localhost:8090/v1", "fixture", async (_input, init) => {
-    request = JSON.parse(String(init?.body));
-    return Response.json({ id: "test", model: "fixture", created: 0, object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: "Ready." }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
-  });
+  const model = createLlamaModel(
+    "http://localhost:8090/v1",
+    "fixture",
+    async (_input, init) => {
+      request = JSON.parse(String(init?.body));
+      return Response.json({
+        id: "test",
+        model: "fixture",
+        created: 0,
+        object: "chat.completion",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "Ready." },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+    },
+  );
   await generateText({ model, prompt: "test", maxRetries: 0 });
   assert.deepEqual(request.chat_template_kwargs, { enable_thinking: false });
 });

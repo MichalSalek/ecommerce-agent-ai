@@ -69,6 +69,7 @@ import {
   rememberCartIntent,
   forgetCartIntent,
   resolveCartOperand,
+  type PendingCartIntent,
 } from "@/application/chat/cart-intent";
 
 type Evidence = {
@@ -501,6 +502,14 @@ export function stateFromMessages(
   )) {
     if (message.role === "user") {
       previousUser = message;
+      state.language = resolveLanguage(
+        message.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(" "),
+        state.language,
+        !!message.metadata?.shoppingAction,
+      );
       continue;
     }
     if (message.role !== "assistant") continue;
@@ -1145,9 +1154,11 @@ async function executeAgent(
     choices: string[] = [],
     kind: "selection" | "quantity" | "confirm" = "selection",
     quantity?: number,
+    reuseIntent?: PendingCartIntent,
   ): AgentResult => {
     delete after.pendingCartIntent;
-    if (turn.conversationId && choices.length) {
+    if (reuseIntent) after.pendingCartIntent = reuseIntent.nonce;
+    else if (turn.conversationId && choices.length) {
       const intent = rememberCartIntent({
         conversationId: turn.conversationId,
         sourceMessageId: turn.userMessageId,
@@ -1222,6 +1233,21 @@ async function executeAgent(
     );
   }
   if (confirmation) {
+    if (pendingIntent && pendingIntent.kind !== "confirm") {
+      return question(
+        pendingIntent.kind === "quantity"
+          ? language === "pl"
+            ? "Podaj całkowitą liczbę sztuk od 1 do 99."
+            : "Enter a whole number of units from 1 to 99."
+          : language === "pl"
+            ? "Który produkt dodać do koszyka? Wybierz konkretny produkt."
+            : "Which product should I add to your cart? Choose a specific product.",
+        pendingIntent.productIds,
+        pendingIntent.kind,
+        pendingIntent.quantity,
+        pendingIntent,
+      );
+    }
     if (
       pendingIntent?.kind === "confirm" &&
       pendingIntent.productIds.length === 1 &&
@@ -1550,7 +1576,7 @@ async function executeAgent(
       try {
         generated = await generateText({
           model,
-          system: `${agentInstructions}\nApplication-resolved response language: ${language}. Always use this language. ${committed ? "The catalog operation is already committed. Give optional advice only, 1-2 complete sentences, at most 400 characters and no repeated product list. Plain text is allowed; use canonical references for numerical facts. Do not execute another operation." : ""}`,
+          system: `${agentInstructions}\nApplication-resolved response language: ${language}. Always use this language. ${committed ? "The catalog operation is already committed. Give optional qualitative advice only, 1-2 complete sentences, at most 400 characters. Explain a useful feature or limitation without listing products, quoting prices or giving measurements. The displayed result already contains those facts. Plain text is allowed. If a numerical fact is essential, copy the exact supported reference, such as [[price:carafe]] or [[difference:carafe]]; even a correct literal monetary amount will be rejected. Do not execute another operation." : ""}`,
           messages,
           tools,
           toolChoice: committed
@@ -2464,7 +2490,6 @@ export function createNativeAgentStream(
         if (options.contract === "shopping-v3") {
           writer.write({ type: "data-shoppingState", data: result.checkpoint });
           writer.write({ type: "data-operation", data: result.operation });
-          writer.write({ type: "data-advice", data: result.advice });
           if (result.presentation.view === "products" && result.search)
             writer.write({ type: "data-products", data: result.search });
           else if (
@@ -2490,6 +2515,7 @@ export function createNativeAgentStream(
             writer.write({ type: "data-categories", data: result.categories });
           if (result.presentation.view === "comparison" && result.comparison)
             writer.write({ type: "data-comparison", data: result.comparison });
+          writer.write({ type: "data-advice", data: result.advice });
           writer.write({ type: "data-turnStatus", data: result.status });
         } else {
           // Presentation adapters share the same engine and preserve the old result shape.

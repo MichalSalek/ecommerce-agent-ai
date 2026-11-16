@@ -18,7 +18,10 @@ export function createLlamaModel(
         ...body.chat_template_kwargs,
         enable_thinking: false,
       };
-      return fetchImplementation(input, { ...init, body: JSON.stringify(body) });
+      return fetchImplementation(input, {
+        ...init,
+        body: JSON.stringify(body),
+      });
     },
   })(modelId);
 }
@@ -26,6 +29,7 @@ export async function resolveLlamaModel(
   config: { baseURL: string; modelId?: string },
   signal: AbortSignal,
 ) {
+  if (config.modelId) return createLlamaModel(config.baseURL, config.modelId);
   try {
     const response = await fetch(`${config.baseURL}/models`, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(4000)]),

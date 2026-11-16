@@ -6,6 +6,7 @@ import { createGroqRuntime } from "../src/infrastructure/chat/groq-model";
 import {
   runAgent,
   createNativeAgentStream,
+  stateFromMessages,
 } from "../src/infrastructure/chat/native-agent";
 import type { CatalogService } from "../src/application/catalog/catalog-service";
 import {
@@ -441,4 +442,73 @@ test("stable local advice schema cannot execute a second catalog operation", asy
     result.evidence.some((e) => e.tool === "getProductDetails"),
     false,
   );
+});
+test("a failed Polish question still establishes language for the next English UI action", () => {
+  const state = stateFromMessages(
+    [
+      {
+        id: "pl-user",
+        role: "user",
+        parts: [{ type: "text", text: "Pisz po polsku. Szukam kawy." }],
+      },
+      {
+        id: "failed",
+        role: "assistant",
+        parts: [
+          {
+            type: "data-turnStatus",
+            data: { status: "connection-error", code: "NETWORK_ERROR" },
+          },
+        ],
+      },
+      {
+        id: "current",
+        role: "user",
+        parts: [{ type: "text", text: "Compare mugs and carafe" }],
+        metadata: {
+          shoppingAction: { type: "compare", productIds: ["mugs", "carafe"] },
+        },
+      },
+    ],
+    "current",
+  );
+  assert.equal(state.language, "pl");
+});
+test("yes to a product-choice question preserves its quantity, expiry and source request", async () => {
+  const conversationId = `ambiguous-yes-${++sequence}`;
+  const first = await run(
+    "Dodaj dwie sztuki tego produktu do koszyka",
+    model(),
+    {
+      conversationId,
+      state: { ...initialAgentState(), lastIds: ["mugs", "carafe"] },
+    },
+  );
+  const original = pendingCartIntent(
+    conversationId,
+    first.checkpoint.after.pendingCartIntent,
+  )!;
+  const repeated = await run("Tak", model(), {
+    conversationId,
+    state: first.checkpoint.after,
+  });
+  assert.equal(repeated.cart, undefined);
+  assert.deepEqual(
+    pendingCartIntent(
+      conversationId,
+      repeated.checkpoint.after.pendingCartIntent,
+    ),
+    original,
+  );
+  const chosen = await run("Add Glass carafe", model(), {
+    conversationId,
+    state: repeated.checkpoint.after,
+    action: {
+      type: "cart",
+      selection: "selected",
+      productId: "carafe",
+      quantity: 1,
+    },
+  });
+  assert.equal(chosen.cart?.quantity, 2);
 });

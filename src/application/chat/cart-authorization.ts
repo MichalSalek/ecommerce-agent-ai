@@ -216,6 +216,13 @@ export function authorizeCart(
   if (!hasCartInstruction(text)) return "Explicit cart instruction required.";
   const value = cartClause(text, context);
   const items = proposal.items;
+  const positions = [
+    /\bfirst\b|pierwsz/,
+    /\bsecond\b|drug/,
+    /cheap|less expensive|tansz/,
+  ].filter((pattern) => pattern.test(value)).length;
+  if (positions > 1)
+    return "Please identify one unambiguous product selection.";
   if (
     items.some(
       (item) =>
