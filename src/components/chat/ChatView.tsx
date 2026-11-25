@@ -299,6 +299,42 @@ export default function ChatView() {
     if (state?.type === "data-shoppingState") language = state.data.after.language;
     languages.set(message.id, language);
   }
+  function orderedParts(message: ChatMessage): ChatMessage["parts"] {
+    const textParts = message.parts.filter((part) => part.type === "text");
+    const otherParts = message.parts.filter((part) => part.type !== "text");
+    const advice = message.parts.findLast((part) => part.type === "data-advice");
+    const operation = message.parts.findLast((part) => part.type === "data-operation");
+    if (message.role !== "assistant" || isFailedMessage(message) ||
+        operation?.type !== "data-operation" || operation.data.status !== "completed" ||
+        advice?.type !== "data-advice" || advice.data.status !== "included" ||
+        assistantTextError(advice.data.text, undefined, languages.get(message.id)))
+      return [...textParts, ...otherParts];
+    const adviceText = advice.data.text;
+    const visibleText = repeatedOutcome(message, "text") ? [] : textParts;
+    const duplicate = visibleText.some((part) => part.type === "text" && part.text.trim() === adviceText.trim());
+    const recommendsProduct = adviceText.split(/[.!?]+/).some((sentence) => {
+      const text = sentence.toLowerCase();
+      return /\b(?:polecam|i recommend|i would recommend|we recommend)\b/.test(text) &&
+        products.some((product) => text.includes(product.name.toLowerCase()));
+    });
+    const included = duplicate ? [] : [advice];
+    return [
+      ...(recommendsProduct ? included : []),
+      ...textParts,
+      ...(!recommendsProduct ? included : []),
+      ...otherParts.filter((part) => part !== advice),
+    ];
+  }
+  function copyableReply(message: ChatMessage): string {
+    if (message.role !== "assistant" || isFailedMessage(message)) return "";
+    return orderedParts(message).flatMap((part) => {
+      if (part.type === "text") return repeatedOutcome(message, "text") ? [] : [part.text];
+      if (part.type === "data-advice" && part.data.status === "included" &&
+          part === message.parts.findLast((item) => item.type === "data-advice") &&
+          !assistantTextError(part.data.text, undefined, languages.get(message.id))) return [part.data.text];
+      return [];
+    }).filter((text) => text.trim()).join("\n");
+  }
   const latestRead = messages.flatMap((message) => message.parts)
     .findLast((part) => part.type === "data-operation" && part.data.status === "completed" && ["search", "details", "comparison", "categories", "overview", "policy"].includes(part.data.kind));
   const lastAdvice = messages.flatMap((message) => message.parts).findLast((part) => part.type === "data-advice");
@@ -467,18 +503,11 @@ export default function ChatView() {
                   )}
                   {message.role === "assistant" &&
                     message.id !== WELCOME_ID &&
-                    !isFailedMessage(message) &&
-                    !repeatedOutcome(message, "text") &&
-                    message.parts.some(
-                      (p) => p.type === "text" && p.text.trim(),
-                    ) && (
+                    Boolean(copyableReply(message)) && (
                       <button
                         className="copy-reply"
                         onClick={() => {
-                          const text = message.parts
-                            .filter((p) => p.type === "text")
-                            .map((p) => p.text)
-                            .join("\n");
+                          const text = copyableReply(message);
                           void navigator.clipboard
                             ?.writeText(text)
                             .then(() => setCopied(message.id))
@@ -489,10 +518,7 @@ export default function ChatView() {
                       </button>
                     )}
                 </div>
-                {[
-                  ...message.parts.filter((p) => p.type === "text"),
-                  ...message.parts.filter((p) => p.type !== "text"),
-                ].map((part, i) => {
+                {orderedParts(message).map((part, i) => {
                   if (part.type === "text")
                     return isFailedMessage(message) || repeatedOutcome(message, "text") ? null : (
                       <p key={i}>{part.text}</p>

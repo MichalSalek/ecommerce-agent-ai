@@ -1,5 +1,6 @@
 import type { Product } from "@/domain/catalog/product";
 import type { Language } from "./assistant-text";
+import { productTypes } from "@/domain/catalog/taxonomy";
 
 const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
 
@@ -79,7 +80,7 @@ export function detailQuestionResponse(product: Product, request: string, langua
   const qualifiedAvailability = /\b(?:w kolorze|w rozmiarze|in (?:a )?(?:different|specific) (?:colour|color|size))\b|\b(?:dostepn\w*|available)\s+(?:w|in)\s+(?!(?:sklepie|katalogu|sprzedazy|magazynie|tym sklepie|the (?:store|shop|catalog)|stock)\b)/.test(text);
   if (!compound && asksAvailability && !qualifiedAvailability && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text))
     return { text: language === "pl" ? (product.inStock ? "Produkt jest dostępny." : "Produkt jest obecnie niedostępny.") : (product.inStock ? "This product is in stock." : "This product is currently out of stock."), needsModel: false };
-  if (/temperatur|heat.resistan|zaroodporn|heat.safe/.test(text))
+  if (/temperatur|heat.resistan|zaroodporn|heat.safe|wrzat|boiling (?:water|liquid)/.test(text))
     return { text: language === "pl"
       ? `Na podstawie opisu produktu ${product.name} nie potrafię potwierdzić, jaką temperaturę wytrzymuje.`
       : `I cannot confirm the temperature ${product.name} can withstand from its catalog description.`, needsModel: true };
@@ -133,4 +134,45 @@ export function groundedDetailAnswer(product: Product, value: GroundedDetailAnsw
   const sourceMeasurements = measurements(value.quote);
   if (measurements(value.answer).some((measurement) => !sourceMeasurements.includes(measurement))) return;
   return value.answer;
+}
+
+/** Render a verified source fragment only for an unqualified feature-presence question. */
+export function renderCanonicalDetailFact(
+  product: Product,
+  request: string,
+  language: Language,
+  value: GroundedDetailAnswer,
+): string | undefined {
+  if (value.status !== "supported" || value.source !== "features" || !value.quote) return;
+  if (!product.features.some((feature) => feature === value.quote)) return;
+  const source = fold(value.quote);
+  if (/\b(?:not|no|without|never|nie|bez|brak)\b/.test(source)) return;
+  const concepts = [
+    { source: /^handles?(?: for hot drinks)?$/, question: /^(?:handles?|uchwyt\w*|uszk\w*)$/, en: "a handle", pl: "uchwyt", answer: /^(?:handles?|uchwyt\w*|uszk\w*)$/ },
+    { source: /^folding frame$/, question: /^(?:fold\w*|sklada\w*|zlozyc)$/, en: "a folding frame", pl: "składaną ramę", answer: /^folding frame$/ },
+    { source: /^narrow neck$/, question: /^(?:neck|szyjk\w*)$/, en: "a narrow neck", pl: "wąską szyjkę", answer: /^narrow neck$/ },
+    { source: /^(?:travel|sealed bamboo) lid$/, question: /^(?:lid|pokryw\w*|wieczk\w*)$/, en: "a lid", pl: "pokrywkę", answer: /^(?:(?:travel|sealed bamboo) )?lid$/ },
+  ];
+  const concept = concepts.find((candidate) => candidate.source.test(source));
+  if (!concept) return;
+  const normalizedRequest = fold(request);
+  if (/\b(?:nie|not|no|bez|without|oraz|and|also|takze)\b/.test(normalizedRequest)) return;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const stripName = (text: string) => text.replace(new RegExp(`(?:^|[^a-z0-9-])${escape(fold(product.name))}(?=$|[^a-z0-9-])`, "g"), " ");
+  const aliases = productTypes[product.productType];
+  const labels = [product.id, product.productType, ...(aliases ? [aliases.en, aliases.pl, ...aliases.aliases] : [])]
+    .map(fold).filter((label) => /^[a-z]+$/.test(label) && label.length >= 3);
+  const allowed = new Set(["a", "czy", "ma", "maja", "posiada", "posiadaja", "czyz", "ten", "ta", "te", "to", "produkt", "produkty", "do", "does", "has", "have", "is", "are", "jest", "sa", "mozna", "the", "this", "these", "that", "those", "it", "they", "product", "products"]);
+  const requestTokens = stripName(normalizedRequest).match(/[a-z]+/g) ?? [];
+  if (!requestTokens.some((token) => concept.question.test(token)) ||
+      requestTokens.some((token) => !concept.question.test(token) && !allowed.has(token) && !labels.some((label) => token === label || (label.length >= 4 && token.startsWith(label))))) return;
+  const raw = fold(value.answer).replace(/[.!?,]+/g, " ").replace(/\s+/g, " ").trim();
+  const bare = raw === source || concept.answer.test(raw);
+  const simple = stripName(raw).replace(/\s+/g, " ").trim();
+  const simpleHandle = concept.en === "a handle" && /^(?:yes )?(?:(?:the |these |those )?(?:it|they|mugs?|product|products))?\s*(?:has|have) (?:a )?handles?(?: for hot drinks)?$/.test(simple);
+  const simplePolishHandle = concept.en === "a handle" && /^(?:tak )?(?:(?:one|te|produkt|produkty|kubki))?\s*(?:ma|maja|posiada|posiadaja) (?:uchwyt\w*|uszk\w*)$/.test(simple);
+  if (!bare && !simpleHandle && !simplePolishHandle) return;
+  return language === "pl"
+    ? `Tak, w katalogu dla produktu ${product.name} podano ${concept.pl}.`
+    : `Yes, the catalog lists ${concept.en} for ${product.name}.`;
 }

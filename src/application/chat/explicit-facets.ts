@@ -7,6 +7,8 @@ import {
 } from "@/domain/catalog/functional-groups";
 import { allowedCriteria } from "@/domain/catalog/requirements";
 import { categoryLabels } from "@/domain/catalog/category-labels";
+import { mentionsBudget } from "./product-references";
+import { canonicalSemanticQuery } from "./query-language";
 import type { AgentState, Transition } from "./shopping-v3";
 export type ExplicitFacet = {
   facet: "kind" | "type" | "excludeType" | "category";
@@ -223,6 +225,67 @@ function recoverKind(
   );
   return otherKind || otherType ? { ambiguous: true } : { kind };
 }
+// Only resolve the closed outdoor-furniture intent when the current sentence
+// positively names that subject and contains no competing scope or relation.
+function outdoorFurnitureIntent(text: string): boolean {
+  const normalized = fold(text);
+  if (/["“”„']/.test(text) || /\b(?:and|or|oraz|albo|lub|i|but|ale|except|without|bez)\b/.test(normalized))
+    return false;
+  if (/\b(?:cover\w*|pokrow\w*|oslon\w*|cushion\w*|poduszk\w*|accessor\w*|akcesori\w*|indoor\w*|wewnatrz|domow\w*)\b/.test(normalized))
+    return false;
+  const clauses = positiveClauses(text).map((clause) => clause.trim()).filter(Boolean);
+  if (clauses.length !== 1) return false;
+  const clause = clauses[0];
+  const namesFurniture = positivelyMentions(clause, productKinds.furniture.aliases);
+  const named = /\b(?:(?:garden|outdoor|outdoors|patio)\s+furnitur\w*|furnitur\w*\s+(?:for\s+(?:the\s+)?)?(?:garden|outdoors?)|mebl\w*\s+(?:ogrod\w*|do\s+ogrodu|na\s+zewnatrz))\b/.exec(clause);
+  if (!namesFurniture || !named) return false;
+  const prefix = clause.slice(0, named.index).trimEnd();
+  if (/\b(?:for|do|na)\s*$/.test(prefix) &&
+      !/\b(?:look(?:ing)?|search(?:ing)?|shop(?:ping)?)\s+for$/.test(prefix)) return false;
+  if (Object.values(productTypes).some((type) =>
+    positivelyMentions(clause, [type.en, type.pl, ...type.aliases]))) return false;
+  return recoverKind(text, text).kind === "furniture";
+}
+
+function normalizeFunctionalTransition(
+  text: string, before: AgentState, change: Transition, filters: ExplicitFacet[],
+): Transition {
+  if (change.operation !== "new" || filters.length || change.remove?.length) return change;
+  const normalized = fold(text);
+  if (/\b(?:not|no|never|without|exclude|except|dont|don't|nie|bez|zadn\w*|instead|switch|reset|restart|nowa|nowo|zmien\w*|zamiast)\b/.test(normalized)) return change;
+  if (change.criteria.useEnvironment && before.criteria.useEnvironment &&
+      change.criteria.useEnvironment !== before.criteria.useEnvironment) return change;
+  const alternative = /\b(?:inne|innych|innymi|kolejne|kolejnych|wiecej|other|another|different|more)\b/.test(normalized) &&
+    !/\b(?:more\s+than|wiecej\s+niz)\b/.test(normalized);
+  const intentText = alternative
+    ? normalized.replace(/\b(?:inne|innych|innymi|kolejne|kolejnych|wiecej|other|another|different|more|propozycj\w*|suggestions?|alternatives?|options?|results?)\b/g, " ")
+    : normalized;
+  const intent = functionalRefinement(intentText, before);
+  if (!intent?.simple || (change.criteria.functionalGroup && change.criteria.functionalGroup !== intent.group)) return change;
+  const allNamedGroups = functionalGroupNames.filter((group) =>
+    positiveClauses(text).some((clause) => positivelyMentions(clause, functionalGroups[group].aliases, false, "purpose")));
+  if (allNamedGroups.length !== 1 || allNamedGroups[0] !== intent.group) return change;
+  return {
+    ...change,
+    operation: alternative && before.shownIds.length ? "more" : "refine",
+    criteria: { ...change.criteria, functionalGroup: intent.group },
+    // A model's generic defaults do not replace established user choices.
+    ...(explicitConstraints(text).requestedCount === undefined ? { requestedCount: undefined } : {}),
+    ...(change.preferences?.length === 0 ? { preferences: undefined } : {}),
+    ...(change.persistentPreferences?.length === 0 ? { persistentPreferences: undefined } : {}),
+  };
+}
+
+function redundantOutdoorFurnitureQuery(text: string, query: string): boolean {
+  if (!outdoorFurnitureIntent(text)) return false;
+  const queryWords = fold(query).split(/[^a-z]+/).filter(Boolean);
+  if (!queryWords.length || !queryWords.includes("furniture") ||
+      queryWords.some((word) => !["outdoor", "outdoors", "garden", "patio", "furniture", "for", "the"].includes(word))) return false;
+  const cleaned = fold(text).replace(/\b(?:under|below|up\s+to|at\s+most|ponizej|do|maksymalnie|maximum|max)\s*(?:eur\s*)?\d+(?:[.,]\d{1,2})?\s*(?:eur|euros?)?\b/g, " ");
+  const allowed = new Set(["show", "me", "please", "find", "looking", "for", "i", "am", "could", "you", "would", "like", "want", "need", "some", "the", "garden", "outdoor", "outdoors", "patio", "furniture", "pokaz", "wyswietl", "szukam", "chce", "poprosze", "meble", "mebli", "mebel", "ogrodowe", "ogrodowych", "ogrodu", "do", "na", "zewnatrz", "czy", "mozesz"]);
+  return cleaned.split(/[^a-z]+/).filter(Boolean).every((word) => allowed.has(word));
+}
+
 /** Model-inferred functions have closed membership; explicit hard facets need current source evidence. */
 export function resolveExplicitFacets(
   text: string,
@@ -231,16 +294,30 @@ export function resolveExplicitFacets(
   filters: ExplicitFacet[],
 ) {
   const issues: string[] = [];
+  change = normalizeFunctionalTransition(text, before, change, filters);
   const criteria = { ...change.criteria };
+  if (criteria.query !== undefined) criteria.query = canonicalSemanticQuery(criteria.query);
   const explicit = explicitConstraints(text);
   issues.push(...explicit.issues);
   const retained = new Set([...(change.remove ?? [])]);
+  // Unasked spending limits must not silently hide products. The transition still carries a saved limit.
+  const budgetLanguage = mentionsBudget(text) || /\b(?:bud[zż]et\w*|budget|euros?|eur|zlot\w*|dollars?|pounds?)\b|[€£$]/.test(fold(text));
+  if (!budgetLanguage && explicit.maxPrice === undefined) {
+    delete criteria.maxPrice;
+    delete criteria.targetPrice;
+  }
   if (explicit.maxPrice !== undefined) {
     criteria.maxPrice = explicit.maxPrice;
     delete criteria.targetPrice;
     retained.delete("maxPrice");
     retained.delete("targetPrice");
   }
+  // A price or use-case request does not implicitly restrict the assortment to available items.
+  const stockContext = positiveClauses(text).some((clause) =>
+    /\b(?:in[ -]stock|availab\w*|dostepn\w*|od reki|na stanie)\b/.test(clause));
+  if (criteria.inStockOnly && !stockContext &&
+      ((change.operation === "new" || change.operation === "browse") || !before.criteria.inStockOnly))
+    delete criteria.inStockOnly;
   if (explicit.inStockOnly) {
     criteria.inStockOnly = true;
     retained.delete("inStockOnly");
@@ -262,7 +339,39 @@ export function resolveExplicitFacets(
   };
   const fresh = change.operation === "new" || change.operation === "browse";
   const departmentNamed = /\bcategory\b|\bdepartment\b|kategori/.test(fold(text));
-  const recovered: ReturnType<typeof recoverKind> = criteria.query ? recoverKind(text, criteria.query) : {};
+  // Do not turn an unresolved negation, accessory or compound scope into an
+  // unfiltered catalog browse when the model supplied no meaningful scope.
+  const mentionsOutdoorAndFurniture = /\b(?:garden|outdoor|outdoors|patio|ogrod\w*)\b/.test(fold(text)) &&
+    mentions(text, productKinds.furniture.aliases);
+  if (fresh && !departmentNamed && mentionsOutdoorAndFurniture && !outdoorFurnitureIntent(text) &&
+      !filters.length && !criteria.query && !criteria.productKind && !criteria.productType &&
+      !criteria.productTypes?.length && !criteria.functionalGroup)
+    issues.push("The outdoor furniture scope is ambiguous; correct or clarify the search.");
+  // Provider labels such as "Garden" can describe use rather than a shop
+  // department. Keep the department only when the shopper explicitly chose it.
+  if (fresh && outdoorFurnitureIntent(text)) {
+    const categories = filters.filter((filter) => filter.facet === "category");
+    const categoriesGrounded = categories.every((filter) => {
+      const label = fold(filter.value);
+      return (!filter.userQuote || fold(text).includes(fold(filter.userQuote))) &&
+        (label === "garden" || label === "furniture" || outdoorFurnitureIntent(filter.value));
+    });
+    if (categoriesGrounded && filters.every((filter) => filter.facet === "category")) {
+      if (criteria.useEnvironment && criteria.useEnvironment !== "outdoor") {
+        issues.push("Outdoor furniture conflicts with the proposed use environment; correct the criteria.");
+      } else {
+        criteria.productKind = "furniture";
+        criteria.useEnvironment = "outdoor";
+        if (!criteria.query || redundantOutdoorFurnitureQuery(text, criteria.query)) criteria.query = "";
+        if (!departmentNamed) filters = filters.filter((filter) => filter.facet !== "category");
+      }
+    }
+  }
+  const kindLabels = filters
+    .filter((filter) => filter.facet === "category" && Object.hasOwn(productKinds, fold(filter.value)))
+    .map((filter) => filter.value);
+  const kindEvidence = [criteria.query, ...kindLabels].filter(Boolean).join(" ");
+  const recovered: ReturnType<typeof recoverKind> = kindEvidence ? recoverKind(text, kindEvidence) : {};
   // A translated kind may have the same name as a shop department. Only the
   // shopper can select that department; a grounded ordinary kind spans departments.
   if (!departmentNamed && recovered.kind) {
@@ -509,4 +618,40 @@ export function resolveExplicitFacets(
         },
       }
     : { change: { ...change, criteria } };
+}
+
+/** Identify a positive functional request against an existing compatible scope.
+ * Only a closed vocabulary is eligible for automatic interpretation; anything
+ * else must still be interpreted by the model and checked through catalog search. */
+export function functionalRefinement(text: string, before: AgentState) {
+  if (!before.resultIds.length && !before.lastIds.length && !Object.keys(before.criteria).length) return;
+  if (/["“”„'?!;]/.test(text)) return;
+  const clauses = positiveClauses(text).map((clause) => clause.trim()).filter(Boolean);
+  if (clauses.length !== 1) return;
+  const clause = clauses[0].trim();
+  if (!/\b(?:szukam|potrzebuje|chce|poprosze|pokaz|wyswietl|looking|need|want|find|show|search)\b/.test(clause)) return;
+  if (/\b(?:nie\s+(?:chce|potrzebuje|szukam)|(?:do|does)\s+not\s+(?:want|need)|dont\s+(?:want|need))\b/.test(clause)) return;
+  if (/\b(?:compare|comparison|versus|porown\w*|detail\w*|information|informac\w*|szczegol\w*|wiecej\s+o|tell\s+me\s+more|add|cart|koszyk\w*|dodaj)\b/.test(clause)) return;
+  const groups = functionalGroupNames.filter((group) =>
+    positivelyMentions(clause, functionalGroups[group].aliases, false, "purpose") &&
+    groupScopeTypes(group, before.criteria, products).length > 0,
+  );
+  if (groups.length !== 1) return;
+  const group = groups[0];
+  const narrowedTypes = before.criteria.productTypes ??
+    (before.criteria.productType ? [before.criteria.productType] : []);
+  if (narrowedTypes.some((type) => !functionalGroups[group].types.includes(type))) return;
+  let remainder = clause;
+  for (const alias of functionalGroups[group].aliases) {
+    const term = fold(alias).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    remainder = remainder.replace(new RegExp(`\\b${term}\\w*`, "g"), " ");
+  }
+  const neutral = new Set([
+    "i", "im", "am", "a", "an", "some", "something", "somewhere", "anything",
+    "to", "on", "for", "me", "please", "looking", "need", "want", "find", "show", "search",
+    "szukam", "potrzebuje", "chce", "poprosze", "pokaz", "wyswietl", "mi", "cos", "czegos",
+    "czegokolwiek", "do", "na", "czym", "moge", "sie", "jakiegos", "jakies", "miejsca", "zeby",
+  ]);
+  const simple = remainder.split(/[^a-z0-9]+/).filter(Boolean).every((word) => neutral.has(word));
+  return { group, simple };
 }

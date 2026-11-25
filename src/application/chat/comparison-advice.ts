@@ -1,7 +1,9 @@
 import { catalogById } from "@/data/products";
 import type { Product } from "@/domain/catalog/product";
-import type { Language } from "./assistant-text";
+import { assistantTextError, type Language } from "./assistant-text";
 import { materialLabel } from "./detail-response";
+import { comparisonFactOptions } from "./comparison-facts";
+export { comparisonFactOptions } from "./comparison-facts";
 
 const normalize = (text: string) => text.toLowerCase().normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l")
@@ -9,10 +11,23 @@ const normalize = (text: string) => text.toLowerCase().normalize("NFD")
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Accept simple, product-attributed statements only when the complete fact is in that product's record. */
-export function groundedComparisonAdvice(text: string, ids: string[]): boolean {
+export function groundedComparisonAdvice(text: string, ids: string[], language?: Language): boolean {
   const rows = ids.map((id) => catalogById.get(id));
   if (rows.length < 2 || rows.some((row) => !row) || new Set(ids).size !== ids.length) return false;
   const input = normalize(text);
+  // A whole response must consist of one or two pre-grounded sentences. The
+  // optional recommendation may appear only first; no extra clause is accepted.
+  const sentences = input.match(/[^.!?]+[.!?](?:\s+|$)/g)?.map((value) => value.trim()) ?? [];
+  if (sentences.length > 0 && sentences.length <= 2 && sentences.join(" ") === input) {
+    for (const current of language ? [language] : (["pl", "en"] as const)) {
+      const options = (rows as Product[]).flatMap((product) => comparisonFactOptions(product, current).map((option) => ({ ...option, productId: product.id })));
+      const matches = sentences.map((sentence, index) => options.filter((option) =>
+        normalize(option.statement) === sentence || (index === 0 && normalize(option.recommendation) === sentence),
+      ));
+      if (matches.every((values) => values.length > 0) &&
+          (matches.length === 1 || matches[0].some((left) => matches[1].some((right) => left.productId !== right.productId)))) return true;
+    }
+  }
   // General assistance has no product fact to misattribute.
   if (/^(?:i can help you check|i can help you compare these products|moge pomoc ci porownac te produkty)[.!]$/.test(input)) return true;
   const numericWords: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, jeden: 1, dwa: 2, dwie: 2, trzy: 3, cztery: 4, piec: 5, szesc: 6, siedem: 7, osiem: 8, dziewiec: 9, dziesiec: 10 };
@@ -56,6 +71,20 @@ export function groundedComparisonAdvice(text: string, ids: string[]): boolean {
     if (literal && (values.includes(literal) || [...product.features, ...product.limitations].some((fact) => normalize(fact) === literal))) return true;
     return false;
   });
+}
+
+/** Preserve only an independently grounded initial recommendation from a complete reply. */
+export function groundedComparisonLead(text: string, ids: string[], language: Language): string | undefined {
+  if (assistantTextError(text, undefined, language) || groundedComparisonAdvice(text, ids, language)) return;
+  const rows = ids.map((id) => catalogById.get(id));
+  if (rows.length < 2 || rows.some((row) => !row) || new Set(ids).size !== ids.length) return;
+  const first = text.trim().match(/^([^.!?]+[.!?])\s+\S/);
+  if (!first) return;
+  const lead = first[1].trim();
+  if (!/^(?:polecam|i recommend)\b/i.test(lead)) return;
+  return (rows as Product[]).some((product) =>
+    comparisonFactOptions(product, language).some((option) => normalize(option.recommendation) === normalize(lead)),
+  ) ? lead : undefined;
 }
 
 /** Use canonical materials when free prose contains claims that cannot be attributed. */

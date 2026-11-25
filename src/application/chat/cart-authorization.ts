@@ -17,17 +17,61 @@ const unquoted = (value: string) =>
       " ",
     )
     .replace(/(^|[^\w'])'[^'\n]*'/g, "$1 ");
+/** Preserve only a quoted exact catalog name; quoted instructions remain non-authoritative. */
+function unquotedWithCatalogNames(value: string): string {
+  const protectedNames = value.replace(/"([^"\n]*)"|„([^”\n]*)”|“([^”\n]*)”|«([^»\n]*)»|'([^'\n]*)'/g,
+    (whole, ...groups: unknown[]) => {
+      const content = groups.slice(0, 5).find((group): group is string => typeof group === "string");
+      return content && (products.some((product) => normalize(product.name) === content) || [...content.matchAll(externalSeller)].length > 0)
+        ? ` ${content} ` : whole;
+    });
+  return unquoted(protectedNames);
+}
+const externalSeller = /\b(?:(?:inn\w*|zewnetrzn\w*|obc\w*|konkurencyjn\w*)\s+(?:(?:internetow\w*|online)\s+)?(?:sklep\w*|sprzedawc\w*|stron\w*|witryn\w*|serwis\w*)|(?:sklep\w*|sprzedawc\w*)\s+konkurencj\w*|(?:other|another|different|external|third[- ]party)\s+(?:(?:online|web)\s+)?(?:stores?|shops?|retailers?|sellers?|vendors?|sites?|websites?|marketplaces?))\b|https?:\/\/|\bwww\.|\b[a-z0-9][a-z0-9-]*\.[a-z]{2,}(?=\b|\/)/g;
+const cartVerb = /\b(?:add|dodaj|dodac|dodasz|buy|biore|wezme|kupuje|take)\b/;
+const localProvenance = /\b(?:z\s+(?:(?:naszego|waszego|tego|tutejszego)\s+)(?:sklepu|katalogu)|from\s+(?:(?:our|your|this)\s+)(?:store|shop|catalog|catalogue))\b/g;
+const ambiguousExternalReference = /\b(?:tam|stamtad|tamtego|tamta|tamten|there|therefrom|that one|same (?:item|product)|ten sam|ten produkt z zewnatrz)\b|\b(?:add|buy|take)\s+(?:it|them|that|this)\b|\b(?:dodaj|dodac|dodasz)\s+(?:go|je|to|tego)\b/;
+
+/** Isolate a new, explicitly named local command after a separate external-seller mention. */
+function independentLocalCartClause(value: string): string | undefined {
+  const mentions = [...value.matchAll(externalSeller)];
+  if (!mentions.length) return value;
+  const lastMentionEnd = mentions.at(-1)!.index! + mentions.at(-1)![0].length;
+  const boundaries = [...value.matchAll(/[.!?;](?=\s|$)\s*|\b(?:ale|jednak|natomiast|but|however|instead)\b/g)];
+  for (const boundary of boundaries) {
+    const start = boundary.index! + boundary[0].length;
+    if (start < lastMentionEnd) continue;
+    const rest = value.slice(start).trim();
+    const nextBoundary = /[.!?;](?=\s|$)|\b(?:ale|jednak|natomiast|but|however|instead)\b/.exec(rest);
+    const clause = (nextBoundary ? rest.slice(0, nextBoundary.index) : rest).trim();
+    if (!cartVerb.test(clause) || ambiguousExternalReference.test(clause)) continue;
+    const named = products.filter((product) => {
+      const label = normalize(product.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|[^a-z0-9-])${label}(?=$|[^a-z0-9-])`).test(clause);
+    });
+    if (!named.length) continue;
+    const previous = value.slice(0, start);
+    const priorSameName = named.some((product) => previous.includes(normalize(product.name)));
+    if (priorSameName && ![...clause.matchAll(localProvenance)].length) continue;
+    return clause.replace(localProvenance, " ");
+  }
+}
+
+/** An external-dependent request is never permission for a local cart mutation. */
+export function hasExternalCartDependency(text: string): boolean {
+  const value = unquotedWithCatalogNames(normalize(text));
+  return [...value.matchAll(externalSeller)].length > 0 && independentLocalCartClause(value) === undefined;
+}
+
 /** Deterministic authorization checks effects only; the model owns shopping interpretation. */
 export function hasCartInstruction(text: string) {
-  const value = unquoted(normalize(text));
+  const original = unquotedWithCatalogNames(normalize(text));
+  const value = independentLocalCartClause(original);
   return (
-    !/\b(?:example|examples|quote|quoted|repeat|story|fiction|simulate|hypothetical|suppose|if|gdyby|gdybym|przyklad\w*|cytuj\w*|powtorz\w*|opowiedz\w*|histori\w*)\b/.test(
-      value,
-    ) &&
-    !/\b(?:never|not|don't|do not|nie|nigdy)\s+(?:(?:actually|really|ever|wcale|faktycznie|naprawde)\s+)*(?:add|buy|take|dodawaj|dodaj|kupuj)\b/.test(
-      value,
-    ) &&
-    /\b(?:add|dodaj|dodac|dodasz|buy|biore|wezme|kupuje|take)\b/.test(value)
+    value !== undefined &&
+    !/\b(?:example|examples|quote|quoted|repeat|story|fiction|simulate|hypothetical|suppose|if|gdyby|gdybym|przyklad\w*|cytuj\w*|powtorz\w*|opowiedz\w*|histori\w*)\b/.test(original) &&
+    !/\b(?:never|not|don't|do not|nie|nigdy)\s+(?:(?:actually|really|ever|wcale|faktycznie|naprawde)\s+)*(?:add|buy|take|dodawaj|dodaj|kupuj)\b/.test(original) &&
+    cartVerb.test(value)
   );
 }
 type CartProposal = z.infer<typeof cartProposalSchema>;
@@ -126,13 +170,18 @@ function operandClause(value: string, proposal: CartProposal): string {
   return value;
 }
 export function cartInstructionText(text: string): string {
-  return operandClause(normalize(text), {
+  const original = normalize(text);
+  const safe = unquotedWithCatalogNames(original);
+  const value = [...safe.matchAll(externalSeller)].length ? independentLocalCartClause(safe) ?? original : original;
+  return operandClause(value, {
     selection: "selected",
     items: products.map((p) => ({ productId: p.id, quantity: 1 })),
   });
 }
 function cartClause(text: string, context?: CartContext) {
-  let value = normalize(text);
+  const original = normalize(text);
+  const safe = unquotedWithCatalogNames(original);
+  let value = [...safe.matchAll(externalSeller)].length ? independentLocalCartClause(safe) ?? original : original;
   if (context?.resolvedThisTurn) {
     // Only a resolved shopping read may precede an independently explicit cart command.
     let cartClause: string | undefined;

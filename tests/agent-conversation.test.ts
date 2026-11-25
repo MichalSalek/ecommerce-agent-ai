@@ -47,6 +47,31 @@ test("reversed Polish perspective is rejected and corrected through the provider
   assert.equal(result.answer, "Mogę Ci pomóc wybrać produkty.");
 });
 
+test("a fresh conversation answers a recalled budget in one provider call without inventing an amount", async () => {
+  for (const [request, reply] of [
+    ["Czy pamiętasz mój wcześniejszy budżet?", "W tej rozmowie nie mam jeszcze Twojego budżetu. Do jakiej kwoty szukamy?"],
+    ["Do you remember my previous budget?", "You haven’t told me your budget in this conversation. How much would you like to spend?"],
+  ]) {
+    const mock = scripted([{ name: "getShoppingCapabilities", input: { answer: reply } }]);
+    const result = await runAgent(mock.runtime.model, unusedCatalog, { text: request, userMessageId: "recall-new-budget", state: initialAgentState() }, new AbortController().signal, mock.runtime);
+    assert.equal(result.answer, reply);
+    const [upstream] = mock.requests;
+    assert.equal(upstream.tool_choice.function.name, "getShoppingCapabilities");
+    assert.deepEqual(upstream.messages.map((m: { role: string }) => m.role), ["system", "user"]);
+    assert.match(upstream.messages[0].content, /fresh conversation contains no earlier budget/);
+  }
+});
+
+test("budget recall in an active conversation uses its supplied preference", async () => {
+  const reply = "Twój budżet wynosi 43 EUR.";
+  const mock = scripted([{ name: "presentAnswer", input: { text: reply, language: "pl", evidenceIds: ["preferences"], productIds: [], view: "none" } }]);
+  const state = { ...initialAgentState(), criteria: { maxPrice: 43 } };
+  const result = await runAgent(mock.runtime.model, unusedCatalog, { text: "Czy pamiętasz mój wcześniejszy budżet?", userMessageId: "recall-active-budget", state, history: [{ role: "user", content: "Szukam kubka do 43 EUR." }] }, new AbortController().signal, mock.runtime);
+  assert.equal(result.answer, reply);
+  assert.equal(mock.requests[0].tool_choice, "required");
+  assert.doesNotMatch(mock.requests[0].messages[0].content, /fresh conversation contains no earlier budget/);
+});
+
 test("history retains roles, bounds and canonical prior groups", () => {
   const known = products[0];
   const context = conversationContext(Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? "assistant" as const : "user" as const, content: `turn-${i}` })), [{ userText: "Earlier choice", productIds: [known.id, "unknown", known.id] }]);
@@ -191,8 +216,10 @@ test("general capabilities complete with one provider-generated tool call in PL 
     assert.deepEqual(result.presentation.productIds, []);
     assert.deepEqual(result.evidence.map((item) => item.tool), ["getShoppingCapabilities"]);
     const tool = mock.requests[0].tools.find((item: any) => item.function.name === "getShoppingCapabilities");
-    assert.match(tool.function.description, /Find and refine products/);
-    assert.match(tool.function.description, /Do not claim checkout/);
+    assert.match(tool.function.description, /role, data access/);
+    const profile = mock.requests[0].messages.find((message: any) => message.role === "system").content;
+    assert.match(profile, /Find and refine Aurelle products/);
+    assert.match(profile, /no external store or web search.*checkout/);
   }
 });
 
@@ -469,4 +496,17 @@ test("shopping for a set or an unnamed extra subject does not force a comparison
     assert.equal(result.operation.kind, "search");
     assert.equal(result.comparison, undefined);
   }
+});
+
+test("a return to a named earlier product reads its ID even if the model sends its name as a product type", async () => {
+  const details: string[] = [];
+  const catalog = { details: async (id: string) => { details.push(id); return products.find((p) => p.id === id); } } as unknown as CatalogService;
+  const mock = scripted([
+    { name: "searchProducts", input: { mode: "lookup", operation: "new", language: "pl", criteria: {}, explicitFilters: [{ facet: "type", value: "Ceramic mugs", userQuote: "Ceramic mugs" }], continueWith: "getProductDetails" } },
+    { name: "answerProductQuestion", input: { status: "supported", answer: "Tak, Ceramic mugs mają uchwyty.", source: "features", quote: "handles for hot drinks" } },
+  ]);
+  const result = await runAgent(mock.runtime.model, catalog, { text: "Wróć do pierwszych kubków. Czy Ceramic mugs mają uchwyty?", userMessageId: "previous-mugs-id", state: { ...initialAgentState(), lastIds: ["carafe"], resultIds: ["mugs", "carafe"] } }, new AbortController().signal, mock.runtime);
+  assert.deepEqual(details, ["mugs"]);
+  assert.equal(result.operation.kind, "details");
+  assert.equal(result.answer, "Tak, Ceramic mugs mają uchwyty.");
 });

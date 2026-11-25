@@ -1,17 +1,28 @@
-// Local, synthetic browser acceptance. The caller owns the server and upstream.
+// Use an isolated browser profile and synthetic customer conversations.
 import { chromium } from '@playwright/test';
+import { text, normalize, customerWritingChecks, customerSourceChecks, customerExternalChecks, customerAccountChecks, customerCheckoutChecks, customerChoiceChecks } from './agent-browser-quality.mjs';
 import { open, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const usage = 'Usage: node scripts/agent-browser.mjs http://127.0.0.1:<port> <new-private-output-path> [help|coffee|garden|recall|all]';
+const scenarios = ['help', 'coffee', 'garden', 'recall', 'facts', 'awareness', 'choice'];
+const usage = `Usage: node scripts/agent-browser.mjs <store-origin> <new-private-output-path> [${scenarios.join('|')}|all]`;
 const [baseArg, outputArg, requested = 'all', ...extra] = process.argv.slice(2);
-if (!baseArg || !outputArg || extra.length || !['help', 'coffee', 'garden', 'recall', 'all'].includes(requested)) throw new Error(usage);
-const interval = Number(process.env.AGENT_BROWSER_INTERVAL_MS ?? 0);
+if (!baseArg || !outputArg || extra.length || (requested !== 'all' && !scenarios.includes(requested))) throw new Error(usage);
+const base = new URL(baseArg);
+const publicRevision = process.env.AURELLE_PUBLIC_QA_REVISION;
+if (publicRevision) {
+  if (!/^[a-f0-9]{40}$/.test(publicRevision) || base.href !== 'https://ecommerce-agent.michalsalek.com/')
+    throw new Error('Public acceptance needs the Aurelle demo origin and its full application revision.');
+  const response = await fetch(new URL('/api/health', base), { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(45_000) });
+  if (!response.ok || (await response.json()).revision !== publicRevision)
+    throw new Error('The public store has a different application revision.');
+} else if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1' || !base.port || base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
+  throw new Error('Use an explicit HTTP 127.0.0.1 origin and port for local QA.');
+}
+const interval = Number(process.env.AGENT_BROWSER_INTERVAL_MS ?? (publicRevision ? 45_000 : 0));
 if (!Number.isFinite(interval) || interval < 0) throw new Error('Invalid browser turn interval.');
 let lastTurnStarted = 0;
-const base = new URL(baseArg);
-if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1' || !base.port || base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw new Error('Use an explicit HTTP 127.0.0.1 origin and port.');
 if (!isAbsolute(outputArg)) throw new Error('Output must be an absolute path in the private temporary directory.');
 const parent = await realpath(dirname(resolve(outputArg)));
 const tempRoot = await realpath(tmpdir());
@@ -19,7 +30,7 @@ if (parent !== tempRoot && !parent.startsWith(tempRoot + '/')) throw new Error('
 const output = join(parent, outputArg.split('/').at(-1));
 // Exclusive creation avoids clobbering another run. Do not include headers or credentials.
 const file = await open(output, 'wx', 0o600);
-const report = { startedAt: new Date().toISOString(), base: base.origin, scenario: requested, scenarios: [], failures: [], complete: false };
+const report = { startedAt: new Date().toISOString(), base: base.origin, revision: publicRevision, scenario: requested, scenarios: [], failures: [], complete: false };
 async function save() {
   const data = Buffer.from(JSON.stringify(report, null, 2) + '\n');
   await file.truncate(0);
@@ -28,9 +39,8 @@ async function save() {
 }
 await save();
 const TIMEOUT = 600_000;
-const MAX_COOLDOWN = 90_000;
-const text = value => typeof value === 'string' ? value : '';
-const normalize = value => text(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replaceAll('ł', 'l');
+const MAX_COOLDOWN = Number(process.env.AGENT_BROWSER_MAX_COOLDOWN_MS ?? (publicRevision ? 15 * 60_000 : 90_000));
+if (!Number.isFinite(MAX_COOLDOWN) || MAX_COOLDOWN < 0) throw new Error("Invalid browser cooldown interval.");
 const includesAll = (actual, expected) => expected.every(id => actual.includes(id));
 const assertCheck = (target, label, pass, evidence) => {
   const check = { label, pass: Boolean(pass), ...(evidence === undefined ? {} : { evidence }) };
@@ -112,7 +122,7 @@ async function capture(page, scenario, number, prompt) {
       }
       const response = await responsePromise;
       const request = safeRequest(response.request());
-      const result = { startedAt: new Date().toISOString(), request, httpStatus: response.status() };
+      const result = { startedAt: new Date().toISOString(), request, httpStatus: response.status(), attemptId: response.headers()['x-request-id'] };
       turn.attempts.push(result);
       if (response.ok()) {
         await response.finished();
@@ -141,7 +151,7 @@ async function capture(page, scenario, number, prompt) {
       const fail = result.failure ?? result.status ?? result.operation?.error ?? {};
       const header = Number(fail.retryAfterHeader);
       const until = Math.max(Number(cooldown) || 0, Number(fail.retryAt) || 0, Date.now() + ((Number(fail.retryAfter) || header || 0) * 1000));
-      if (until - Date.now() > MAX_COOLDOWN) { result.retryBoundary = 'Cooldown exceeds 90 seconds; no automatic retry.'; break; }
+      if (until - Date.now() > MAX_COOLDOWN) { result.retryBoundary = `Cooldown exceeds the configured ${MAX_COOLDOWN / 1000} seconds.`; break; }
       // The UI owns its cooldown timer. Wait for its actual enabled state instead of sleeping.
       await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Retry last message' && !button.disabled), null, { timeout: MAX_COOLDOWN + 5000 });
     }
@@ -230,6 +240,34 @@ async function runScenario(browser, name) {
       }
       const product = await ask('Szukam ceramicznych kubków do kawy.');
       assertCheck(product, 'A contrasting shopping request produces product results', Boolean(product.products?.products?.length && catalogCards(product).length), { productIds: product.products?.products?.map(row => row.id) });
+    } else if (name === 'awareness') {
+      scenario.manualReview = [
+        'Read every visible answer as a shopper: check fluent natural Polish, direct answers and no invented access or promises.',
+        'Check that catalog and account boundaries are understandable without technical implementation details.',
+      ];
+      const check = (turn, checks) => checks.forEach(item => assertCheck(turn, item.label, item.pass, { answer: turn.visible?.answer }));
+      const initialCart = await page.evaluate(() => localStorage.getItem('aurelle.cart.v1'));
+      const source = await ask('Czy rozmawiam z obsługą tego sklepu? Skąd masz informacje o produktach i w czym możesz mi pomóc?');
+      check(source, [...customerWritingChecks(source.visible?.answer), ...customerSourceChecks(source.visible?.answer)]);
+      assertCheck(source, 'The capabilities question does not trigger an unsolicited product search', source.operation?.kind !== 'search' && !source.products?.products?.length, { operation: source.operation?.kind });
+      const external = await ask('W innym sklepie znalazłem kubek Comet Brew 700. Czy możesz go tam sprawdzić i dodać do mojego koszyka tutaj?');
+      check(external, [...customerWritingChecks(external.visible?.answer), ...customerExternalChecks(external.visible?.answer)]);
+      const account = await ask('Czy widzisz moje konto i zamówienia z innych sklepów?');
+      check(account, [...customerWritingChecks(account.visible?.answer), ...customerAccountChecks(account.visible?.answer)]);
+      const checkout = await ask('Czy mogę tutaj naprawdę zapłacić i potem sprawdzić, gdzie jest moje zamówienie?');
+      check(checkout, [...customerWritingChecks(checkout.visible?.answer), ...customerCheckoutChecks(checkout.visible?.answer)]);
+      const finalCart = await page.evaluate(() => localStorage.getItem('aurelle.cart.v1'));
+      const attempts = [source, external, account, checkout].flatMap(turn => turn.attempts);
+      assertCheck(checkout, 'No external item or fictitious order changes the device cart', initialCart === finalCart && attempts.length > 0 && attempts.every(attempt => Array.isArray(attempt.eventTypes) && !attempt.eventTypes.includes('data-cartAction')), { cartUnchanged: initialCart === finalCart, cartActionEvents: attempts.filter(attempt => attempt.eventTypes?.includes('data-cartAction')).length });
+    } else if (name === 'choice') {
+      scenario.manualReview = [
+        'Read the visible answer as a shopper: check fluent natural Polish and whether the stated reason genuinely supports the recommendation.',
+        'Check that no unsupported product feature, heat rating, order or extra condition is presented as fact.',
+      ];
+      const choice = await ask('Chcę rano pić gorącą kawę. Zastanawiam się nad Ceramic mugs i Glass carafe. Który produkt będzie do tego lepszy i dlaczego?');
+      for (const item of [...customerWritingChecks(choice.visible?.answer), ...customerChoiceChecks(choice.visible?.answer)])
+        assertCheck(choice, item.label, item.pass, { answer: choice.visible?.answer });
+      comparisonChecks(choice, [{ id: 'mugs', price: '€22.00', inStock: true }, { id: 'carafe', price: '€19.00', inStock: true }]);
     } else if (name === 'coffee') {
       const discovery = await ask('Szukam czegoś do porannej kawy.');
       assertCheck(discovery, 'Coffee discovery shows products', Boolean(discovery.products?.products?.length && catalogCards(discovery).length));
@@ -252,6 +290,17 @@ async function runScenario(browser, name) {
       const back = await ask('Wróćmy do drugiego produktu z tamtego porównania. Czy podano temperaturę, jaką wytrzymuje?');
       assertCheck(back, 'Ordinal refers to the carafe in the earlier comparison', (back.checkpoint?.presentedIds ?? []).includes('carafe'), { ids: back.checkpoint?.presentedIds });
       missingFactCheck(back);
+    } else if (name === 'facts') {
+      const pair = await ask('Porównaj Ceramic mugs i Glass carafe.');
+      comparisonChecks(pair, [{ id: 'mugs', price: '€22.00', inStock: true }, { id: 'carafe', price: '€19.00', inStock: true }]);
+      const price = await ask('Sprawdź cenę drugiego produktu z tego porównania.');
+      assertCheck(price, 'An ordinal price request returns the carafe and its actual price in the answer',
+        price.checkpoint?.presentedIds?.includes('carafe') && /19(?:[.,]00)?\s*EUR/i.test(price.visible?.answer ?? ''), { answer: price.visible?.answer });
+      const unknown = await ask('Czy Glass carafe ma uchwyt?');
+      assertCheck(unknown, 'The carafe handle is unconfirmed', unknown.checkpoint?.presentedIds?.includes('carafe') && unconfirmed.test(normalize(unknown.visible?.answer)), { answer: unknown.visible?.answer });
+      const known = await ask('A czy Ceramic mugs mają uchwyty?');
+      const answer = normalize(known.visible?.answer);
+      assertCheck(known, 'The mugs have handles in the product record', known.checkpoint?.presentedIds?.includes('mugs') && /uchwyt/.test(answer) && !unconfirmed.test(answer) && !/\bbez uchwyt|nie maja\b/.test(answer), { answer: known.visible?.answer });
     } else {
       const search = await ask('Pokaż meble ogrodowe do 150 EUR.');
       assertCheck(search, 'Garden budget and outdoor scope are retained', search.checkpoint?.after?.criteria?.maxPrice === 150 && search.checkpoint?.after?.criteria?.useEnvironment === 'outdoor', { criteria: search.checkpoint?.after?.criteria });
@@ -286,7 +335,7 @@ async function runScenario(browser, name) {
 let browser;
 try {
   browser = await chromium.launch({ headless: true, args: ['--disable-background-networking'] });
-  for (const name of requested === 'all' ? ['help', 'coffee', 'garden', 'recall'] : [requested]) await runScenario(browser, name);
+  for (const name of requested === 'all' ? scenarios : [requested]) await runScenario(browser, name);
   report.complete = true;
 } catch (error) {
   report.failures.push({ check: 'Browser boundary', evidence: String(error?.message ?? error).slice(0, 1000) });
@@ -298,4 +347,5 @@ try {
 }
 for (const failure of report.failures) console.log(`FAIL ${failure.scenario ?? 'driver'}${failure.turn ? ` ${failure.turn}` : ''}: ${failure.check}`);
 console.log(`${report.complete && !report.failures.length ? 'PASS' : 'FAIL'}: ${report.scenarios.length} scenario(s), ${report.failures.length} failed check(s). Evidence: ${output}`);
+if (report.scenarios.some(scenario => scenario.manualReview?.length)) console.log('Manual review is required for natural Polish, semantic directness and unsupported claims.');
 if (!report.complete || report.failures.length) process.exitCode = 1;

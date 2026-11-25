@@ -39,6 +39,9 @@ export function explicitLanguage(text: string): Language | undefined {
 /** Product names alone and UI labels never establish a conversation language. */
 export function naturalLanguage(text: string): Language | undefined {
   const value = fold(text);
+  // Question markers establish the current language even when product names are English.
+  if (/^\s*(?:a\s+)?czy\b/.test(value)) return "pl";
+  if (/^\s*(?:does|do|can|is|are|what|which|how)\b/.test(value)) return "en";
   const pl =
     (value.match(
       /\b(?:prosze|poprosze|pokaz\w*|szukam|potrzebuje|chce|chcial\w*|dodaj|porownaj|produkt\w*|koszyk\w*|jaki\w*|ktory\w*|tansz\w*|drozsz\w*|fajny|jest|mam|mamy|tylko|wiecej|inne|kaw\w*|dostepn\w*|wybierz|roznic\w*|ile|koszt\w*|dostaw\w*|zwrot\w*|dziekuje|czego|zrobion\w*|ogrod\w*|mebl\w*|tak|nie)\b/g,

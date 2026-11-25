@@ -676,7 +676,7 @@ test("plain advice receives only qualitative facts without raw prices or measure
     context,
     /priceEUR|25 cm high|9 cm high|differencesCents/,
   );
-  assert.equal(mock.requests[0].max_tokens, 192);
+  assert.equal(mock.requests[0].max_tokens, 384);
 });
 test("policy advice restores its completed read after process-cache loss without another catalog call", async () => {
   const policy = await run("Delivery", model(), {

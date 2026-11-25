@@ -51,3 +51,15 @@ export function queryLanguageError(query: string | undefined) {
       code: "QUERY_LANGUAGE",
     };
 }
+
+/** Translate only a complete, unambiguous catalog label. Unrecognized qualifiers stay in the query for correction. */
+export function canonicalSemanticQuery(query: string): string {
+  if (!queryLanguageError(query)) return query;
+  const label = fold(query.trim());
+  const options = new Set(
+    [...Object.values(productKinds), ...Object.values(productTypes)]
+      .filter((entry) => [entry.pl, ...entry.aliases].some((alias) => fold(alias) === label))
+      .map((entry) => entry.en),
+  );
+  return options.size === 1 ? [...options][0] : query;
+}

@@ -1,6 +1,8 @@
 import type { ModelMessage } from "ai";
 import { catalogById } from "@/data/products";
 import type { Product } from "@/domain/catalog/product";
+import type { Language } from "./assistant-text";
+import { comparisonFactOptions } from "./comparison-facts";
 
 /** Bounded, role-labelled conversation data; product facts always come from the catalog. */
 export function conversationContext(
@@ -43,37 +45,38 @@ export const compactProduct = (p: Product, detail = false) => ({
     : {}),
 });
 
-/** These descriptions correspond to implemented catalog, policy and cart operations. */
-export const shoppingCapabilities = {
-  operations: [
-    "Find and refine products in the catalog by the customer's needs and budget in EUR.",
-    "Show categories, inspect product details and compare identified products using catalog facts.",
-    "Explain the available delivery, returns and payment policies.",
-    "Prepare an explicitly requested cart selection for this device to save; the device confirms saving.",
-  ],
-  limits: [
-    "Do not claim checkout, ordering, delivery tracking, booking, discounts or changes to policies.",
-    "Only known catalog facts and store policies are confirmed; unknown product features remain unconfirmed.",
-  ],
-} as const;
-
-
-/** Validate the assistant's perspective and the limitations of this demo. */
-export function capabilityAnswerError(text: string, language: "pl" | "en", requireFirstPerson = false): string | undefined {
-  const folded = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
-  if ((language === "pl" && /\bmozesz mi pomoc\b/.test(folded)) ||
-      (language === "en" && /\byou can help me\b/.test(folded)) ||
-      (requireFirstPerson && !(language === "pl" ? /\b(?:moge|pomoge)\b/ : /\b(?:i can|i will|i'll)\b/).test(folded)))
-    return "Speak as the assistant in the first person, addressing the customer.";
-  const unsupported = /\b(?:place (?:an? |the )?order|track (?:an? |the )?order|checkout|book (?:a |an )?(?:delivery|appointment)|apply (?:a |an )?(?:discount|promo)|realizowac zamowieni\w*|skladac zamowieni\w*|sledzic (?:twoje )?zamowieni\w*|rezerwowac dostawe|naliczac rabat\w*)\b/;
-  const denial = /\b(?:cannot|can't|do not|don't|does not|doesn't|no|nie|bez)\b/;
-  if (folded.split(/[.!?;]/).some((clause) => unsupported.test(clause) && !denial.test(clause)))
-    return "Do not claim ordering, checkout or order tracking. Use only the listed capabilities.";
-}
-
-/** Safe fallback only after a model has selected the capabilities tool. */
-export function capabilityFallback(language: "pl" | "en"): string {
-  return language === "pl"
-    ? "Mogę pomóc znaleźć i porównać produkty oraz sprawdzić zasady dostawy i zwrotów."
-    : "I can help you find and compare products and check delivery and returns policies.";
+/** Optional wording sees canonical records and the shopper's relevant requests, never previous model claims as evidence. */
+export function catalogAdviceContext(
+  request: string,
+  ids: string[],
+  language: Language,
+  stage: "detail" | "comparison" | "advice" | "search",
+  history: ModelMessage[],
+  originalRequest?: string,
+) {
+  const previousRequests = stage === "comparison"
+    ? [...new Set([
+        ...history.flatMap((message) => message.role === "user" && typeof message.content === "string" ? [message.content] : []),
+        ...(originalRequest ? [originalRequest] : []),
+      ])].slice(-4).map((text) => text.slice(0, 240))
+    : [];
+  return {
+    request,
+    ...(previousRequests.length ? { previousShopperRequests: previousRequests } : {}),
+    records: ids.flatMap((id, index) => {
+      const product = catalogById.get(id);
+      if (!product) return [];
+      const { name, material, features, limitations, description, dimensions, productType, useEnvironment } = product;
+      return [{
+        name, material, features, limitations,
+        ...(stage === "comparison" ? { decisionReasons: comparisonFactOptions(product, language) } : {}),
+        ...(stage === "search" ? {
+          priceEUR: product.price,
+          inStock: product.inStock,
+          ...(index < 5 ? { shoppingReasons: comparisonFactOptions(product, language).slice(0, 2).map((option) => option.statement) } : {}),
+        } : {}),
+        ...(stage === "detail" ? { description, dimensions, productType, useEnvironment } : {}),
+      }];
+    }),
+  };
 }

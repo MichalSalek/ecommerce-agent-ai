@@ -70,3 +70,5 @@ The real four-turn public coffee/details/comparison/cart check and scoped failur
 ## Current chat configuration, 2026-11-25
 
 Deploy with the shop-only `GROQ_API_KEY`. The model and direct endpoint are fixed in source. Every public retry uses `openai/gpt-oss-120b`. Remove legacy fallback credentials and provider overrides from the Render service. The 27B route is available only for local QA. See [release verification](VERIFICATION.md) for the incident trace and acceptance.
+
+The owner authorized the complete live conversation matrix on this release using the dedicated shop allowance, with no reserve for another application. The original small canary ledger remains the record of the first probes. Additional acceptance calls are accounted for from the provider's response metadata. Any balancer-assisted QA stays outside the deployed storefront.

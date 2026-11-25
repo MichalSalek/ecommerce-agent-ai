@@ -1,0 +1,240 @@
+import type { Product } from "@/domain/catalog/product";
+import type { Language } from "./assistant-text";
+import { materialLabel } from "./detail-response";
+
+export interface ComparisonFactOption {
+  statement: string;
+  recommendation: string;
+}
+
+type Fact = { en: string; pl: string; priority?: number };
+// Each entry translates one complete canonical feature, without combining
+// properties from different records. Templates choose agreement by name.
+const features: Record<string, Fact> = {
+  "handles for hot drinks": { en: "{has} handles for hot drinks", pl: "{ma} uchwyty do gorących napojów", priority: 3 },
+  "serves cold brew": { en: "{serves} cold brew", pl: "{sluzy} do podawania kawy parzonej na zimno", priority: 3 },
+  "narrow neck": { en: "{has} a narrow neck", pl: "{ma} wąską szyjkę" },
+  "set of two": { en: "{comes} in a set of two", pl: "{jest} w zestawie dwóch sztuk" },
+  "set of three": { en: "{comes} in a set of three", pl: "{jest} w zestawie trzech sztuk" },
+  "set of four": { en: "{comes} in a set of four", pl: "{jest} w zestawie czterech sztuk" },
+  "flat cutting surface": { en: "{has} a flat cutting surface", pl: "{ma} płaską powierzchnię do krojenia", priority: 2 },
+  "serving board": { en: "{is} a serving board", pl: "{sluzy} jako deska do podawania", priority: 2 },
+  "round dinner plates": { en: "{is} round dinner plates", pl: "{jest} okrągłymi talerzami obiadowymi" },
+  "cutlery set for one": { en: "{is} a cutlery set for one person", pl: "{jest} zestawem sztućców dla jednej osoby" },
+  "metal construction": { en: "{has} a metal construction", pl: "{ma} metalową konstrukcję" },
+  "LED desk light": { en: "{is} an LED desk light", pl: "{jest} lampą biurkową LED", priority: 2 },
+  "directed illumination": { en: "{provides} directed illumination", pl: "{zapewnia} kierunkowe oświetlenie", priority: 2 },
+  "paper shade": { en: "{has} a paper shade", pl: "{ma} papierowy klosz" },
+  "floor-standing base": { en: "{has} a floor-standing base", pl: "{ma} podstawę stojącą na podłodze" },
+  "fabric cover": { en: "{has} a fabric cover", pl: "{ma} pokrycie z tkaniny" },
+  "filled cushion": { en: "{is} a filled cushion", pl: "{jest} poduszką z wypełnieniem" },
+  "woven blanket": { en: "{is} a woven blanket", pl: "{jest} tkanym kocem" },
+  "sofa throw": { en: "{is} a sofa throw", pl: "{jest} narzutą na sofę", priority: 2 },
+  "cedar scent": { en: "{has} a cedar scent", pl: "{ma} cedrowy zapach" },
+  "glass jar": { en: "{has} a glass jar", pl: "{ma} szklany słoik" },
+  "narrow opening": { en: "{has} a narrow opening", pl: "{ma} wąski otwór" },
+  "holds fresh flowers": { en: "{holds} fresh flowers", pl: "{sluzy} do umieszczania świeżych kwiatów", priority: 2 },
+  "cloth-bound cover": { en: "{has} a cloth-bound cover", pl: "{ma} oprawę z tkaniny" },
+  "paper pages": { en: "{has} paper pages", pl: "{ma} papierowe strony" },
+  "replaceable ink refill": { en: "{has} a replaceable ink refill", pl: "{ma} wymienny wkład z tuszem", priority: 2 },
+  "metal body": { en: "{has} a metal body", pl: "{ma} metalowy korpus" },
+  "open storage": { en: "{provides} open storage", pl: "{zapewnia} otwarte miejsce do przechowywania", priority: 2 },
+  "set of pots": { en: "{is} a set of pots", pl: "{jest} zestawem doniczek" },
+  "for indoor herbs": { en: "{is} intended for indoor herbs", pl: "{sluzy} do ziół w pomieszczeniach", priority: 2 },
+  "narrow spout": { en: "{has} a narrow spout", pl: "{ma} wąski dzióbek" },
+  "for indoor plants": { en: "{is} intended for indoor plants", pl: "{sluzy} do roślin w pomieszczeniach", priority: 2 },
+  "waffle weave": { en: "{has} a waffle weave", pl: "{ma} splot waflowy" },
+  "cotton fabric": { en: "{has} cotton fabric", pl: "{ma} bawełnianą tkaninę" },
+  "stemmed glasses": { en: "{is} stemmed glasses", pl: "{jest} kieliszkami na nóżkach" },
+  "compact round top": { en: "{has} a compact round top", pl: "{ma} niewielki okrągły blat" },
+  "three legs": { en: "{has} three legs", pl: "{ma} trzy nogi" },
+  "upholstered seat": { en: "{has} an upholstered seat", pl: "{ma} tapicerowane siedzisko", priority: 2 },
+  "wooden legs": { en: "{has} wooden legs", pl: "{ma} drewniane nogi" },
+  "wall-mounted shelf": { en: "{is} a wall-mounted shelf", pl: "{jest} półką montowaną na ścianie", priority: 2 },
+  "open display": { en: "{provides} an open display", pl: "{zapewnia} otwartą przestrzeń do ekspozycji" },
+  "compact stool": { en: "{is} a compact stool", pl: "{jest} niewielkim stołkiem" },
+  "flat top": { en: "{has} a flat top", pl: "{ma} płaski blat" },
+  "botanical fragrance": { en: "{has} a botanical fragrance", pl: "{ma} roślinny zapach" },
+  "glass bottle": { en: "{has} a glass bottle", pl: "{ma} szklaną butelkę" },
+  "coloured glass": { en: "{has} coloured glass", pl: "{ma} kolorowe szkło" },
+  "holds fresh or dried stems": { en: "{holds} fresh or dried stems", pl: "{sluzy} do umieszczania świeżych lub suszonych łodyg", priority: 2 },
+  "pair of supports": { en: "{is} a pair of supports", pl: "{jest} parą podpórek" },
+  "holds books upright": { en: "{holds} books upright", pl: "{utrzymuje} książki w pozycji pionowej", priority: 2 },
+  "Bluetooth connection": { en: "{has} a Bluetooth connection", pl: "{ma} połączenie Bluetooth", priority: 2 },
+  "over-ear cushions": { en: "{has} over-ear cushions", pl: "{ma} nauszne poduszki" },
+  rechargeable: { en: "{is} rechargeable", pl: "{mozna} ładować ponownie", priority: 2 },
+  "compact layout": { en: "{has} a compact layout", pl: "{ma} kompaktowy układ" },
+  "optical sensor": { en: "{has} an optical sensor", pl: "{ma} czujnik optyczny" },
+  "USB receiver": { en: "{has} a USB receiver", pl: "{ma} odbiornik USB" },
+  "quiet click": { en: "{has} a quiet click", pl: "{ma} cichy klik" },
+  HDMI: { en: "{has} HDMI", pl: "{ma} złącze HDMI" },
+  "two USB ports": { en: "{has} two USB ports", pl: "{ma} dwa porty USB" },
+  "USB-C charging pass-through": { en: "{has} USB-C charging pass-through", pl: "{ma} przelotowe ładowanie USB-C", priority: 2 },
+  "15 W charging": { en: "{provides} 15 W charging", pl: "{zapewnia} ładowanie o mocy 15 W" },
+  "flat pad": { en: "{is} a flat pad", pl: "{jest} płaską podkładką" },
+  "10000 mAh battery": { en: "{has} a 10000 mAh battery", pl: "{ma} akumulator o pojemności 10000 mAh" },
+  "USB-C connection": { en: "{has} a USB-C connection", pl: "{ma} złącze USB-C" },
+  "adjustable angle": { en: "{has} an adjustable angle", pl: "{ma} regulowany kąt nachylenia", priority: 2 },
+  "desktop support": { en: "{provides} desktop support", pl: "{zapewnia} podparcie na biurku" },
+  "divided compartments": { en: "{has} divided compartments", pl: "{ma} podzielone przegródki" },
+  "open tray": { en: "{has} an open tray", pl: "{ma} otwartą tackę" },
+  "fits a 13-inch laptop": { en: "{fits} a 13-inch laptop", pl: "{miesci} laptop o przekątnej 13 cali", priority: 2 },
+  "soft sleeve": { en: "{is} a soft sleeve", pl: "{jest} miękkim etui" },
+  "two handles": { en: "{has} two handles", pl: "{ma} dwa uchwyty" },
+  "open main compartment": { en: "{has} an open main compartment", pl: "{ma} otwartą komorę główną" },
+  "folding frame": { en: "{has} a folding frame", pl: "{ma} składaną ramę", priority: 2 },
+  "wrist loop": { en: "{has} a wrist loop", pl: "{ma} pętlę na nadgarstek" },
+  "insulated body": { en: "{has} an insulated body", pl: "{ma} izolowany korpus" },
+  "travel lid": { en: "{has} a travel lid", pl: "{ma} pokrywkę podróżną" },
+  "manual crank": { en: "{has} a manual crank", pl: "{ma} ręczną korbkę" },
+  "ceramic burrs": { en: "{has} ceramic burrs", pl: "{ma} ceramiczne żarna" },
+  "reusable cone": { en: "{has} a reusable cone", pl: "{ma} stożek wielokrotnego użytku" },
+  "brews into a mug": { en: "{brews} into a mug", pl: "{sluzy} do parzenia bezpośrednio do kubka", priority: 3 },
+  "digital display": { en: "{has} a digital display", pl: "{ma} cyfrowy wyświetlacz" },
+  "brewing timer": { en: "{has} a brewing timer", pl: "{ma} timer do parzenia" },
+  "narrow pouring spout": { en: "{has} a narrow pouring spout", pl: "{ma} wąski dzióbek do nalewania" },
+  "stovetop use": { en: "{is} intended for stovetop use", pl: "{nadaje} do używania na kuchence", priority: 2 },
+  "fine mesh basket": { en: "{has} a fine mesh basket", pl: "{ma} koszyczek z drobną siatką" },
+  reusable: { en: "{is} reusable", pl: "{nadaje} do wielokrotnego użytku" },
+  "sealed bamboo lid": { en: "{has} a sealed bamboo lid", pl: "{ma} szczelną bambusową pokrywkę" },
+  "reusable glass box": { en: "{is} a reusable glass box", pl: "{jest} szklanym pojemnikiem wielokrotnego użytku" },
+  "mechanical wind-up": { en: "{has} a mechanical wind-up", pl: "{ma} mechaniczny naciąg" },
+  "no batteries": { en: "{has} no batteries", pl: "nie {ma} baterii" },
+  "pair of gloves": { en: "{is} a pair of gloves", pl: "{jest} parą rękawic" },
+  "for light gardening": { en: "{is} intended for light gardening", pl: "{sluzy} do lekkich prac ogrodowych", priority: 2 },
+  "secateur blades": { en: "{has} secateur blades", pl: "{ma} ostrza sekatora" },
+  "for small stems": { en: "{is} intended for small stems", pl: "{sluzy} do małych łodyg", priority: 2 },
+  "non-slip surface": { en: "{has} a non-slip surface", pl: "{ma} antypoślizgową powierzchnię" },
+  "rolls for storage": { en: "{rolls} for storage", pl: "{mozna} zwinąć do przechowywania", priority: 2 },
+  "fabric shade": { en: "{has} a fabric shade", pl: "{ma} klosz z tkaniny" },
+  "slim standing base": { en: "{has} a slim standing base", pl: "{ma} smukłą stojącą podstawę" },
+  "ceramic base": { en: "{has} a ceramic base", pl: "{ma} ceramiczną podstawę" },
+  "adjustable arm": { en: "{has} an adjustable arm", pl: "{ma} regulowane ramię" },
+  "directed light": { en: "{provides} directed light", pl: "{zapewnia} kierunkowe światło" },
+  "wall-mounted fixture": { en: "{is} a wall-mounted fixture", pl: "{jest} oprawą montowaną na ścianie" },
+  "glass shade": { en: "{has} a glass shade", pl: "{ma} szklany klosz" },
+  "solar panel": { en: "{has} a solar panel", pl: "{ma} panel słoneczny" },
+  "carry handle": { en: "{has} a carry handle", pl: "{ma} uchwyt do przenoszenia" },
+  "string of bulbs": { en: "{is} a string of bulbs", pl: "{jest} sznurem żarówek" },
+  "outdoor use": { en: "{is} intended for outdoor use", pl: "{sluzy} do użytku na zewnątrz", priority: 2 },
+  "round shape": { en: "{has} a round shape", pl: "{ma} okrągły kształt" },
+  "zip closure": { en: "{has} a zip closure", pl: "{ma} zapięcie na zamek" },
+  "soft fabric": { en: "{has} soft fabric", pl: "{ma} miękką tkaninę" },
+  "pointed scoop": { en: "{has} a pointed scoop", pl: "{ma} spiczastą łopatkę" },
+  "wooden handle": { en: "{has} a wooden handle", pl: "{ma} drewniany uchwyt" },
+  "three prongs": { en: "{has} three prongs", pl: "{ma} trzy zęby" },
+  "flexible hose": { en: "{has} a flexible hose", pl: "{ma} elastyczny wąż" },
+  "coiled storage": { en: "{can} be stored coiled", pl: "{mozna} przechowywać w zwoju" },
+  "hanging loop": { en: "{has} a hanging loop", pl: "{ma} pętlę do zawieszenia" },
+  "open feeding tray": { en: "{has} an open feeding tray", pl: "{ma} otwartą tackę na karmę" },
+  "refillable bottle": { en: "{has} a refillable bottle", pl: "{ma} butelkę do ponownego napełnienia" },
+  "pump top": { en: "{has} a pump top", pl: "{ma} pompkę" },
+  "woven cotton": { en: "{is} made of woven cotton", pl: "{jest} z tkanej bawełny" },
+  "rectangular shape": { en: "{has} a rectangular shape", pl: "{ma} prostokątny kształt" },
+  "open wire shelves": { en: "{has} open wire shelves", pl: "{ma} otwarte półki z drutu" },
+  "hanging hook": { en: "{has} a hanging hook", pl: "{ma} hak do zawieszenia" },
+  "open top": { en: "{has} an open top", pl: "{ma} otwartą górę" },
+  "ceramic body": { en: "{has} a ceramic body", pl: "{ma} ceramiczny korpus" },
+  "carry handles": { en: "{has} carry handles", pl: "{ma} uchwyty do przenoszenia" },
+  "round mirror": { en: "{is} a round mirror", pl: "{jest} okrągłym lustrem" },
+  "metal frame": { en: "{has} a metal frame", pl: "{ma} metalową ramę" },
+  "round top": { en: "{has} a round top", pl: "{ma} okrągły blat" },
+  "compact frame": { en: "{has} a compact frame", pl: "{ma} niewielką ramę" },
+  "slatted seat and back": { en: "{has} a slatted seat and back", pl: "{ma} siedzisko i oparcie z listew" },
+  "slatted seat": { en: "{has} a slatted seat", pl: "{ma} siedzisko z listew" },
+  "two-person bench": { en: "{is} a two-person bench", pl: "{ma} miejsce dla dwóch osób", priority: 3 },
+  "reclining back": { en: "{has} a reclining back", pl: "{ma} odchylane oparcie", priority: 2 },
+  "fabric sling": { en: "{has} a fabric sling", pl: "{ma} siedzisko z tkaniny" },
+  "two-seat frame": { en: "{has} a two-seat frame", pl: "{ma} ramę z dwoma miejscami" },
+  "removable cushions": { en: "{has} removable cushions", pl: "{ma} zdejmowane poduszki" },
+  "lift-up seat": { en: "{has} a lift-up seat", pl: "{ma} unoszone siedzisko" },
+  "storage compartment": { en: "{has} a storage compartment", pl: "{ma} schowek do przechowywania" },
+  stackable: { en: "{is} stackable", pl: "{mozna} układać w stos" },
+  "low profile": { en: "{has} a low profile", pl: "{ma} niski profil" },
+  "two open tiers": { en: "{has} two open tiers", pl: "{ma} dwa otwarte poziomy" },
+  "slatted shelves": { en: "{has} slatted shelves", pl: "{ma} półki z listew" },
+  "four hooks": { en: "{has} four hooks", pl: "{ma} cztery haczyki" },
+  "wall-mounted rail": { en: "{has} a wall-mounted rail", pl: "{ma} listwę montowaną na ścianie" },
+  "upright dividers": { en: "{has} upright dividers", pl: "{ma} pionowe przegródki" },
+  "open compartments": { en: "{has} open compartments", pl: "{ma} otwarte przegródki" },
+  "removable lid": { en: "{has} a removable lid", pl: "{ma} zdejmowaną pokrywkę" },
+  "closed storage": { en: "{provides} closed storage", pl: "{zapewnia} zamknięte miejsce do przechowywania" },
+  "USB powered": { en: "{is} USB powered", pl: "{jest} zasilany przez USB" },
+  "desktop size": { en: "{has} a desktop size", pl: "{ma} rozmiar odpowiedni na biurko" },
+  "rectangular blocks": { en: "{is} rectangular blocks", pl: "{jest} prostokątnymi klockami" },
+  "adjustable loop": { en: "{has} an adjustable loop", pl: "{ma} regulowaną pętlę" },
+  "woven strap": { en: "{has} a woven strap", pl: "{ma} tkany pasek" },
+  "cylindrical shape": { en: "{has} a cylindrical shape", pl: "{ma} cylindryczny kształt" },
+  "textured surface": { en: "{has} a textured surface", pl: "{ma} fakturowaną powierzchnię" },
+  "compact ball": { en: "{is} a compact ball", pl: "{jest} niewielką piłką" },
+  "loop shape": { en: "{has} a loop shape", pl: "{ma} kształt pętli" },
+  "round cushion": { en: "{is} a round cushion", pl: "{jest} okrągłą poduszką" },
+  "compact size": { en: "{has} a compact size", pl: "{ma} niewielki rozmiar" },
+};
+
+const limitations: Record<string, { en: string; pl: string }> = {
+  "Not intended for outdoor use": { en: "is not intended for outdoor use", pl: "nie jest przeznaczony do użytku na zewnątrz" },
+  "For indoor use only": { en: "is intended for indoor use only", pl: "jest przeznaczony wyłącznie do użytku wewnątrz" },
+  "Not waterproof": { en: "is not waterproof", pl: "nie jest wodoodporny" },
+  "Not water resistant": { en: "is not water resistant", pl: "nie jest odporny na wodę" },
+  "Glass can break if dropped": { en: "contains glass that can break if dropped", pl: "zawiera szkło, które może się stłuc po upuszczeniu" },
+  "Sold individually": { en: "is sold individually", pl: "jest sprzedawany pojedynczo" },
+  "Chairs not included": { en: "does not include chairs", pl: "nie zawiera krzeseł" },
+  "Cushions not included": { en: "does not include cushions", pl: "nie zawiera poduszek" },
+  "Cushion not included": { en: "does not include a cushion", pl: "nie zawiera poduszki" },
+  "Plants and soil are not included": { en: "does not include plants or soil", pl: "nie zawiera roślin ani ziemi" },
+  "Mug and coffee not included": { en: "does not include a mug or coffee", pl: "nie zawiera kubka ani kawy" },
+  "Tea and cup not included": { en: "does not include tea or a cup", pl: "nie zawiera herbaty ani filiżanki" },
+  "Not an electric kettle": { en: "is not an electric kettle", pl: "nie jest czajnikiem elektrycznym" },
+  "Requires charging": { en: "requires charging", pl: "wymaga ładowania" },
+  "Requires charging before use": { en: "requires charging before use", pl: "wymaga naładowania przed użyciem" },
+  "Requires manual grinding": { en: "requires manual grinding", pl: "wymaga ręcznego mielenia" },
+  "Requires a compatible Bluetooth device": { en: "requires a compatible Bluetooth device", pl: "wymaga zgodnego urządzenia Bluetooth" },
+};
+
+function pluralName(name: string) {
+  return /s$/i.test(name) && !/(?:ss|us|is)$/i.test(name);
+}
+function inflect(template: string, plural: boolean) {
+  const choices: Record<string, [string, string]> = {
+    can: ["can", "can"], has: ["has", "have"], is: ["is", "are"], comes: ["comes", "come"],
+    serves: ["serves", "serve"], provides: ["provides", "provide"], holds: ["holds", "hold"],
+    fits: ["fits", "fit"], brews: ["brews", "brew"], rolls: ["rolls", "roll"],
+    ma: ["ma", "mają"], jest: ["jest", "są"], sluzy: ["służy", "służą"],
+    zapewnia: ["zapewnia", "zapewniają"], utrzymuje: ["utrzymuje", "utrzymują"],
+    miesci: ["mieści", "mieszczą"], mozna: ["można", "można"], nadaje: ["nadaje się", "nadają się"],
+  };
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) => choices[key]?.[plural ? 1 : 0] ?? `{${key}}`);
+}
+
+export function comparisonFactOptions(product: Product, language: Language): ComparisonFactOption[] {
+  const plural = pluralName(product.name);
+  const options = product.features.flatMap((feature, index) => {
+    const fact = features[feature];
+    if (!fact) return [];
+    const predicate = inflect(fact[language], plural);
+    const subject = language === "en" ? (plural ? "they" : "it") : "";
+    return [{
+      priority: fact.priority ?? 0, index,
+      statement: `${product.name} ${predicate}.`,
+      recommendation: language === "pl" ? `Polecam ${product.name}, bo ${predicate}.` : `I recommend ${product.name} because ${subject} ${predicate}.`,
+    }];
+  }).sort((a, b) => b.priority - a.priority || a.index - b.index);
+  const material = materialLabel(product.material, language) ?? product.material.trim();
+  if (material) options.push({
+    priority: -1, index: options.length,
+    statement: language === "pl" ? `Katalog podaje, że materiał produktu ${product.name} to ${material}.` : `The catalog lists ${material} as the material for ${product.name}.`,
+    recommendation: language === "pl" ? `Polecam ${product.name} ze względu na materiał określony w katalogu jako ${material}.` : `I recommend ${product.name} for the ${material} listed in the catalog.`,
+  });
+  for (const limitation of product.limitations) {
+    const fact = limitations[limitation];
+    if (!fact) continue;
+    const predicate = fact[language];
+    options.push({
+      priority: -2, index: options.length,
+      statement: language === "pl" ? `Produkt ${product.name} ${predicate}.` : `The product ${product.name} ${predicate}.`,
+      recommendation: language === "pl" ? `Warto pamiętać, że produkt ${product.name} ${predicate}.` : `Keep in mind that the product ${product.name} ${predicate}.`,
+    });
+  }
+  return options.map(({ statement, recommendation }) => ({ statement, recommendation }));
+}

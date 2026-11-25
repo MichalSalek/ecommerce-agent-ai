@@ -32,6 +32,22 @@ export function exactNamedProducts(text: string): string[] {
   return namedProductMatches(text, false);
 }
 
+export function asksForChoice(text: string): boolean {
+  const request = foldComparison(text);
+  return /\b(?:ktor\w*|which)\b[^.!?]{0,100}\b(?:lepsz\w*|wybra\w*|polec\w*|sprawdzi|nadaje|better|recommend|choose|pick|best|suit\w*)\b|\b(?:co polecasz|doradz mi|help me choose|pick one|give me a recommendation)\b/.test(request);
+}
+
+/** A shopper choosing between two named products needs their records even without the word "compare". */
+export function exactNamedChoice(text: string, displayedPair: string[] = []): string[] {
+  const request = foldComparison(text);
+  if (/["“”„]|\b(?:not|without|except|excluding|nie|bez|oprocz|poza)\b/.test(request)) return [];
+  if (!asksForChoice(request)) return [];
+  const ids = exactNamedProducts(text);
+  if (ids.length) return ids.length === 2 ? ids : [];
+  const pointsToPair = /\b(?:z (?:tych (?:dwoch|dwu)|nich)|of (?:those|these)(?: two)?|of (?:the )?(?:two|both)|between them)\b/.test(request);
+  return pointsToPair && displayedPair.length === 2 && new Set(displayedPair).size === 2 && displayedPair.every((id) => catalogById.has(id)) ? displayedPair : [];
+}
+
 /** Resolve only a complete, explicit comparison of two exact canonical names. */
 export function exactNamedComparison(text: string): string[] {
   const normalized = foldComparison(text);

@@ -8,20 +8,26 @@ import {
   ToolChoiceViolationError,
 } from "ai";
 import { products } from "@/data/products";
-import { conversationContext, compactProduct, shoppingCapabilities, capabilityAnswerError, capabilityFallback } from "@/application/chat/conversation-context";
-import { groundedComparisonAdvice, comparisonAdviceFallback } from "@/application/chat/comparison-advice";
+import { catalogAdviceContext, conversationContext, compactProduct } from "@/application/chat/conversation-context";
+import { shoppingCapabilities, capabilityAnswerError, capabilityFallback, capabilityTopic, specificCapabilityInstructions } from "@/application/chat/shop-capabilities";
+import { groundedSearchAdvice } from "@/application/chat/search-advice";
+import { capabilityInstructions, comparisonAnswerFormat, searchAdviceFormat } from "@/application/chat/assistant-instructions";
+import { groundedComparisonAdvice, groundedComparisonLead, comparisonAdviceFallback } from "@/application/chat/comparison-advice";
 import { validatePresentation, type Evidence } from "@/application/chat/presentation-validation";
-import { detailQuestionResponse, groundedDetailAnswer } from "@/application/chat/detail-response";
+import { detailQuestionResponse, groundedDetailAnswer, renderCanonicalDetailFact } from "@/application/chat/detail-response";
 import { verifiedRejections } from "@/application/chat/rejections";
 import { queryLanguageError } from "@/application/chat/query-language";
 import {
   resolveExplicitFacets,
+  functionalRefinement,
   type ExplicitFacet,
 } from "@/application/chat/explicit-facets";
 import { expandFunctionalGroup } from "@/domain/catalog/functional-groups";
 import {
   directComparisonRequest,
   exactNamedComparison,
+  exactNamedChoice,
+  asksForChoice,
   exactNamedProducts,
   hasDistinctComparisonSubjects,
   literalProductList,
@@ -45,6 +51,7 @@ import {
 import {
   prepareCartProposal,
   hasCartInstruction,
+  hasExternalCartDependency,
 } from "@/application/chat/cart-authorization";
 import {
   transitionState,
@@ -521,6 +528,8 @@ async function executeAgent(
         productIds: [],
       }
     : undefined;
+  const shopperTopic = capabilityTopic(turn.text, !preferenceEvidence && !context.messages.length);
+  const topicHint = specificCapabilityInstructions(shopperTopic);
   const selectedProducts = before.lastIds
     .flatMap((id) => products.filter((product) => product.id === id))
     .map((product) => compactProduct(product));
@@ -623,9 +632,11 @@ async function executeAgent(
     progress("provider-wait", Date.now() + milliseconds),
   );
   let correction = false;
+  let requireAdditionalRefinement = false;
   let terminalOnly = false;
   let effectReferences: string[] = [];
   let committed: AgentResult | undefined;
+  let originalAdviceRequest: string | undefined;
   let expectedRead: "compareProducts" | "getProductDetails" | undefined;
   let productComparisonPending = false;
   let comparisonLookupRequired = false;
@@ -1010,7 +1021,12 @@ async function executeAgent(
       pendingIntent?.productIds ?? before.selectedIds,
     );
   }
-  if (pendingIntent && !turn.action && !hasCartInstruction(turn.text)) {
+  const externalCartDependency = !turn.action && hasExternalCartDependency(turn.text);
+  if (pendingIntent && externalCartDependency) {
+    forgetCartIntent(turn.conversationId);
+    delete after.pendingCartIntent;
+  }
+  if (pendingIntent && !externalCartDependency && !turn.action && !hasCartInstruction(turn.text)) {
     const chosen = pendingIntent.productIds.filter(
       (id) =>
         turn.text.toLowerCase().includes(id) ||
@@ -1124,6 +1140,7 @@ async function executeAgent(
             ? "Wybierz ponownie wynik, który mam wyjaśnić."
             : "Choose the result you would like me to explain again.",
         );
+      originalAdviceRequest = source.checkpoint.text;
       committed = structuredClone(source);
       committed.cart = undefined;
       committed.checkpoint = {
@@ -1283,8 +1300,15 @@ async function executeAgent(
       delete after.pendingCartIntent;
     }
   }
-  const namedComparison = !turn.action && !hasCartInstruction(turn.text)
-    ? exactNamedComparison(turn.text) : [];
+  let namedComparison: string[] = [];
+  if (!turn.action && !hasCartInstruction(turn.text)) {
+    namedComparison = exactNamedComparison(turn.text);
+    if (!namedComparison.length) namedComparison = exactNamedChoice(turn.text, before.resultIds);
+  }
+  const capabilityRequest = !turn.action && !hasCartInstruction(turn.text) && (
+    externalCartDependency || shopperTopic === "unprovidedBudget" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
+    (shopperTopic === "orders" && /naprawdę|naprawde|rzeczywi|real(?:ly)?|tracking|śledz|sledz|gdzie jest|where is|track my/i.test(turn.text))
+  );
   for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {
     if (committed && signal.reason?.name === "TimeoutError")
       return unavailableAdvice("TIMEOUT");
@@ -1295,9 +1319,12 @@ async function executeAgent(
         : step === 3) || terminalOnly;
     progress(forceAnswer ? "answer" : "understanding");
     const { proposeCart: _cartTool, answerProductQuestion: _detailTool, ...readTools } = nativeTools;
+    const answerAboutAccess = capabilityRequest && !committed && !evidence.length && !forceAnswer;
     const tools: ToolSet | undefined = committed
       ? detailQuestionPending ? { answerProductQuestion: nativeTools.answerProductQuestion } : undefined
-      : comparisonLookupRequired
+      : answerAboutAccess
+        ? { getShoppingCapabilities: nativeTools.getShoppingCapabilities }
+        : comparisonLookupRequired
         ? { searchProducts: nativeTools.searchProducts }
         : forceAnswer
           ? { presentAnswer: nativeTools.presentAnswer }
@@ -1323,36 +1350,35 @@ async function executeAgent(
       usage.calls++;
       let generated: Awaited<ReturnType<typeof generateText>>;
       try {
+        let instructions = answerAboutAccess ? capabilityInstructions : agentInstructions;
+        if (topicHint) instructions += "\n" + topicHint;
+        let inputMessages = messages;
+        if (committed) {
+          const stage = detailQuestionPending ? "detail" : committed.comparison ? "comparison" : committed.search?.products.length ? "search" : "advice";
+          const input = catalogAdviceContext(turn.text, committed.presentation.productIds, language, stage, context.messages, originalAdviceRequest);
+          inputMessages = [{ role: "user", content: JSON.stringify(input) }];
+          instructions = stage === "detail" ? detailAnswerInstructions : adviceInstructions;
+          if (stage === "search") instructions += "\n" + searchAdviceFormat;
+          if (stage === "comparison") {
+            const choose = asksForChoice(turn.text) || (!!originalAdviceRequest && asksForChoice(originalAdviceRequest));
+            instructions += "\n" + comparisonAnswerFormat(choose, language);
+          }
+        }
         generated = await generateText({
           model,
-          system: `${committed ? detailQuestionPending ? detailAnswerInstructions : adviceInstructions : agentInstructions}\nApplication-resolved response language: ${language}. Always use this language.`,
-          messages: committed
-            ? [
-                {
-                  role: "user",
-                  content: JSON.stringify({
-                    request: turn.text,
-                    records: committed.presentation.productIds
-                      .flatMap((id) => products.filter((p) => p.id === id))
-                      .map((p) => ({
-                        name: p.name,
-                        material: p.material,
-                        features: p.features,
-                        limitations: p.limitations,
-                        ...(detailQuestionPending ? { description: p.description, dimensions: p.dimensions, productType: p.productType, useEnvironment: p.useEnvironment } : {}),
-                      })),
-                  }),
-                },
-              ]
-            : messages,
+          system: `${instructions}\nApplication-resolved response language: ${language}. Always use this language.`,
+          messages: inputMessages,
           tools,
           toolChoice: committed
             ? detailQuestionPending ? { type: "tool", toolName: "answerProductQuestion" } : undefined
-            : forceAnswer
+            : answerAboutAccess
+              ? { type: "tool", toolName: "getShoppingCapabilities" }
+              : forceAnswer
               ? { type: "tool", toolName: "presentAnswer" }
               : "required",
           temperature: 0.1,
-          maxOutputTokens: committed ? 192 : 1024,
+          // Groq includes reasoning tokens in this limit; the customer-facing text is still capped at 400 characters.
+          maxOutputTokens: committed ? 384 : 1024,
           maxRetries: 0,
           providerOptions: options.providerOptions,
           abortSignal: signal,
@@ -1378,6 +1404,10 @@ async function executeAgent(
             (error.responseBody.includes("tool_use_failed") ||
               /tool choice.*required/i.test(error.responseBody)));
         if (!invalidCall) throw error;
+        console.warn("[AGENT] correction", JSON.stringify({
+          attemptId: options.attemptId, operationId, stage: "interpretation",
+          reason: ToolChoiceViolationError.isInstance(error) ? "INVALID_TOOL_CHOICE" : "PROVIDER_TOOL_SCHEMA",
+        }));
         if (
           correction ||
           (productComparisonPending ? usage.calls >= 4 : step === 3)
@@ -1387,7 +1417,7 @@ async function executeAgent(
         messages.push({
           role: "user",
           content:
-            "The native tool call was invalid. Correct it once using exactly one registered tool and its schema.",
+            "The tool call was invalid. Keep answering the same CURRENT request. For discovery call searchProducts. For a product fact read getProductDetails with the established product ID. For a comparison read the identified pair. Omit unknown criteria and optional keys. Do not replace a product request with a capabilities introduction. Make exactly one valid native call.",
         });
         continue;
       }
@@ -1445,6 +1475,39 @@ async function executeAgent(
       expectedRead = "compareProducts";
       call = { toolName: "compareProducts", toolCallId: "app-named-comparison", input: { productIds: namedComparison } };
     }
+    if (!committed && !turn.action && !productComparisonPending && call.toolName === "searchProducts") {
+      const lookup = call.input as { mode?: string; continueWith?: string };
+      if (lookup.mode === "lookup" && lookup.continueWith === "getProductDetails" && !mentionsBudget(turn.text)) {
+        const names = exactNamedProducts(turn.text);
+        const priorId = names[0];
+        const alreadySeen = before.resultIds.includes(priorId) || before.lastIds.includes(priorId) ||
+          context.priorGroups.some((group) => group.products.some((product) => product.id === priorId));
+        if (names.length === 1 && alreadySeen && queryListGrounded(names, turn.text)) {
+          call = { toolName: "getProductDetails", toolCallId: "app-return-to-product", input: { productId: priorId } };
+        }
+      }
+    }
+    const refinement = !committed && !turn.action && !hasCartInstruction(turn.text) &&
+      !directComparisonRequest(turn.text) && !exactNamedProducts(turn.text).length &&
+      call.toolName === "presentAnswer" &&
+      ((call.input as { view?: unknown })?.view === "products" ||
+        (Array.isArray((call.input as { productIds?: unknown })?.productIds) &&
+          (call.input as { productIds: unknown[] }).productIds.length > 0))
+        ? functionalRefinement(turn.text, before)
+        : undefined;
+    if (refinement?.simple) {
+      call = {
+        toolName: "searchProducts",
+        toolCallId: "app-functional-refinement",
+        input: {
+          mode: "recommend",
+          operation: "refine",
+          language,
+          criteria: { functionalGroup: refinement.group },
+          continueWith: "presentAnswer",
+        },
+      };
+    }
     const name = call.toolName;
     if (
       !turn.action &&
@@ -1472,7 +1535,15 @@ async function executeAgent(
         const answer = detailAnswerSchema.parse(call.input);
         if (answer.status === "missing")
           return { ...committed, status: operationTurnStatus(committed.operation, usage) };
-        const text = groundedDetailAnswer(detailQuestionPending, answer);
+        const generatedText = groundedDetailAnswer(detailQuestionPending, answer);
+        if (!generatedText) return unavailableAdvice("UNVERIFIED_DETAIL");
+        const textError = assistantTextError(generatedText, providerFinish, language);
+        const literalFragment = answer.source === "features" && answer.quote &&
+          generatedText.trim().replace(/[.!?]+$/, "").toLowerCase() === answer.quote.trim().replace(/[.!?]+$/, "").toLowerCase();
+        const canRender = !textError || ["INCOMPLETE_TEXT", "WRONG_LANGUAGE"].includes(textError);
+        const text = literalFragment || textError
+          ? (canRender ? renderCanonicalDetailFact(detailQuestionPending, turn.text, language, answer) : undefined)
+          : generatedText;
         if (!text || assistantTextError(text, providerFinish, language))
           return unavailableAdvice("UNVERIFIED_DETAIL");
         const presentation: PresentedAnswer = { ...committed.presentation, text };
@@ -1502,6 +1573,10 @@ async function executeAgent(
             : "Invalid tool input. Correct the tool schema once.",
         );
       if (name === "presentAnswer") {
+        if (refinement && !refinement.simple && !search) {
+          requireAdditionalRefinement = true;
+          throw new Error("The current functional request includes additional requirements. Use searchProducts with all stated constraints before presenting products; ask for clarification if a requirement cannot be represented.");
+        }
         finishCatalog();
         const answer = answerSchema.parse(call.input);
         if (evidence.some((item) => item.tool === "getShoppingCapabilities")) {
@@ -1592,10 +1667,17 @@ async function executeAgent(
         );
         if (expandedError) throw new Error(expandedError);
         if (committed) {
-          const adviceText = committed.comparison &&
-            !groundedComparisonAdvice(text, committed.comparison.productIds)
-              ? comparisonAdviceFallback(committed.comparison.productIds, language)
-              : text;
+          let adviceText = text;
+          if (committed.comparison && !groundedComparisonAdvice(text, committed.comparison.productIds, language)) {
+            const ids = committed.comparison.productIds;
+            adviceText = groundedComparisonLead(text, ids, language) ?? comparisonAdviceFallback(ids, language);
+          } else if (committed.search?.products.length) {
+            const checked = groundedSearchAdvice(text, committed.presentation.productIds, language);
+            if (!checked) return unavailableAdvice("UNVERIFIED_SEARCH_ADVICE");
+            adviceText = checked;
+          }
+          console.info("[AGENT] wording", JSON.stringify({ attemptId: options.attemptId, operationId, stage: "advice",
+            source: adviceText === text ? "provider" : text.startsWith(adviceText) ? "verified-prefix" : "catalog" }));
           return {
             ...committed,
             advice: { status: "included", text: adviceText },
@@ -1635,19 +1717,20 @@ async function executeAgent(
             const record = addEvidence(name, {}, shoppingCapabilities);
             const generated = input.answer.trim();
             const textError = assistantTextError(generated, providerFinish, language);
-            const capabilityError = capabilityAnswerError(generated, language, true);
-            let text = textError || capabilityError ? capabilityFallback(language) : generated;
+            const capabilityError = capabilityAnswerError(generated, language, !shopperTopic);
+            let text = textError || capabilityError ? capabilityFallback(language, shopperTopic) : generated;
             let presentation: PresentedAnswer = {
               text, language, evidenceIds: [record.id], productIds: [], view: "none",
             };
             try {
               text = validatePresentation(presentation, verifiedEvidence());
             } catch {
-              text = capabilityFallback(language);
+              text = capabilityFallback(language, shopperTopic);
               presentation = { ...presentation, text };
             }
             signal.throwIfAborted();
             console.log("[AGENT] usage", JSON.stringify({ attemptId: options.attemptId, operationId, ...usage }));
+            console.info("[AGENT] wording", JSON.stringify({ attemptId: options.attemptId, operationId, stage: "capabilities", source: text === generated ? "provider" : "catalog" }));
             return result(presentation, text, "complete");
           }
           // Older callers may omit the answer and complete with presentAnswer.
@@ -1655,6 +1738,29 @@ async function executeAgent(
           break;
         }
         case "searchProducts": {
+          if (requireAdditionalRefinement) {
+            const input = call.input as {
+              criteria?: Record<string, unknown>;
+              explicitFilters?: ExplicitFacet[];
+              preferences?: string[];
+              persistentPreferences?: string[];
+              rejections?: unknown[];
+              remove?: unknown[];
+            };
+            const extra = Object.entries(input.criteria ?? {}).some(([key, value]) =>
+              key !== "functionalGroup" && value !== undefined && value !== "" &&
+              (!Array.isArray(value) || value.length > 0) &&
+              JSON.stringify(value) !== JSON.stringify(before.criteria[key as keyof typeof before.criteria]),
+            ) || Boolean(input.explicitFilters?.some((filter) =>
+              filter.facet === "excludeType" ? !before.criteria.excludeTypes?.includes(filter.value) :
+              filter.facet === "kind" ? filter.value !== before.criteria.productKind :
+              filter.facet === "category" ? filter.value !== before.criteria.category :
+              filter.value !== before.criteria.productType && !before.criteria.productTypes?.includes(filter.value),
+            ) || input.preferences?.some((value) => !before.preferences.includes(value)) ||
+              input.persistentPreferences?.some((value) => !before.persistentPreferences.includes(value)) || input.rejections?.length);
+            if (!extra)
+              throw new Error("The additional requirement has not been represented. Clarify it rather than omitting it.");
+          }
           const recoveringComparisonLookup = comparisonLookupRequired;
           comparisonLookupRequired = false;
           progress("catalog");
@@ -2104,6 +2210,9 @@ async function executeAgent(
       const hasError =
         output && typeof output === "object" && "error" in output;
       if (hasError) {
+        console.warn("[AGENT] correction", JSON.stringify({
+          attemptId: options.attemptId, operationId, stage: "catalog", reason: "TOOL_INPUT", tool: name,
+        }));
         if (correction) break;
         correction = true;
       }

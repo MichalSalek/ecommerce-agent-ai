@@ -340,7 +340,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.deepEqual(inspected.checkpoint.after.resultIds, ids);
         assert.equal(detail.mock.requests[1].tool_choice, undefined);
         assert.ok(!detail.mock.requests[1].tools?.length);
-        assert.equal(detail.mock.requests[1].max_tokens, 192);
+        assert.equal(detail.mock.requests[1].max_tokens, 384);
         const action = run(
           catalog,
           [
@@ -357,7 +357,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.deepEqual(compared.checkpoint.after.resultIds, ids);
         assert.equal(action.mock.requests[1].tool_choice, undefined);
         assert.ok(!action.mock.requests[1].tools?.length);
-        assert.equal(action.mock.requests[1].max_tokens, 192);
+        assert.equal(action.mock.requests[1].max_tokens, 384);
         assert.deepEqual(
           compared.evidence
             .filter(
@@ -624,7 +624,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.count(), 2);
         assert.equal(action.mock.requests[1].tool_choice, undefined);
         assert.ok(!action.mock.requests[1].tools?.length);
-        assert.equal(action.mock.requests[1].max_tokens, 192);
+        assert.equal(action.mock.requests[1].max_tokens, 384);
         assert.equal(result.search?.appliedCriteria.inStockOnly, true);
         assert.equal(result.presentation.language, "pl");
       },
@@ -705,7 +705,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       assert.equal(calls, 2);
       assert.equal(requests[1].tool_choice, undefined);
         assert.ok(!requests[1].tools?.length);
-      assert.equal(requests[1].max_tokens, 192);
+      assert.equal(requests[1].max_tokens, 384);
       assert.equal(result.operation.status, "completed");
       assert.equal(result.status.status, "complete");
       assert.equal(result.advice.status, "unavailable");
@@ -1049,7 +1049,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(action.mock.requests[2].tool_choice, "required");
         assert.equal(action.mock.requests[3].tool_choice, undefined);
         assert.ok(!action.mock.requests[3].tools?.length);
-        assert.equal(action.mock.requests[3].max_tokens, 192);
+        assert.equal(action.mock.requests[3].max_tokens, 384);
         const adviceMessages = action.mock.requests[3].messages;
         assert.ok(adviceMessages.every((message: any) => message.role !== "tool"));
         const context = adviceContext(adviceMessages);
@@ -1058,7 +1058,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.deepEqual(context.records.map((record: any) => record.name),
           ["mugs", "carafe"].map((id) => products.find((p) => p.id === id)?.name));
         for (const record of context.records) {
-          assert.ok(Object.keys(record).every((key) => ["name", "material", "features", "limitations"].includes(key)));
+          assert.ok(Object.keys(record).every((key) => ["name", "material", "features", "limitations", "decisionReasons"].includes(key)));
           assert.ok(!("id" in record));
           assert.ok(!("priceReference" in record));
           assert.ok(!("dimensionsReference" in record));
@@ -1814,7 +1814,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(result.advice.status, "unavailable");
         assert.equal(bodies[1].tool_choice, undefined);
         assert.ok(!bodies[1].tools?.length);
-        assert.equal(bodies[1].max_tokens, 192);
+        assert.equal(bodies[1].max_tokens, 384);
         assert.ok(
           bodies[0].messages.some(
             (m: any) => m.role === "assistant" &&
