@@ -677,3 +677,18 @@ test("captured garden to seating to alternatives preserves filters against the c
     assert.equal(state.criteria.useEnvironment, "outdoor");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("a named product type can be searched without a model-invented use or kind", () => {
+  const request = "Budżet to 43 EUR, szukam kubka do granatowego termosu";
+  const raw = { operation: "new" as const, language: "pl" as const, criteria: { query: "kubek", maxPrice: 43, functionalGroup: "coffee" as const } };
+  for (const facets of [[], [{ facet: "kind" as const, value: "kitchenware" }]]) {
+    const result = resolveExplicitFacets(request, before, raw, facets);
+    assert.equal(result.error, undefined);
+    assert.equal(result.change?.criteria.functionalGroup, undefined);
+    assert.equal(result.change?.criteria.query, "mug");
+    assert.equal(result.change?.criteria.maxPrice, 43);
+  }
+  assert.equal(resolveExplicitFacets("Szukam kubka do kawy.", before, raw, []).change?.criteria.functionalGroup, "coffee");
+  assert.ok(resolveExplicitFacets("Szukam pokrowca do kubka.", before, raw, []).error);
+  assert.ok(resolveExplicitFacets("Nie chcę kubka.", before, raw, []).error);
+});
