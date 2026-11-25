@@ -13,7 +13,7 @@ export const shoppingCapabilities = {
 
 const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
 
-export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "sessions" | "identity" | "unprovidedBudget";
+export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "sessions" | "identity" | "catalogAccess" | "unprovidedBudget";
 export function capabilityTopic(request: string, freshConversation = false): CapabilityTopic | undefined {
   const text = fold(request);
   if (freshConversation && /\b(?:budzet\w*|budget)\b/.test(text) &&
@@ -24,11 +24,15 @@ export function capabilityTopic(request: string, freshConversation = false): Cap
   if (/\b(?:poprzedni\w* (?:sesj\w*|wizyt\w*|czat\w*)|past visits?|previous (?:sessions?|visits?|chats?))\b/.test(text)) return "sessions";
   if (/\b(?:innym sklepie|innych sklepow|innego sklepu|another (?:shop|store)|other (?:shops|stores)|external)\b/.test(text)) return "external";
   if (/\b(?:zaplac\w*|(?:moje|mojego) zamowieni\w*|sledz\w*|track\w*|checkout|pay|place an order)\b/.test(text)) return "orders";
+  if (/\b(?:co widzisz.{0,50}(?:gdy|kiedy|jesli) (?:pytam|zapytam)|what (?:can |do )?you see.{0,35}when i ask)\b/.test(text) ||
+      /\b(?:(?:jakie dane|jakie informacje) (?:widzisz|masz)|what (?:data|information) (?:do|can) you)\b.{0,60}\b(?:produkt\w*|product\w*|katalog\w*|catalog\w*|cen\w*|pric\w*|stock)\b/.test(text) ||
+      /\b(?:skad (?:bierzesz|znasz|masz|pochodz\w*)|where do you get)\b.{0,60}\b(?:cen\w*|dostepnos\w*|pric\w*|stock)\b/.test(text)) return "catalogAccess";
   if (/\b(?:skad|zrodl\w*|informacje o produktach|kim jestes|kto mi .{0,8}odpowiada|obslug\w*|source\w*|where.*(?:data|information)|who are you)\b/.test(text)) return "sources";
 }
 
 const topicInstructions: Record<CapabilityTopic, string> = {
   unprovidedBudget: "This fresh conversation contains no earlier budget. Say that the shopper has not given a budget in this conversation and ask what limit they would like. Do not guess an amount.",
+  catalogAccess: "Answer the specific question about what you can see. When asked how you know a price or stock, say that you read it from Aurelle’s catalog, the same record shown on the product page. Only mention search technology if explicitly requested.",
   identity: "You know only what the visitor told you in the current conversation. Answer the personal question immediately. If they ask whether you know their name or occupation, explicitly say whether they have told you their name or occupation in this conversation. If they gave one, acknowledge exactly that detail. Do not introduce yourself unless asked about yourself.",
   sources: "If answering about your role or source, identify yourself as Aurelle's shopping assistant, credit the same shop catalog as the product pages and address what help was requested.",
   technology: "This is an explicit technical question. Explain the roles of LanceDB search and the canonical store record that supplies a product's price and stock.",
@@ -63,6 +67,9 @@ export function capabilityFallback(language: "pl" | "en", topic?: CapabilityTopi
   if (topic === "identity") return language === "pl"
     ? "Wiem o Tobie tyle, ile mi powiesz w tej rozmowie. Nie mam dostępu do Twojego profilu."
     : "I know what you share with me in this conversation. I cannot see a customer profile.";
+  if (topic === "catalogAccess") return language === "pl"
+    ? "Widzę katalog produktów Aurelle. Cenę i dostępność odczytuję z tych samych danych, które widzisz na karcie produktu."
+    : "I can see Aurelle’s catalog. I read prices and stock from the same records you see on the product pages.";
   if (topic === "technology") return language === "pl"
     ? "Wyszukuję produkty w indeksie LanceDB. Cenę i dostępność sprawdzam w katalogu Aurelle, z którego korzysta też karta produktu."
     : "I search Aurelle’s catalog index in LanceDB. Prices and availability come from the same catalog record as the product page.";

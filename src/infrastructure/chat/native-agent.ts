@@ -1306,7 +1306,7 @@ async function executeAgent(
     if (!namedComparison.length) namedComparison = exactNamedChoice(turn.text, before.resultIds);
   }
   const capabilityRequest = !turn.action && !hasCartInstruction(turn.text) && (
-    externalCartDependency || shopperTopic === "unprovidedBudget" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
+    externalCartDependency || shopperTopic === "unprovidedBudget" || shopperTopic === "catalogAccess" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
     (shopperTopic === "orders" && /naprawdę|naprawde|rzeczywi|real(?:ly)?|tracking|śledz|sledz|gdzie jest|where is|track my/i.test(turn.text))
   );
   for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {

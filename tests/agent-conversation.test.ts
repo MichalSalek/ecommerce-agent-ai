@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { products } from "../src/data/products";
 import { groundedDetailAnswer } from "../src/application/chat/detail-response";
+import { capabilityTopic } from "../src/application/chat/shop-capabilities";
 import { conversationContext } from "../src/application/chat/conversation-context";
 import { initialAgentState } from "../src/application/chat/shopping-v3";
 import type { CatalogService } from "../src/application/catalog/catalog-service";
@@ -60,6 +61,16 @@ test("a fresh conversation answers a recalled budget in one provider call withou
     assert.deepEqual(upstream.messages.map((m: { role: string }) => m.role), ["system", "user"]);
     assert.match(upstream.messages[0].content, /fresh conversation contains no earlier budget/);
   }
+});
+
+test("a customer's introduction does not turn their question about data access into a product lookup", async () => {
+  assert.equal(capabilityTopic("Co widzisz w moim koszyku?"), undefined);
+  assert.equal(capabilityTopic("What information can you see about a product?"), "catalogAccess");
+  const reply = "Cenę produktu widzę w katalogu Aurelle, z którego korzysta też karta produktu.";
+  const mock = scripted([{ name: "getShoppingCapabilities", input: { answer: reply } }]);
+  const result = await runAgent(mock.runtime.model, unusedCatalog, { text: "Jestem rekruterem. Co widzisz, gdy pytam o cenę produktu?", userMessageId: "price-access", state: initialAgentState() }, new AbortController().signal, mock.runtime);
+  assert.equal(result.answer, reply);
+  assert.deepEqual(mock.requests[0].tools.map((tool: { function: { name: string } }) => tool.function.name), ["getShoppingCapabilities"]);
 });
 
 test("budget recall in an active conversation uses its supplied preference", async () => {
