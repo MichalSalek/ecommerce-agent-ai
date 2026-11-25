@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { criteriaSchema } from "./shopping-v3";
+import { criteriaSchema, transitionSchema } from "./shopping-v3";
 
 // This is a model wire format only. Null means an omitted optional field; it
 // never becomes part of the stored search state or changes an existing filter.
@@ -27,12 +27,21 @@ const modelCriteriaWireSchema = criteriaSchema
   })
   .strict();
 
-type ModelCriteriaWire = typeof modelCriteriaWireSchema._output;
-type ModelCriteria = { [K in keyof ModelCriteriaWire]: Exclude<ModelCriteriaWire[K], null> };
+export function omitNullModelFields<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined)) as {
+    [K in keyof T]: Exclude<T[K], null>
+  };
+}
 
-export const modelCriteriaSchema = modelCriteriaWireSchema.transform(
-  (criteria): ModelCriteria =>
-    Object.fromEntries(
-      Object.entries(criteria).filter(([, value]) => value !== null && value !== undefined),
-    ) as ModelCriteria,
-);
+export const modelCriteriaSchema = modelCriteriaWireSchema.transform(omitNullModelFields);
+
+// Providers can serialize an unspecified optional argument as null, including the
+// transition around the criteria. The domain schema remains the authority for values.
+export const modelTransitionSchema = transitionSchema.omit({ rejectedIds: true }).extend({
+  scope: transitionSchema.shape.scope.nullable(),
+  remove: transitionSchema.shape.remove.nullable(),
+  requestedCount: transitionSchema.shape.requestedCount.nullable(),
+  preferences: transitionSchema.shape.preferences.nullable(),
+  persistentPreferences: transitionSchema.shape.persistentPreferences.nullable(),
+  criteria: modelCriteriaSchema,
+});

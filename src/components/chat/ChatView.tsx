@@ -339,6 +339,8 @@ export default function ChatView() {
     .findLast((part) => part.type === "data-operation" && part.data.status === "completed" && ["search", "details", "comparison", "categories", "overview", "policy"].includes(part.data.kind));
   const lastAdvice = messages.flatMap((message) => message.parts).findLast((part) => part.type === "data-advice");
   const latestReadIndex = messages.findLastIndex((message) => message.parts.some((part) => part === latestRead));
+  const emptySearchRead = latestRead?.type === "data-operation" && latestRead.data.kind === "search" &&
+    messages[latestReadIndex]?.parts.some((part) => part.type === "data-products" && part.data.products.length === 0);
   const lastAdviceIndex = messages.findLastIndex((message) => message.parts.some((part) => part === lastAdvice));
   const candidates = [...visible]
     .reverse()
@@ -529,6 +531,8 @@ export default function ChatView() {
                         key={i}
                         output={part.data}
                         evidence={part.data}
+                        language={languages.get(message.id)}
+                        summaryVisible={message.parts.some((item) => item.type === "text" && item.text.trim())}
                       />
                     );
                   if (part.type === "data-categories")
@@ -757,7 +761,7 @@ export default function ChatView() {
                 </button>
               </div>
             )}
-          {latestRead?.type === "data-operation" && !(lastAdviceIndex >= latestReadIndex && lastAdvice?.type === "data-advice" && lastAdvice.data.status === "unavailable") && !busy && !conversationClosed && !latestFailed && (
+          {latestRead?.type === "data-operation" && !emptySearchRead && !(lastAdviceIndex >= latestReadIndex && lastAdvice?.type === "data-advice" && lastAdvice.data.status === "unavailable") && !busy && !conversationClosed && !latestFailed && (
             <div className="chat-followups" aria-label="Advice">
               <button disabled={limited} onClick={() => send(latestRead.data.kind === "comparison" ? "Explain differences" : "Help me choose", { type: "advice", operationId: latestRead.data.id })}>
                 {latestRead.data.kind === "comparison" ? "Explain differences" : "Help me choose"}

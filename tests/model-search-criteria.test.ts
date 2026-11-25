@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asSchema, tool } from "ai";
-import { z } from "zod";
+import { asSchema } from "ai";
+import { nativeTools } from "../src/application/chat/native-tools";
 import { modelCriteriaSchema } from "../src/application/chat/model-search-criteria";
-import { criteriaSchema, transitionSchema } from "../src/application/chat/shopping-v3";
+import { criteriaSchema } from "../src/application/chat/shopping-v3";
 
 const nullable = {
   query: null,
@@ -51,14 +51,7 @@ test("nullable wire criteria retain original validation and forbidden keys", () 
 });
 
 test("AI SDK sends nullable optional model criteria and returns normalized parsed data", async () => {
-  const search = tool({
-    inputSchema: transitionSchema.omit({ rejectedIds: true }).extend({
-      mode: z.enum(["recommend", "lookup"]),
-      criteria: modelCriteriaSchema,
-      continueWith: z.enum(["presentAnswer", "compareProducts", "getProductDetails"]),
-    }),
-  });
-  const schema = asSchema(search.inputSchema);
+  const schema = asSchema(nativeTools.searchProducts.inputSchema);
   const json = await schema.jsonSchema;
   const criteria = (json.properties as Record<string, any>).criteria;
   assert.equal(criteria.additionalProperties, false);
@@ -74,6 +67,7 @@ test("AI SDK sends nullable optional model criteria and returns normalized parse
   }
   const validation = await schema.validate!({
     operation: "new",
+    scope: null, requestedCount: null, remove: null, preferences: null, persistentPreferences: null, explicitFilters: null, rejections: null,
     language: "pl",
     criteria: { ...nullable, functionalGroup: "coffee" },
     mode: "recommend",
@@ -81,4 +75,11 @@ test("AI SDK sends nullable optional model criteria and returns normalized parse
   });
   assert.ok(validation.success);
   assert.deepEqual(validation.value.criteria, { functionalGroup: "coffee" });
+  for (const name of ["scope", "requestedCount", "remove", "preferences", "persistentPreferences", "explicitFilters", "rejections"]) {
+    assert.equal(name in validation.value, false);
+    const prop = (json.properties as Record<string, any>)[name];
+    assert.ok(prop.type?.includes("null") || prop.anyOf?.some((choice: {type: string}) => choice.type === "null"), name);
+  }
+  const bad = await schema.validate!({ operation: null, language: "pl", mode: "recommend", criteria: {}, continueWith: "presentAnswer" });
+  assert.equal(bad.success, false);
 });

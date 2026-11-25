@@ -1889,6 +1889,9 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
       ).result;
       assert.equal(exhausted.search?.outcome, "exhausted");
       assert.equal(exhausted.search?.products.length, 0);
+      assert.equal(exhausted.status.usage?.calls, 1);
+      assert.equal(exhausted.advice.status, "not-requested");
+      assert.match(exhausted.answer, /seen all the matching products/);
       const overview = await run(
         catalog,
         [

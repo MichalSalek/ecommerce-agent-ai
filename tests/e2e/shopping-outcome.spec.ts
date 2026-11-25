@@ -7,6 +7,23 @@ const answer = (parts: object[]) => [...[{ type: "start", messageId: crypto.rand
 const text = (value: string) => [{ type: "text-start", id: "reply" }, { type: "text-delta", id: "reply", delta: value }, { type: "text-end", id: "reply" }];
 const results = { evidenceId: "e", products: [{ id: "mugs" }, { id: "carafe" }], appliedCriteria: {}, outcome: "matches", requestedCount: 2, scopeTotal: 2, totalMatches: 2, unseenMatches: 2, remainingMatches: 0 };
 
+test("exhausting a selection shows one explanation and no advice button for zero products", async ({ page }) => {
+  const summary = "To już wszystkie produkty spełniające Twoje kryteria.";
+  await page.route("**/api/chat", (route) => route.fulfill({ status: 200, contentType: "text/event-stream", headers, body: answer([
+    ...text(summary),
+    { type: "data-operation", data: { id: "exhausted-search", kind: "search", status: "completed" } },
+    { type: "data-products", data: { ...results, products: [], outcome: "exhausted", unseenMatches: 0 } },
+    { type: "data-advice", data: { status: "not-requested" } },
+    { type: "data-turnStatus", data: { status: "complete" } },
+  ]) }));
+  await page.goto("/chat");
+  await page.getByRole("textbox").fill("Pokaż inne propozycje.");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText(summary, { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Help me choose", exact: true })).toHaveCount(0);
+  await expect(page.locator(".product-results")).toHaveCount(0);
+});
+
 test("catalog actions work during advice cooldown and retry targets the existing operation", async ({ page }) => {
   await page.clock.install();
   const actions: unknown[] = [];

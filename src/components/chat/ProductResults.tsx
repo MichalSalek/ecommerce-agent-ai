@@ -2,24 +2,19 @@
 import { catalogById } from "@/data/products";
 import { ProductCard } from "@/components/ProductCard";
 import type { SearchEvidence } from "@/application/chat/shopping-v3";
-
-const outcomeText: Record<SearchEvidence["outcome"], string> = {
-  matches: "",
-  "no-match": "No products match these criteria.",
-  exhausted: "There are no more matching products to show.",
-  unavailable: "Matching products are currently unavailable.",
-  "unconfirmed-feature":
-    "The requested feature could not be confirmed for these products.",
-  "no-assortment": "There are no products in this part of the collection.",
-  "invalid-criteria": "These search criteria could not be used.",
-};
+import { emptySearchSummary } from "@/application/chat/operation-summary";
+import type { Language } from "@/application/chat/assistant-text";
 
 export function ProductResults({
   output,
   evidence,
+  language = "en",
+  summaryVisible = false,
 }: {
   output: unknown;
   evidence?: SearchEvidence;
+  language?: Language;
+  summaryVisible?: boolean;
 }) {
   const envelope =
     typeof output === "object" &&
@@ -45,15 +40,17 @@ export function ProductResults({
     const current = id ? catalogById.get(id) : undefined;
     return current ? [current] : [];
   });
-  if (!found.length && !evidence) return null;
+  if (!found.length) {
+    if (summaryVisible || !evidence || evidence.evidenceKind === "selection") return null;
+    return <p className="result-explanation">{emptySearchSummary(evidence.outcome, language)}</p>;
+  }
   const searchEvidence =
     evidence?.evidenceKind === "selection" ? undefined : evidence;
   const explanation =
     searchEvidence &&
-    (outcomeText[searchEvidence.outcome] ||
-      (found.length < searchEvidence.requestedCount
-        ? `${searchEvidence.requestedCount >= 1000 ? "Showing a batch from the matching collection." : `You requested ${searchEvidence.requestedCount} products.`} ${searchEvidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
-        : ""));
+    (found.length < searchEvidence.requestedCount
+      ? `${searchEvidence.requestedCount >= 1000 ? "Showing a batch from the matching collection." : `You requested ${searchEvidence.requestedCount} products.`} ${searchEvidence.remainingMatches > 0 ? "More matching products remain to be shown." : "There are no more matching products available to show."}`
+      : "");
   return (
     <div className="product-results">
       <div className="result-heading">

@@ -597,6 +597,19 @@ test("captured functional search changes preserve the existing scope and disting
   assert.equal(omitted.change?.criteria.functionalGroup, "seating");
 });
 
+test("a simple seating follow-up retains the inherited kind and budget when the model repeats a facet", () => {
+  const state = { ...before, criteria: { productKind: "furniture", useEnvironment: "outdoor" as const, maxPrice: 150 }, shownIds: ["garden-bench"], lastIds: ["garden-bench"] };
+  for (const facet of [{ facet: "kind" as const, value: "furniture" }, { facet: "category" as const, value: "Furniture" }]) {
+    const result = resolveExplicitFacets("Szukam czegoś do siedzenia.", state, { operation: "new", language: "pl", criteria: { functionalGroup: "seating", maxPrice: 150, useEnvironment: "outdoor" } }, [facet]);
+    assert.equal(result.error, undefined);
+    assert.equal(result.change?.operation, "refine");
+    const actual = transitionState(state, result.change!);
+    assert.equal(actual.criteria.productKind, "furniture");
+    assert.equal(actual.criteria.maxPrice, 150);
+    assert.equal(actual.criteria.category, undefined);
+  }
+});
+
 test("functional transition correction leaves resets, switches, negations and extra requirements for interpretation", () => {
   const state = { ...before, criteria: { productKind: "furniture", useEnvironment: "outdoor" as const, maxPrice: 150 }, shownIds: ["folding-garden-chair"], lastIds: ["folding-garden-chair"], resultIds: ["folding-garden-chair"] };
   const raw = { operation: "new" as const, language: "pl" as const, criteria: { functionalGroup: "seating" as const } };

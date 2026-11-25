@@ -250,7 +250,13 @@ function outdoorFurnitureIntent(text: string): boolean {
 function normalizeFunctionalTransition(
   text: string, before: AgentState, change: Transition, filters: ExplicitFacet[],
 ): Transition {
-  if (change.operation !== "new" || filters.length || change.remove?.length) return change;
+  if (change.operation !== "new" || change.remove?.length) return change;
+  // The model can repeat the inherited kind as a hard facet or as a same-named
+  // department. An existing kind adds no restriction to a simple refinement.
+  if (filters.some((filter) =>
+    (filter.facet !== "kind" && filter.facet !== "category") ||
+    fold(filter.value) !== before.criteria.productKind ||
+    (filter.userQuote && !fold(text).includes(fold(filter.userQuote))))) return change;
   const normalized = fold(text);
   if (/\b(?:not|no|never|without|exclude|except|dont|don't|nie|bez|zadn\w*|instead|switch|reset|restart|nowa|nowo|zmien\w*|zamiast)\b/.test(normalized)) return change;
   if (change.criteria.useEnvironment && before.criteria.useEnvironment &&
@@ -294,7 +300,13 @@ export function resolveExplicitFacets(
   filters: ExplicitFacet[],
 ) {
   const issues: string[] = [];
+  const proposedOperation = change.operation;
   change = normalizeFunctionalTransition(text, before, change, filters);
+  if (proposedOperation === "new" && (change.operation === "refine" || change.operation === "more")) {
+    // The only accepted incoming facets here echo the established kind. Keep its
+    // existing domain value without adding a department that the shopper never named.
+    filters = [];
+  }
   const criteria = { ...change.criteria };
   if (criteria.query !== undefined) criteria.query = canonicalSemanticQuery(criteria.query);
   const explicit = explicitConstraints(text);

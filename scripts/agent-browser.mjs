@@ -314,6 +314,10 @@ async function runScenario(browser, name) {
         const alternatives = await ask('Pokaż inne propozycje do siedzenia.');
         const alternativesIds = alternatives.products?.products?.map(row => row.id) ?? [];
         assertCheck(alternatives, 'Different options do not repeat the two compared products', alternativesIds.every(id => !selected.some(item => item.id === id)) && (alternativesIds.length > 0 || ['exhausted', 'no-match', 'unavailable'].includes(alternatives.products?.outcome)), { compared: selected.map(item => item.id), alternatives: alternativesIds, outcome: alternatives.products?.outcome });
+        if (alternatives.products?.outcome === 'exhausted') {
+          assertCheck(alternatives, 'An exhausted page explains that the shopper saw all matches without contradicting previous results', alternatives.advice?.status !== 'included' && /wszystkie|kolejnych/.test(normalize(alternatives.visible?.answer)), { answer: alternatives.visible?.answer });
+          assertCheck(alternatives, 'An exhausted page does not offer advice about an empty selection', await page.getByRole('button', { name: 'Help me choose', exact: true }).count() === 0);
+        }
         const back = await ask(`Jednak wróćmy do ${selected[0].name}. Powiedz mi więcej o tym produkcie.`);
         assertCheck(back, 'Return targets the originally selected product', (back.products?.products?.map(row => row.id) ?? []).includes(selected[0].id), { expected: selected[0].id, products: back.products, checkpoint: back.checkpoint?.after });
         const unknown = await ask(`Jaki jest maksymalny udźwig produktu ${selected[0].name}?`);

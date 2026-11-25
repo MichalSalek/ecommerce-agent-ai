@@ -1,13 +1,12 @@
 import { tool } from "ai";
 import { z } from "zod";
 export { agentInstructions, adviceInstructions, detailAnswerInstructions } from "./assistant-instructions";
-import { modelCriteriaSchema } from "./model-search-criteria";
-import { transitionSchema } from "./shopping-v3";
+import { modelCriteriaSchema, modelTransitionSchema, omitNullModelFields } from "./model-search-criteria";
 const explicitFacetSchema = z.object({
   facet: z.enum(["kind", "type", "excludeType", "category"]),
   value: z.string().min(1).max(80),
-  userQuote: z.string().max(300).optional(),
-});
+  userQuote: z.string().max(300).nullish(),
+}).transform(omitNullModelFields);
 export const answerSchema = z.object({
   text: z
     .string()
@@ -71,17 +70,16 @@ export const nativeTools = {
   searchProducts: tool({
     description:
       "Search and update one shopping transition, or perform an independent lookup.",
-    inputSchema: transitionSchema.omit({ rejectedIds: true }).extend({
+    inputSchema: modelTransitionSchema.extend({
       mode: z
         .enum(["recommend", "lookup"])
         .describe(
           "recommend updates active search; lookup reads independent criteria without changing it.",
         ),
-      criteria: modelCriteriaSchema,
       explicitFilters: z
         .array(explicitFacetSchema)
         .max(12)
-        .optional()
+        .nullish()
         .describe(
           "Hard facets need CURRENT words or established scope; category must be a department.",
         ),
@@ -93,7 +91,7 @@ export const nativeTools = {
           }),
         )
         .max(10)
-        .optional()
+        .nullish()
         .describe(
           "Only explicitly rejected products with an exact CURRENT quote.",
         ),
@@ -102,16 +100,16 @@ export const nativeTools = {
         .describe(
           "Next step: present recommendations, compare, or inspect details.",
         ),
-    }),
+    }).transform(omitNullModelFields),
   }),
   getCatalogOverview: tool({
     description:
       "Count the matching assortment without excluding shown products.",
     inputSchema: z.object({
       criteria: modelCriteriaSchema,
-      explicitFilters: z.array(explicitFacetSchema).max(12).optional(),
-      useActive: z.boolean().optional(),
-    }),
+      explicitFilters: z.array(explicitFacetSchema).max(12).nullish(),
+      useActive: z.boolean().nullish(),
+    }).transform(omitNullModelFields),
   }),
   getCategories: tool({
     description: "Read category counts and examples.",

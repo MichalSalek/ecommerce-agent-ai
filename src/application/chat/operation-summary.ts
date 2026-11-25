@@ -44,10 +44,14 @@ export function searchSummary(
     return language === "pl"
       ? `Pokazuję ${count} ${polishCount(count, "produkt", "produkty", "produktów")} z ${value.totalMatches} pasujących do kryteriów. ${value.remainingMatches > 0 ? `Możesz wyświetlić jeszcze ${value.remainingMatches} ${polishCount(value.remainingMatches, "dopasowanie", "dopasowania", "dopasowań")}.` : "To wszystkie dopasowania do wyświetlenia."}`
       : `Showing ${count} ${count === 1 ? "product" : "products"} from ${value.totalMatches} matching your criteria. ${value.remainingMatches > 0 ? `${value.remainingMatches} unseen ${value.remainingMatches === 1 ? "match remains" : "matches remain"}.` : "There are no further matching products to show."}`;
+  return emptySearchSummary(value.outcome, language);
+}
+
+export function emptySearchSummary(outcome: SearchEvidence["outcome"], language: Language): string {
   const messages = {
     exhausted: [
-      "There are no more matching products to show.",
-      "Nie ma kolejnych dopasowanych produktów do wyświetlenia.",
+      "You have seen all the matching products. I can revisit one of them or search with different criteria.",
+      "To już wszystkie produkty spełniające Twoje kryteria. Mogę wrócić do któregoś z nich albo poszukać według innych kryteriów.",
     ],
     unavailable: [
       "Matching products are currently out of stock.",
@@ -71,7 +75,7 @@ export function searchSummary(
     ],
     matches: ["No products are shown.", "Nie wyświetlono produktów."],
   };
-  return messages[value.outcome][language === "pl" ? 1 : 0];
+  return messages[outcome][language === "pl" ? 1 : 0];
 }
 export function categoriesSummary(
   rows: CategoryCard[],

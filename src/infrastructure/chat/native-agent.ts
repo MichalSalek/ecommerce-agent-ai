@@ -1310,6 +1310,8 @@ async function executeAgent(
     (shopperTopic === "orders" && /naprawdę|naprawde|rzeczywi|real(?:ly)?|tracking|śledz|sledz|gdzie jest|where is|track my/i.test(turn.text))
   );
   for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {
+    // An empty page has no product facts for optional advice. Its typed outcome already explains why.
+    if (committed?.operation.kind === "search" && committed.search?.products.length === 0) return committed;
     if (committed && signal.reason?.name === "TimeoutError")
       return unavailableAdvice("TIMEOUT");
     signal.throwIfAborted();
