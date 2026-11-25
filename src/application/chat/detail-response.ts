@@ -16,7 +16,7 @@ const materialsPL: Record<string, string> = {
   wire: "drut", rubber: "guma", "powder-coated steel": "stal malowana proszkowo",
   polyester: "poliester", foam: "pianka", latex: "lateks", filling: "wypełnienie",
 };
-function materialLabel(material: string, language: Language): string | undefined {
+export function materialLabel(material: string, language: Language): string | undefined {
   if (language === "en") return material;
   const parts = material.split(" and ").map((part) => materialsPL[part]);
   return parts.every(Boolean) ? parts.join(" i ") : undefined;
@@ -25,14 +25,21 @@ function materialLabel(material: string, language: Language): string | undefined
 /** Answer simple recorded fields from the canonical product. Do not infer other attributes. */
 export function detailQuestionResponse(product: Product, request: string, language: Language, allowSplit = true): { text: string; needsModel: boolean } | undefined {
   const text = fold(request);
+  const asksPrice = /\b(?:cena|cene|ceny|cenie|kosztuje|prices?|costs?|how much)\b/.test(text);
+  const asksAvailability = /\b(?:dostepn\w*|in stock|available|availability)\b/.test(text);
+  const asksMaterial = /\b(?:material\w*|materia\w*|made of|made from|z czego|wykonan\w*|zrobion\w*)\b/.test(text);
+  const asksDimensions = /\b(?:wymiar\w*|dimensions?|measurements?)\b/.test(text);
+  const asksCapacity = /\b(?:pojemnosc\w*|capacity|volume)\b/.test(text);
+  const fieldCount = [asksPrice, asksAvailability, asksMaterial, asksDimensions, asksCapacity].filter(Boolean).length;
+  const namesField = fieldCount > 0;
   const generalDetails = /\b(?:tell me more|powiedz mi wiecej)\b/.test(text) &&
-    !/\b(?:what|which|how|does|is|are|can|czy|jak\w*|ile)\b/.test(text);
-  const asksFact = /\?/.test(text) || /\b(?:what|which|how|does|is|are|can|czy|jak\w*|ile|wymiary|pojemnosc|temperature|udzwig|wage)\b/.test(text);
+    !namesField && !/\b(?:what|which|how|does|is|are|can|czy|jak\w*|ile)\b/.test(text);
+  const asksFact = namesField || /\?/.test(text) || /\b(?:what|which|how|does|is|are|can|czy|jak\w*|ile|temperature|udzwig|wage)\b/.test(text);
   if (generalDetails || !asksFact) return undefined;
   // Multiple requested facts require contextual interpretation; do not imply one answers the rest.
-  const compound = (text.match(/\?/g)?.length ?? 0) > 1 || /\b(?:oraz|and|also|takze)\b/.test(text) || /\b(?:i|a)\s+(?:czy|jak\w*|ile|what|how|is|does)\b/.test(text);
+  const compound = fieldCount > 1 || (text.match(/\?/g)?.length ?? 0) > 1 || /\b(?:oraz|and|also|takze)\b/.test(text) || /\b(?:i|a)\s+(?:czy|jak\w*|ile|what|how|is|does)\b/.test(text);
   if (compound && allowSplit) {
-    const clauses = text.split(/\?|\b(?:oraz|and|also|takze)\b|\b(?:i|a)\s+(?=czy\b|jak\w*\b|ile\b|what\b|how\b|is\b|does\b)/).map((part) => part.trim()).filter(Boolean);
+    const clauses = text.split(/\?|\b(?:oraz|and|also|takze)\b|\b(?:i|a)\s+(?=czy\b|jak\w*\b|ile\b|what\b|how\b|is\b|does\b|cen[ae]\b|dostepn|wymiar|material|pojemnosc)/).map((part) => part.trim()).filter(Boolean);
     const parts = clauses.map((clause) => detailQuestionResponse(product, `${clause}?`, language, false));
     if (parts.length > 1 && parts.every(Boolean) && parts.some((part) => !part!.needsModel)) {
       const known = parts.filter((part) => !part!.needsModel).map((part) => part!.text);
@@ -43,7 +50,7 @@ export function detailQuestionResponse(product: Product, request: string, langua
       };
     }
   }
-  if (!compound && /\b(?:wymiar\w*|dimensions?|measurements?)\b/.test(text) && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text)) {
+  if (!compound && asksDimensions && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text)) {
     const dimensions = language === "pl" ? product.dimensions
       .replace(/\bhigh each\b/g, "wysokości każda")
       .replace(/\bhigh with reeds\b/g, "wysokości z patyczkami")
@@ -59,17 +66,18 @@ export function detailQuestionResponse(product: Product, request: string, langua
       .replace(/\band\b/g, "i") : product.dimensions;
     return { text: language === "pl" ? `Wymiary podane w katalogu: ${dimensions}.` : `Catalog dimensions: ${dimensions}.`, needsModel: false };
   }
-  if (!compound && /\b(?:material\w*|materia\w*|made of|made from|z czego|wykonan\w*|zrobion\w*)\b/.test(text) && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text)) {
+  if (!compound && asksMaterial && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text)) {
     const material = materialLabel(product.material, language);
     if (material) return { text: language === "pl" ? `Materiał podany w katalogu: ${material}.` : `Catalog material: ${material}.`, needsModel: false };
   }
-  if (!compound && /\b(?:pojemnosc\w*|capacity|volume)\b/.test(text)) {
+  if (!compound && asksCapacity) {
     const capacity = /\b(\d+(?:[.,]\d+)?\s*(?:ml|litres?|liters?|l))\s+capacity\b/i.exec(product.dimensions)?.[1];
     if (capacity) return { text: language === "pl" ? `Pojemność podana w katalogu: ${capacity.replace(/litres?/i, "litr")}.` : `Catalog capacity: ${capacity}.`, needsModel: false };
   }
-  if (!compound && /\b(?:cena|cene|cenie|kosztuje|price|cost|how much)\b/.test(text) && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text))
-    return { text: language === "pl" ? `Cena produktu to ${product.price.toFixed(2)} EUR.` : `The product price is EUR ${product.price.toFixed(2)}.`, needsModel: false };
-  if (!compound && /\b(?:dostepn\w*|in stock|available|availability)\b/.test(text) && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text))
+  if (!compound && asksPrice && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text))
+    return { text: language === "pl" ? `Cena produktu ${product.name} to ${product.price.toFixed(2)} EUR.` : `The price of ${product.name} is EUR ${product.price.toFixed(2)}.`, needsModel: false };
+  const qualifiedAvailability = /\b(?:w kolorze|w rozmiarze|in (?:a )?(?:different|specific) (?:colour|color|size))\b|\b(?:dostepn\w*|available)\s+(?:w|in)\s+(?!(?:sklepie|katalogu|sprzedazy|magazynie|tym sklepie|the (?:store|shop|catalog)|stock)\b)/.test(text);
+  if (!compound && asksAvailability && !qualifiedAvailability && !/temperatur|waga|wazy|weight|weigh\w*|udzwig|load|pojemnosc|capacity/.test(text))
     return { text: language === "pl" ? (product.inStock ? "Produkt jest dostępny." : "Produkt jest obecnie niedostępny.") : (product.inStock ? "This product is in stock." : "This product is currently out of stock."), needsModel: false };
   if (/temperatur|heat.resistan|zaroodporn|heat.safe/.test(text))
     return { text: language === "pl"

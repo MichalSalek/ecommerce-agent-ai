@@ -9,6 +9,7 @@ import {
 } from "ai";
 import { products } from "@/data/products";
 import { conversationContext, compactProduct, shoppingCapabilities, capabilityAnswerError, capabilityFallback } from "@/application/chat/conversation-context";
+import { groundedComparisonAdvice, comparisonAdviceFallback } from "@/application/chat/comparison-advice";
 import { validatePresentation, type Evidence } from "@/application/chat/presentation-validation";
 import { detailQuestionResponse, groundedDetailAnswer } from "@/application/chat/detail-response";
 import { verifiedRejections } from "@/application/chat/rejections";
@@ -1590,12 +1591,17 @@ async function executeAgent(
           language,
         );
         if (expandedError) throw new Error(expandedError);
-        if (committed)
+        if (committed) {
+          const adviceText = committed.comparison &&
+            !groundedComparisonAdvice(text, committed.comparison.productIds)
+              ? comparisonAdviceFallback(committed.comparison.productIds, language)
+              : text;
           return {
             ...committed,
-            advice: { status: "included", text },
+            advice: { status: "included", text: adviceText },
             status: operationTurnStatus(committed.operation, usage),
           };
+        }
         after.languageChosen = true;
         if (answer.view === "categories" && !categories)
           throw new Error("Read categories first.");

@@ -2336,7 +2336,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
               view: "products",
             }),
           ],
-          "mug price",
+          "Tell me more about Ceramic mugs.",
         ).result;
         assert.equal(result.status.status, "complete");
         assert.match(result.answer, /Ceramic mugs/);

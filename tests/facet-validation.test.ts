@@ -441,3 +441,21 @@ test("structural constraints do not become fictitious product features", () => {
   assert.ok(indoor.change);
   assert.deepEqual(indoor.change.criteria.requiredFeatures, ["garden"]);
 });
+
+test("seating refinement keeps a previous garden kind when the model repeats it as a department", () => {
+  const previous = { ...before, criteria: { productKind: "furniture", useEnvironment: "outdoor" as const, maxPrice: 150 } };
+  for (const [text, language] of [["Tylko miejsca do siedzenia.", "pl"], ["Only things to sit on.", "en"]] as const) {
+    const result = resolveExplicitFacets(text, previous, {
+      operation: "refine", language,
+      criteria: { query: "outdoor garden furniture", requiredFeatures: ["seating"], useEnvironment: "outdoor" },
+    }, [{ facet: "category", value: "furniture" }]);
+    assert.ok(result.change);
+    assert.equal(result.change.criteria.functionalGroup, "seating");
+    assert.equal(result.change.criteria.category, undefined);
+    assert.deepEqual(result.change.criteria.requiredFeatures, []);
+  }
+  const fresh = resolveExplicitFacets("Only things to sit on.", previous, {
+    operation: "new", language: "en", criteria: { query: "seating" },
+  }, [{ facet: "category", value: "furniture" }]);
+  assert.ok(fresh.error);
+});

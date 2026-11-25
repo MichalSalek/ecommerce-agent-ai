@@ -10,6 +10,18 @@ A real browser using test-only `qwen/qwen3.8-27b` exposed two further issues. A 
 
 A separate real-provider check saved a distinctive 43 EUR budget and reloaded the tab. A fresh tab in the same browser profile started empty with legacy history present before navigation. Only the legacy chat entry was retired. After New conversation, the first actual provider request contained the system instruction and the new customer question, with no previous budget, product marker or user/assistant exchange. The browser preserved unrelated storage and the cart.
 
+### Reproduced conversations and checks
+
+In the original public run, the capabilities question on 120B opened a catalog search. A second public browser reproduced the behavior with one user message after reset: "Pokazuję 5 produktów z 86 pasujących do kryteriów." The incident retry used Qwen and the customer saw "Możesz mi pomóc w szukaniu produktów". The old protocol had no capabilities tool or first-person validation and embedded its two recent messages inside a single user message.
+
+In local test mode, an actual Qwen conversation searched for coffee items, narrowed the budget to EUR 25, compared Ceramic mugs and Glass carafe, switched to the mugs, and returned to the carafe. The comparison displayed EUR 22 and EUR 19 respectively. The last customer question asked for the maximum temperature. A catalog read returned `carafe`, glass, 25 cm high, narrow neck, suitable for cold brew, and a warning about breakage. The catalog has no maximum temperature. The early response restated the cold-brew description in English. After correction the chat said "Na podstawie opisu produktu Glass carafe nie potrafię potwierdzić, jaką temperaturę wytrzymuje." The preceding comparison and selection were present in the role-labelled model context.
+
+In a separate source-of-truth regression, a temporary EUR 37.45 / out-of-stock record produced the same price and availability in the actual Lance repository, model evidence, chat card and rendered product page. The test restores the record. The provider fixture emitted a genuine-shaped 429 with Retry-After and then a successful response, once for a normal turn and once for optional advice. Chromium kept the same conversation and user message IDs on retry, showed the countdown and retained exactly five original cards.
+
+The first candidate passed 245 unit and integration tests, strict TypeScript, the production build and 41 Chromium tests. The 76 dry agent/adapter checks are included in the 245. The secret scan found zero occurrences of the shop key among 268 source/candidate files and 19 browser assets.
+
+On the first public candidate, Groq reported `openai/gpt-oss-120b` for the original Polish question and the same question after Retry. A third public comparison on that model exposed an additional factual error: the generated advice called the carafe a single piece without handles. Neither attribute occurs in its record. The application now validates comparison claims against the individual product and uses known materials if the proposed wording adds a fact. A browser replay of the actual English response and a Polish variant displayed the catalog materials for the mugs and the carafe. An eight-turn category-switching test also exposed a price request without a question mark and an inherited furniture kind represented as a department during a seating refinement. Both cases have dedicated regressions.
+
 ## Reliable shopping outcomes, 2026-11-16
 
 Application revision: `e7f98a3c9e6fe6519dc1fc315b893a5332264d0d`. Public URL: [Aurelle](https://ecommerce-agent.michalsalek.com). Local, CI, public functional acceptance and the ten-minute runtime observation passed.

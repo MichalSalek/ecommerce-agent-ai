@@ -2,6 +2,7 @@ import { products } from "@/data/products";
 import { productKinds, productTypes } from "@/domain/catalog/taxonomy";
 import {
   functionalGroups,
+  functionalGroupNames,
   groupScopeTypes,
 } from "@/domain/catalog/functional-groups";
 import { allowedCriteria } from "@/domain/catalog/requirements";
@@ -269,6 +270,21 @@ export function resolveExplicitFacets(
     filters = filters.map((filter) => filter.facet === "category" && fold(filter.value) === fold(kind)
       ? { ...filter, facet: "kind", value: kind } : filter);
   }
+  // A refinement already inherits its recorded kind. Do not introduce a
+  // merchandising department when the model repeats that kind in the wrong field.
+  const carriedKind = before.criteria.productKind;
+  if (change.operation === "refine" && carriedKind && !departmentNamed &&
+      !mentions(text, aliases({ facet: "kind", value: carriedKind })) &&
+      !change.remove?.includes("productKind") && !recovered.kind && !recovered.ambiguous) {
+    filters = filters.filter((filter) => !(filter.facet === "category" &&
+      fold(filter.value) === fold(carriedKind)));
+  }
+  const statedPurpose = (value: string, quote: string) =>
+    functionalGroupNames.find((group) => group === value && fold(text).includes(fold(quote)) &&
+      positiveClauses(quote).some((clause) => positivelyMentions(clause, functionalGroups[group].aliases, false, "purpose")));
+  const featureGroups = functionalGroupNames.filter((group) =>
+    criteria.requiredFeatures?.includes(group) && statedPurpose(group, text));
+  if (featureGroups.length === 1 && !criteria.functionalGroup) criteria.functionalGroup = featureGroups[0];
   const oldTypes = new Set(
     before.criteria.productTypes ??
       (before.criteria.productType ? [before.criteria.productType] : []),
@@ -284,12 +300,9 @@ export function resolveExplicitFacets(
   const includes: string[] = [],
     excludes: string[] = [];
   for (const filter of filters) {
-    if (filter.facet === "type" && Object.hasOwn(functionalGroups, filter.value)) {
-      const group = filter.value as keyof typeof functionalGroups;
-      const userQuote = filter.userQuote ?? text;
-      if ((!criteria.functionalGroup || criteria.functionalGroup === group) &&
-          fold(text).includes(fold(userQuote)) &&
-          positiveClauses(userQuote).some((clause) => positivelyMentions(clause, functionalGroups[group].aliases, false, "purpose"))) {
+    if (filter.facet === "type") {
+      const group = statedPurpose(filter.value, filter.userQuote ?? text);
+      if (group && (!criteria.functionalGroup || criteria.functionalGroup === group)) {
         criteria.functionalGroup = group;
         continue;
       }
