@@ -26,7 +26,7 @@ Provider memory samples after initial retrieval were approximately 375 and 421 M
 
 Better Stack monitor `5239952`, named `Aurelle web service`, uses the existing BV account. It checks GET `/api/health` every 180 seconds for HTTP success and `"service":"aurelle"`, with TLS validation and email alerts. Existing monitors remain unchanged. There is no separate status page. The monitor is included in the founder cockpit's canonical monitoring inventory.
 
-The cloud credential belongs to an organization allocated to AI agents. It is supplied only as Render runtime `GROQ_API_KEY`. Additional agents using that credential share its upstream quota; creating another key in the same organization would not add quota. Secrets and operational credentials remain outside this public repository.
+The service reads the shop credential from the protected Render runtime variable `GROQ_API_KEY`. Use a dedicated Groq organization to isolate its quota from other applications. Keep credentials and provider account identifiers private.
 
 For updates: select a green release, deploy that commit explicitly through Render, then run `npm run verify:deployment -- URL FULL_SHA` and browser checks for affected behavior. Roll back to the previous successful deployment if runtime acceptance fails. Do not clear build caches or rebuild unchanged images without a reason.
 
@@ -55,14 +55,18 @@ The native engine replaces the earlier planner. Release the integrated source on
 
 Deploy that exact commit to the existing service with auto-deploy off. Verify `live`, revision, 86 records, MiniLM and the prepared fingerprint; purge only the demo hostname prefix and run the warming script. Run `npm run verify:deployment -- URL FULL_SHA`, a fresh semantic conversation and a real browser cart save/reload. Observe provider memory, CPU and events for at least ten minutes and confirm the existing liveness monitor. Roll back only this deployment if acceptance fails; retain device storage. Earlier v1 cart and conversation formats remain compatible with the previous artifact.
 
-`npm run test:agent:live -- URL` records bilingual conversation evidence and actual usage. Set its pacing to the current provider quota, shared with other users of that organization. Successful Groq headers also pace subsequent inferences inside a request; provider cooldowns remain visible; the configured failover can switch the model for a failed inference, and completed catalog operations are not replayed. The live runner's simulated cart is separate from the required browser-storage acceptance.
+`npm run test:agent:live -- URL` records bilingual conversation evidence and actual usage. Set its pacing to the current provider quota, shared with other users of that organization. Successful Groq headers also pace subsequent inferences inside a request; provider cooldowns remain visible; the same 120B model handles a retry, and completed catalog operations retain their results. The live runner's simulated cart is separate from the required browser-storage acceptance.
 
 ### Publication for owner evaluation - 2026-11-16
 
 The owner explicitly requested publication of the current shopping-v3 implementation to the existing production service for manual testing before completion of the full real-provider suite. This authorization supersedes that suite's pre-publication gate for this release. Source/container CI, exact-revision deployment, scoped cache invalidation, browser/runtime checks and provider observation still apply. The incomplete bilingual/twenty-turn acceptance and shared Groq daily quota remain recorded limitations. The provider, model, credentials and service plan stay unchanged.
 
-### Active availability repair - 2026-11-16
+### Historical availability repair - 2026-11-16
 
-Application `8c8d7d3d61769b596a3447adc439b54f87587383` is published in Render deployment `dep-dbtd14rm8hqs73aieprg`. The owner authorized 120B-primary / Qwen-3.8-27B fallback using an existing second Groq profile. Set `GROQ_FALLBACK_MODEL` and `GROQ_FALLBACK_API_KEY` in the service's protected runtime environment. Keep the local Windows balancer loopback-only and preserve its configuration. The fallback state is in process memory; restart permits a new primary attempt. Daily quota failures use at least ten minutes, minute/transient failures at least one minute, and longer provider Retry-After deadlines are preserved. No database or background polling is needed.
+Application `8c8d7d3d61769b596a3447adc439b54f87587383` is published in Render deployment `dep-dbtd14rm8hqs73aieprg`. The owner authorized 120B-primary / Qwen-3.8-27B fallback using an existing second Groq profile. That release used `GROQ_FALLBACK_MODEL` and `GROQ_FALLBACK_API_KEY` in the protected environment. Keep the local Windows balancer loopback-only and preserve its configuration. The fallback state is in process memory; restart permits a new primary attempt. Daily quota failures use at least ten minutes, minute/transient failures at least one minute, and longer provider Retry-After deadlines are preserved. No database or background polling is needed.
 
 The real four-turn public coffee/details/comparison/cart check and scoped failure/cooldown tests are recorded in VERIFICATION.md. Extended bilingual/twenty-turn acceptance remains distinct from this incident repair; avoid spending the remaining production quota on another mass acceptance run while the demo is being evaluated.
+
+## Current chat configuration, 2026-11-25
+
+Deploy with the shop-only `GROQ_API_KEY`. The model and direct endpoint are fixed in source. Every public retry uses `openai/gpt-oss-120b`. Remove legacy fallback credentials and provider overrides from the Render service. The 27B route is available only for local QA. See [release verification](VERIFICATION.md) for the incident trace and acceptance.

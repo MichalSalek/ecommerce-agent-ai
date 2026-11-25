@@ -26,6 +26,7 @@ import {
 } from "@/application/chat/shopping-v3";
 import {
   CHAT_STORAGE_KEY,
+  LEGACY_CHAT_STORAGE_KEY,
   restoreConversation,
   settledMessages,
   requestMessages,
@@ -34,6 +35,16 @@ import {
 } from "@/application/chat/history";
 type CartFeedback = { action: CartAction; status: string };
 const COOLDOWN_KEY = "aurelle.chat.cooldown.v1";
+// Browsers can clone sessionStorage into a newly opened same-origin child.
+function isCopiedFromOpener(saved: ConversationSnapshot): boolean {
+  try {
+    if (!window.opener || window.opener.closed) return false;
+    const opener = restoreConversation(window.opener.sessionStorage.getItem(CHAT_STORAGE_KEY));
+    return opener?.id === saved.id;
+  } catch {
+    return false;
+  }
+}
 interface ConversationValue extends UseChatHelpers<ChatMessage> {
   draft: string;
   setDraft: (text: string) => void;
@@ -68,10 +79,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const cooldownRef = useRef<TurnStatus | null>(null);
   function rememberCooldown(status: TurnStatus) {
     const retryAt =
-      status.retryAt ??
-      (status.retryAfter && status.retryAfter > 0
-        ? Math.ceil(Date.now() + status.retryAfter * 1000)
-        : undefined);
+      status.retryAt && status.retryAt > Date.now()
+        ? status.retryAt
+        : status.retryAfter && status.retryAfter > 0
+          ? Math.ceil(Date.now() + status.retryAfter * 1000)
+          : status.status === "provider-limit"
+            ? Date.now() + 30_000
+            : undefined;
     if (!retryAt || !Number.isSafeInteger(retryAt) || retryAt <= Date.now())
       return;
     if ((cooldownRef.current?.retryAt ?? 0) >= retryAt) return;
@@ -95,22 +109,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const response = await fetch(input, init);
         if (!response.ok && response.status === 429) {
           try {
-            const body: unknown = await response.clone().json();
+            const body: unknown = await response.clone().json().catch(() => ({}));
             if (
               !init?.signal?.aborted &&
               token &&
-              active.current?.generation === token &&
-              body &&
-              typeof body === "object"
+              active.current?.generation === token
             ) {
-              const value = body as Record<string, unknown>;
+              const value = body && typeof body === "object"
+                ? body as Record<string, unknown>
+                : {};
               const seconds = Number(response.headers.get("retry-after"));
               const retryAfter =
-                typeof value.retryAfter === "number"
+                typeof value.retryAfter === "number" && Number.isFinite(value.retryAfter) && value.retryAfter > 0
                   ? value.retryAfter
                   : Number.isFinite(seconds) && seconds > 0
                     ? seconds
-                    : undefined;
+                    : 30;
               const parsed = turnStatusSchema.safeParse({
                 status: "provider-limit",
                 code:
@@ -127,10 +141,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                     : undefined,
                 retryAfter,
                 retryAt:
-                  typeof value.retryAt === "number"
+                  typeof value.retryAt === "number" && Number.isSafeInteger(value.retryAt) && value.retryAt > Date.now()
                     ? value.retryAt
                     : retryAfter
-                      ? Date.now() + retryAfter * 1000
+                      ? Math.ceil(Date.now() + retryAfter * 1000)
                       : undefined,
               });
               if (parsed.success) {
@@ -285,17 +299,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     } catch {
       /* Ignore invalid or inaccessible optional cooldown storage. */
     }
+    // Remove the previous cross-session history without touching cart or cooldown data.
     try {
-      const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-      const saved = restoreConversation(raw);
+      localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY);
+    } catch {
+      /* Storage can be disabled independently of session storage. */
+    }
+    activeConversation.current = crypto.randomUUID();
+    try {
+      const raw = sessionStorage.getItem(CHAT_STORAGE_KEY);
+      const restored = restoreConversation(raw);
+      const saved = restored && !isCopiedFromOpener(restored) ? restored : undefined;
       activeConversation.current = saved?.id ?? crypto.randomUUID();
       setChat(createConversation(activeConversation.current, saved?.messages));
       setDraft(saved?.draft ?? "");
-      if (raw && !saved)
+      if (raw && !restored)
         setStorageNotice(
           "Your previous conversation could not be restored. Start a new one below.",
         );
     } catch {
+      setChat(createConversation(activeConversation.current));
       setStorageNotice(
         "Conversation saving is unavailable. Keep this tab open to retain the chat.",
       );
@@ -303,7 +326,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setReady(true);
   }, []);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || chat.id !== activeConversation.current) return;
     const messages =
       helpers.status === "streaming"
         ? helpers.messages.filter(
@@ -325,7 +348,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
     const save = () => {
       try {
-        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(latest.current));
+        if (chat.id === activeConversation.current)
+          sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(latest.current));
       } catch {
         setStorageNotice(
           "Conversation saving is unavailable. Keep this tab open to retain the chat.",
@@ -344,7 +368,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     generation.current++;
     setProgress(null);
     setHttpFailure(null);
-    await helpers.stop();
+    const stopping = helpers.stop();
     threadPosition.current = { top: 0, follow: true };
     const next = createConversation(crypto.randomUUID());
     activeConversation.current = next.id;
@@ -358,13 +382,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setChat(next);
     setDraft("");
     try {
-      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(latest.current));
+      sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(latest.current));
       setStorageNotice("");
     } catch {
       setStorageNotice(
         "Conversation saving is unavailable. Keep this tab open to retain the chat.",
       );
     }
+    await stopping;
   };
   return (
     <Context.Provider

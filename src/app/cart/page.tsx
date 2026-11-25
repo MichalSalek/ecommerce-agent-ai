@@ -2,8 +2,9 @@
 import { StoreImage } from "@/components/StoreImage";
 import Link from "next/link";
 import { useCart } from "@/components/CartProvider";
-import { products } from "@/data/products";
+import { catalogById, products } from "@/data/products";
 import { cartTotalCents } from "@/domain/cart/cart";
+import { storePolicy } from "@/domain/catalog/policies";
 import { formatPrice } from "@/lib/money";
 export default function CartPage() {
   const { cart, ready, storageError, update } = useCart();
@@ -35,7 +36,7 @@ export default function CartPage() {
         <div className="cart-layout">
           <div className="cart-lines">
             {cart.lines.map((line) => {
-              const product = products.find((p) => p.id === line.productId);
+              const product = catalogById.get(line.productId);
               if (!product) return null;
               return (
                 <article className="cart-line" key={line.productId}>
@@ -92,11 +93,11 @@ export default function CartPage() {
             </p>
             <p className="summary-row">
               <span>Demo delivery</span>
-              <strong>{formatPrice(4)}</strong>
+              <strong>{formatPrice(storePolicy.deliveryPriceEUR)}</strong>
             </p>
             <p className="summary-row total">
               <span>Total</span>
-              <strong>{formatPrice(total + 4)}</strong>
+              <strong>{formatPrice(total + storePolicy.deliveryPriceEUR)}</strong>
             </p>
             <p>This is a demo cart. Checkout and payments are not available.</p>
             <Link className="button" href="/">

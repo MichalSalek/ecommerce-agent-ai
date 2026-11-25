@@ -1,4 +1,4 @@
-import { chatConfig } from "./shop";
+import { chatConfig } from "./chat-config";
 import {
   resolveLlamaModel,
   LLAMA_PROVIDER,
@@ -31,8 +31,6 @@ export async function resolveChatRuntime(
     console.log("[LLM] provider:", runtime.label);
     return runtime;
   }
-  if (config.provider !== "llama")
-    throw new Error("Unknown CHAT_PROVIDER. Use llama or groq.");
   const model = await resolveLlamaModel(config, signal);
   return {
     model,

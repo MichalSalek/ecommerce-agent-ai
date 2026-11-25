@@ -83,8 +83,8 @@ test("old history and a response cancelled by reset cannot mutate the cart", asy
   page,
 }) => {
   await page.addInitScript(() => {
-    localStorage.setItem(
-      "aurelle.conversation.v1",
+    sessionStorage.setItem(
+      "aurelle.conversation.session.v1",
       JSON.stringify({
         version: 1,
         id: "old",

@@ -186,13 +186,21 @@ try {
     "--memory-swap=512m",
     "--cpus=0.1",
     "--publish",
-    "127.0.0.1::10000",
+    "127.0.0.1::10001",
     "--env",
-    "CHAT_PROVIDER=groq",
+    "HOSTNAME=127.0.0.1",
+    "--env",
+    "PORT=10000",
+    "--env",
+    "AURELLE_LOCAL_QA=groq-proxy",
     "--env",
     "GROQ_API_KEY=fixture",
     "--env",
     "GROQ_BASE_URL=http://127.0.0.1:9999/v1",
+    "--env",
+    "FIXTURE_PORT=9999",
+    "--env",
+    "SMOKE_FORWARD_PORT=10001",
     "--entrypoint",
     "sh",
     image,
@@ -201,7 +209,13 @@ try {
   );
   created = true;
   run("cp", fixture, `${name}:/tmp/native-model-fixture.mjs`);
-  let base = `http://127.0.0.1:${run("port", name, "10000/tcp").split(":").at(-1)}`;
+  function publishedBase() {
+    const published = run("port", name, "10001/tcp");
+    const match = published.match(/^127\.0\.0\.1:(\d+)$/);
+    assert.ok(match, `Expected a loopback-only published port, got ${published}`);
+    return `http://127.0.0.1:${match[1]}`;
+  }
+  let base = publishedBase();
   const first = await healthy(base, "cold boot");
   for (const path of [
     "/",
@@ -229,7 +243,7 @@ try {
     "require('node:fs').rmSync('/app/.data/lancedb',{recursive:true,force:true})",
   );
   run("restart", name);
-  base = `http://127.0.0.1:${run("port", name, "10000/tcp").split(":").at(-1)}`;
+  base = publishedBase();
   // Liveness does not require a prepared index; the first search performs the rebuild.
   let listening = false;
   for (let i = 0; i < 240; i++) {

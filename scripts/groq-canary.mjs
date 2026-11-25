@@ -8,9 +8,10 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { GROQ_IDENTITY } from '../src/infrastructure/chat/groq-identity.mjs';
 
 const LIMIT = 8000;
-const MODEL = 'openai/gpt-oss-120b';
+const MODEL = GROQ_IDENTITY.modelId;
 // A caller-selected TMPDIR must not silently create a fresh release budget.
 const releaseDir = '/tmp';
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -168,7 +169,7 @@ try {
       assert.ok(stage==='free-message' || stage==='advice', `Unexpected provider call during ${stage}`);
       row=reserveBudget(ledger,ledgerPath,body.model,tokenCount,maxOutput,{sourceRevision:release,stage});
       console.log(`[BUDGET] estimated input ${tokenCount}, reserved ${row.reserved}; remaining ${LIMIT-ledger.charged}; route ${body.model}`);
-      const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${key}`},body:outbound,redirect:'error',signal:AbortSignal.timeout(60000)});
+      const response=await fetch(`${GROQ_IDENTITY.baseURL}/chat/completions`,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${key}`},body:outbound,redirect:'error',signal:AbortSignal.timeout(60000)});
       // Read even if SDK times out; persist usage before delivering the response.
       const raw=await response.text();
       let usage;
@@ -191,7 +192,7 @@ try {
   await new Promise(r=>proxy.listen(0,'127.0.0.1',r));
   const port=await new Promise((r,reject)=>{const s=createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(e=>e?reject(e):r(p));});});
   const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/groq|proxy|openai|anthropic|llama/i.test(k)));
-  Object.assign(env,{NODE_ENV:'production',HOSTNAME:'127.0.0.1',PORT:String(port),CHAT_PROVIDER:'groq',GROQ_BASE_URL:`http://127.0.0.1:${proxy.address().port}/openai/v1`,GROQ_API_KEY:'canary-proxy',GROQ_MODEL:MODEL,GROQ_FALLBACK_MODEL:'',GROQ_FALLBACK_API_KEY:'',GROQ_BALANCER:'false',GROQ_TRANSPORT:'node'});
+  Object.assign(env,{NODE_ENV:'production',HOSTNAME:'127.0.0.1',PORT:String(port),AURELLE_LOCAL_QA:'groq-proxy',GROQ_BASE_URL:`http://127.0.0.1:${proxy.address().port}/openai/v1`,GROQ_API_KEY:'canary-proxy'});
   child=spawn(process.execPath,[join(root,'.next/standalone/server.js')],{cwd:root,env,stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',b=>process.stdout.write(b)); child.stderr.on('data',b=>process.stderr.write(b));
   const base=`http://127.0.0.1:${port}`;

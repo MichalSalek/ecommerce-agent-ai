@@ -27,7 +27,8 @@ import {
   policyInput,
   compareInput,
 } from "./tool-inputs";
-export const CHAT_STORAGE_KEY = "aurelle.conversation.v1";
+export const LEGACY_CHAT_STORAGE_KEY = "aurelle.conversation.v1";
+export const CHAT_STORAGE_KEY = "aurelle.conversation.session.v1";
 export const WELCOME_ID = "aurelle-welcome";
 export function welcomeMessage(): ChatMessage {
   return {

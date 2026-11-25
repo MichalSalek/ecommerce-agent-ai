@@ -4,7 +4,7 @@ import { expandFunctionalGroup } from "@/domain/catalog/functional-groups";
 import { connect, type Table } from "@lancedb/lancedb";
 import { resolve } from "node:path";
 import {
-  productSchema,
+  indexProducts,
   type Product,
   type ProductRepository,
   type ProductSearch,
@@ -19,12 +19,20 @@ import {
 } from "./index-document";
 export class LanceProductRepository implements ProductRepository {
   private table?: Promise<Table>;
+  private readonly byId: ReadonlyMap<string, Product>;
   constructor(
     private readonly directory: string,
     private readonly embedding: TextEmbedding,
     private readonly catalog: readonly Product[],
     private readonly maxDistance = 0.45,
-  ) {}
+  ) {
+    this.byId = indexProducts(catalog);
+  }
+  private canonicalProduct(id: unknown) {
+    const product = this.byId.get(String(id));
+    if (!product) throw new Error("Indexed product is missing from this catalog revision.");
+    return product;
+  }
   get fingerprint() {
     return catalogFingerprint(this.catalog, this.embedding.identity);
   }
@@ -171,13 +179,8 @@ export class LanceProductRepository implements ProductRepository {
     const visible = criteria.excludeIds?.length
       ? await fetchRows(this.filters(criteria, true))
       : ranked;
-    const unseen = visible.filter(relevant).map((row) =>
-      productSchema.parse({
-        ...row,
-        features: Array.from(row.features),
-        limitations: Array.from(row.limitations),
-      }),
-    );
+    // The index ranks IDs. Every consumer sees the same canonical price, stock and facts.
+    const unseen = visible.filter(relevant).map((row) => this.canonicalProduct(row.id));
     if (criteria.targetPrice !== undefined)
       unseen.sort(
         (a, b) =>
@@ -218,13 +221,7 @@ export class LanceProductRepository implements ProductRepository {
     });
     let query = table.query();
     if (filters.length) query = query.where(filters.join(" AND "));
-    const all = (await query.toArray()).map((p) =>
-      productSchema.parse({
-        ...p,
-        features: Array.from(p.features),
-        limitations: Array.from(p.limitations),
-      }),
-    );
+    const all = (await query.select(["id"]).toArray()).map((row) => this.canonicalProduct(row.id));
     return {
       total: all.length,
       categories: [...new Set(all.map((p) => p.category))]
@@ -244,6 +241,6 @@ export class LanceProductRepository implements ProductRepository {
     return [...new Set(this.catalog.map((p) => p.category))].sort();
   }
   async findById(id: string) {
-    return this.catalog.find((p) => p.id === id);
+    return this.byId.get(id);
   }
 }

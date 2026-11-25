@@ -1,5 +1,5 @@
 "use client";
-import { products } from "@/data/products";
+import { catalogById } from "@/data/products";
 import { ProductCard } from "@/components/ProductCard";
 import type { SearchEvidence } from "@/application/chat/shopping-v3";
 
@@ -42,7 +42,7 @@ export function ProductResults({
       typeof value.id === "string"
         ? value.id
         : undefined;
-    const current = products.find((p) => p.id === id);
+    const current = id ? catalogById.get(id) : undefined;
     return current ? [current] : [];
   });
   if (!found.length && !evidence) return null;

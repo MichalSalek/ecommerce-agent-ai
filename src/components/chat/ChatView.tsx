@@ -42,23 +42,26 @@ const progressLabels: Record<
   "provider-wait": "Waiting for the assistant to become available…",
   "provider-switch": "Switching to an available model…",
 };
-function failureMessage(failure: TurnStatus): string {
+function failureMessage(failure: TurnStatus, language: Language): string {
+  const pl = language === "pl";
+  if (failure.code === "REQUEST_LIMIT")
+    return pl ? "Wersja demonstracyjna osiągnęła godzinowy limit zapytań." : failure.message ?? "This demo has reached its hourly request limit.";
+  if (failure.code === "BUSY")
+    return pl ? "Asystent obsługuje teraz innych klientów." : failure.message ?? "The assistant is helping other visitors.";
   if (failure.providerLimit) {
     const { metric, window } = failure.providerLimit;
+    if (pl) return `Dostawca modelu osiągnął ${window === "day" ? "dzienny" : "minutowy"} limit ${metric === "tokens" ? "tokenów" : "zapytań"}.`;
     return `The model provider has reached its ${window === "day" ? "daily" : "per-minute"} ${metric === "tokens" ? "token" : "request"} limit.`;
   }
-  if (failure.message) return failure.message;
-  if (failure.code === "REQUEST_LIMIT")
-    return "This demo has reached its hourly request limit.";
-  if (failure.code === "BUSY")
-    return "The assistant is helping other visitors.";
   if (failure.code === "TIMEOUT")
-    return "The response took too long. Your message is saved.";
-  if (failure.status === "partial")
-    return "The response is incomplete. You can try again.";
+    return pl ? "Odpowiedź trwała zbyt długo. Twoja wiadomość została zachowana." : "The response took too long. Your message is saved.";
   if (failure.status === "provider-limit")
-    return "The model provider has reached its limit.";
-  return "The response could not be completed. Please try again.";
+    return pl ? "Dostawca modelu osiągnął limit zapytań." : "The model provider has reached its limit.";
+  if (failure.status === "partial")
+    return pl ? "Odpowiedź jest niepełna. Spróbuj ponownie." : "The response is incomplete. You can try again.";
+  if (failure.code === "NETWORK_ERROR" || failure.status === "connection-error")
+    return pl ? "Połączenie zostało przerwane. Spróbuj ponownie." : "The connection was interrupted. Please try again.";
+  return pl ? "Nie udało się zakończyć odpowiedzi. Spróbuj ponownie." : "The response could not be completed. Please try again.";
 }
 function waitLabel(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -234,6 +237,33 @@ export default function ChatView() {
             p.state === "output-available"),
       ),
   );
+  // Advice responses retain canonical snapshots on the wire for restoration.
+  // Only suppress a part when that same operation already rendered it.
+  function earlierOperation(operationId: string, beforeIndex: number) {
+    return messages.slice(0, beforeIndex).filter((earlier) =>
+      earlier.role === "assistant" && earlier.parts.some((part) =>
+        part.type === "data-operation" && part.data.id === operationId && part.data.status === "completed",
+      ),
+    );
+  }
+  function repeatedOutcome(message: ChatMessage, type: "text" | "data-products" | "data-categories" | "data-comparison") {
+    if (message.role !== "assistant") return false;
+    const operation = message.parts.findLast((part) => part.type === "data-operation" && part.data.status === "completed");
+    if (operation?.type !== "data-operation") return false;
+    return earlierOperation(operation.data.id, messages.indexOf(message)).some((earlier) =>
+      earlier.parts.some((part) => part.type === type && (part.type !== "text" || Boolean(part.text.trim()))),
+    );
+  }
+  function hasEarlierSnapshot(operationId: string, beforeIndex: number) {
+    return earlierOperation(operationId, beforeIndex).some((earlier) => {
+      const state = earlier.parts.find((part) => part.type === "data-shoppingState");
+      const operation = earlier.parts.find((part) => part.type === "data-operation" && part.data.id === operationId);
+      if (state?.type !== "data-shoppingState" || operation?.type !== "data-operation" || operation.data.kind === "cart") return false;
+      return earlier.parts.some((part) => part.type === "data-products" || part.type === "data-categories" || part.type === "data-comparison") ||
+        (operation.data.kind === "details" && state.data.presentedIds.length > 0) ||
+        Boolean(state.data.readResult);
+    });
+  }
   const unanswered = !busy && visible.at(-1)?.role === "user";
   const lastUserIndex = messages.findLastIndex(
     (message) => message.role === "user",
@@ -246,6 +276,13 @@ export default function ChatView() {
       (part) =>
         part.type === "data-turnStatus" && part.data.status !== "complete",
     );
+  const retryLast = () => {
+    const user = messages.findLast((message) => message.role === "user");
+    if (!user || busy || (cooldown?.retryAt ?? 0) > Date.now()) return;
+    nearBottom.current = true;
+    threadPosition.current.follow = true;
+    void regenerate({ messageId: user.id });
+  };
   const latestCompleted = messages.slice(lastUserIndex + 1).some((message) => message.parts.some((part) => part.type === "data-operation" && part.data.status !== "failed"));
   const latestFailed = Boolean(latestTypedFailure || messages.slice(lastUserIndex + 1).some(isFailedMessage) || (!latestCompleted && (error || httpFailure)));
   let language: Language = "en";
@@ -428,6 +465,7 @@ export default function ChatView() {
                   {message.role === "assistant" &&
                     message.id !== WELCOME_ID &&
                     !isFailedMessage(message) &&
+                    !repeatedOutcome(message, "text") &&
                     message.parts.some(
                       (p) => p.type === "text" && p.text.trim(),
                     ) && (
@@ -453,11 +491,11 @@ export default function ChatView() {
                   ...message.parts.filter((p) => p.type !== "text"),
                 ].map((part, i) => {
                   if (part.type === "text")
-                    return isFailedMessage(message) ? null : (
+                    return isFailedMessage(message) || repeatedOutcome(message, "text") ? null : (
                       <p key={i}>{part.text}</p>
                     );
                   if (part.type === "data-products")
-                    return (
+                    return repeatedOutcome(message, "data-products") ? null : (
                       <ProductResults
                         key={i}
                         output={part.data}
@@ -465,7 +503,7 @@ export default function ChatView() {
                       />
                     );
                   if (part.type === "data-categories")
-                    return (
+                    return repeatedOutcome(message, "data-categories") ? null : (
                       <CategoryResults
                         key={i}
                         categories={part.data}
@@ -478,7 +516,7 @@ export default function ChatView() {
                       />
                     );
                   if (part.type === "data-comparison")
-                    return <ComparisonResults key={i} comparison={part.data} />;
+                    return repeatedOutcome(message, "data-comparison") ? null : <ComparisonResults key={i} comparison={part.data} />;
                   if (part.type === "data-operation" && part.data.status === "needs-input" && part.data.kind === "cart" && part.data.input !== "quantity" && part.data.choices?.length && message.id === visible.at(-1)?.id) {
                     const choice = part.data;
                     return <div className="chat-followups" key={i} aria-label="Choose a product">
@@ -498,17 +536,24 @@ export default function ChatView() {
                       : operation?.type === "data-operation" ? operation.data.id : undefined;
                     if (target && messages.slice(ownIndex + 1).some((item) => item.role === "user" && item.metadata?.shoppingAction?.type === "advice" && item.metadata.shoppingAction.operationId === target)) return null;
                     const seconds = Math.max(0, Math.ceil((Math.max(part.data.retryAt ?? 0, cooldown?.retryAt ?? 0) - clock) / 1000));
+                    const canRetryExisting = priorRequest?.metadata?.shoppingAction?.type === "advice" &&
+                      priorRequest.id === messages[lastUserIndex]?.id &&
+                      message.id === visible.at(-1)?.id &&
+                      Boolean(target && hasEarlierSnapshot(target, messages.indexOf(priorRequest)));
                     return <div className="chat-error" role="status" key={i}>
                       <p>{languages.get(message.id) === "pl" ? "Porada jest teraz niedostępna." : "Advice is unavailable right now."}</p>
                       {seconds > 0 && <p>{languages.get(message.id) === "pl" ? `Spróbuj ponownie za ${waitLabel(seconds)}.` : `Try again in ${waitLabel(seconds)}.`}</p>}
-                      {target && !conversationClosed && <button disabled={busy || seconds > 0} onClick={() => send("Help me choose", { type: "advice", operationId: target })}>Retry advice</button>}
+                      {target && (!conversationClosed || canRetryExisting) && <button disabled={busy || seconds > 0} onClick={() => {
+                        if (canRetryExisting) retryLast();
+                        else send("Help me choose", { type: "advice", operationId: target });
+                      }}>Retry advice</button>}
                     </div>;
                   }
                   if (part.type === "data-operation" && part.data.status === "failed" && !message.parts.some((item) => item.type === "data-turnStatus" && item.data.status !== "complete")) {
                     return <div className="chat-error" role="status" key={i}>
-                      <p>{failureMessage(part.data.error)}</p>
-                      {message.id === visible.at(-1)?.id && limited && <p>Retry in {waitLabel(retrySeconds)}.</p>}
-                      {message.id === visible.at(-1)?.id && <button disabled={busy || limited} onClick={() => { if ((cooldown?.retryAt ?? 0) <= Date.now()) void regenerate(); }}>Retry last message</button>}
+                      <p>{failureMessage(part.data.error, languages.get(message.id) ?? "en")}</p>
+                      {message.id === visible.at(-1)?.id && limited && <p>{languages.get(message.id) === "pl" ? `Spróbuj ponownie za ${waitLabel(retrySeconds)}.` : `Retry in ${waitLabel(retrySeconds)}.`}</p>}
+                      {message.id === visible.at(-1)?.id && <button disabled={busy || limited} onClick={retryLast}>Retry last message</button>}
                     </div>;
                   }
                   if (
@@ -526,17 +571,14 @@ export default function ChatView() {
                       return null;
                     return (
                       <div className="chat-error" role="status" key={i}>
-                        <p>{failureMessage(part.data)}</p>
+                        <p>{failureMessage(part.data, languages.get(message.id) ?? "en")}</p>
                         {message.id === visible.at(-1)?.id && limited && (
-                          <p>Retry in {waitLabel(retrySeconds)}.</p>
+                          <p>{languages.get(message.id) === "pl" ? `Spróbuj ponownie za ${waitLabel(retrySeconds)}.` : `Retry in ${waitLabel(retrySeconds)}.`}</p>
                         )}
                         {message.id === visible.at(-1)?.id && (
                           <button
                             disabled={busy || limited}
-                            onClick={() => {
-                              if ((cooldown?.retryAt ?? 0) <= Date.now())
-                                void regenerate();
-                            }}
+                            onClick={retryLast}
                           >
                             Retry last message
                           </button>
@@ -720,19 +762,14 @@ export default function ChatView() {
           )}
           {error && !latestTypedFailure && !latestCompleted && (
             <div role="alert" className="chat-error">
-              <strong>Let's try that again.</strong>
+              <strong>{language === "pl" ? "Spróbuj ponownie." : "Let's try that again."}</strong>
               <p>
-                {failureMessage(httpFailure ?? { status: "connection-error" })}
+                {failureMessage(httpFailure ?? { status: "connection-error" }, language)}
               </p>
-              {limited && <p>Retry in {waitLabel(retrySeconds)}.</p>}
+              {limited && <p>{language === "pl" ? `Spróbuj ponownie za ${waitLabel(retrySeconds)}.` : `Retry in ${waitLabel(retrySeconds)}.`}</p>}
               <button
                 disabled={busy || limited}
-                onClick={() => {
-                  if ((cooldown?.retryAt ?? 0) > Date.now()) return;
-                  nearBottom.current = true;
-                  threadPosition.current.follow = true;
-                  void regenerate();
-                }}
+                onClick={retryLast}
               >
                 Retry last message
               </button>
@@ -740,13 +777,9 @@ export default function ChatView() {
           )}
           {unanswered && !error && !limited && ready && !conversationClosed && (
             <div className="chat-recovery">
-              <p>Your last message has no saved response.</p>
+              <p>{language === "pl" ? "Ostatnia wiadomość nie ma zapisanej odpowiedzi." : "Your last message has no saved response."}</p>
               <button
-                onClick={() => {
-                  nearBottom.current = true;
-                  threadPosition.current.follow = true;
-                  void regenerate();
-                }}
+                onClick={retryLast}
               >
                 Resume response
               </button>
@@ -835,7 +868,7 @@ export default function ChatView() {
             <span className="keyboard-hint">
               Enter to send. Shift + Enter for a new line
             </span>
-            <span className="mobile-save-hint">Saved on this device</span>
+            <span className="mobile-save-hint">Chat saved in this tab</span>
             <span>{draft.length}/2000</span>
           </div>
         </form>
@@ -860,7 +893,7 @@ export default function ChatView() {
           ))}
         </div>
         <p className="muted">
-          Chat and cart are saved on this device.{" "}
+          This tab keeps your chat. Your cart stays on this device.{" "}
           <Link href="https://github.com/MichalSalek/ecommerce-agent-ai">
             How it works ↗
           </Link>

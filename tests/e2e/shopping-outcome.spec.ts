@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { shoppingExamples, shoppingStarters } from "../../src/application/chat/shopping-v3";
+import { initialAgentState, shoppingExamples, shoppingStarters } from "../../src/application/chat/shopping-v3";
 
 const headers = { "x-vercel-ai-ui-message-stream": "v1" };
 const answer = (parts: object[]) => [...[{ type: "start", messageId: crypto.randomUUID() }], ...parts, { type: "finish" }]
@@ -89,8 +89,8 @@ test("pending cart choice sends its product and creates only one stored receipt"
 
 test("reload repairs a legacy comparison with failed presentation", async ({ page }) => {
   await page.addInitScript(() => {
-    if (localStorage.getItem("aurelle.conversation.v1")) return;
-    localStorage.setItem("aurelle.conversation.v1", JSON.stringify({ version: 1, id: "legacy", draft: "Saved draft", messages: [
+    if (sessionStorage.getItem("aurelle.conversation.session.v1")) return;
+    sessionStorage.setItem("aurelle.conversation.session.v1", JSON.stringify({ version: 1, id: "legacy", draft: "Saved draft", messages: [
       { id: "u", role: "user", parts: [{ type: "text", text: "Compare mugs and carafe" }] },
       { id: "a", role: "assistant", parts: [
         { type: "text", text: "The lowest price is at €" },
@@ -106,4 +106,122 @@ test("reload repairs a legacy comparison with failed presentation", async ({ pag
   await expect(page.getByRole("textbox")).toHaveValue("Saved draft");
   await page.reload();
   await expect(page.getByText(/This comparison covers 2 products/)).toBeVisible();
+});
+
+test("retries the latest failed explicit advice with the same user ID and shows its canonical result once", async ({ page }) => {
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
+  const requests: { messages: { id: string; role: string; metadata?: { shoppingAction?: { type: string; operationId?: string } } }[] }[] = [];
+  await page.route("**/api/chat", async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    const action = body.messages.at(-1).metadata?.shoppingAction;
+    const adviceAttempt = requests.filter((request) => request.messages.at(-1)?.metadata?.shoppingAction?.type === "advice").length;
+    const advice = action?.type === "advice";
+    const parts = [
+      ...text("Here are the results."),
+      { type: "data-operation", data: { id: "op-coffee", kind: "search", status: "completed" } },
+      { type: "data-products", data: results },
+      { type: "data-shoppingState", data: { userMessageId: body.messages.at(-1).id, text: "Coffee", before: initialAgentState(), after: initialAgentState(), presentedIds: ["mugs", "carafe"] } },
+      { type: "data-advice", data: !advice ? { status: "not-requested" } : adviceAttempt === 1 ? { status: "unavailable", reason: "quota", retryAt: now + 20_000 } : { status: "included", text: "The mugs are convenient for sharing." } },
+      { type: "data-turnStatus", data: { status: "complete" } },
+    ];
+    await route.fulfill({ status: 200, contentType: "text/event-stream", headers, body: answer(parts) });
+  });
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "My morning coffee", exact: true }).click();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.getByRole("button", { name: "Help me choose", exact: true }).click();
+  await expect(page.getByText("Advice is unavailable right now.")).toHaveCount(1);
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await expect(page.getByText("Here are the results.")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Retry advice" })).toBeDisabled();
+  await page.clock.fastForward(1000);
+  await page.reload();
+  await expect(page.getByText("Advice is unavailable right now.")).toHaveCount(1);
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.clock.fastForward(20_000);
+  await page.getByRole("button", { name: "Retry advice" }).click();
+  await expect(page.getByText("The mugs are convenient for sharing.")).toHaveCount(1);
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await expect(page.getByText("Here are the results.")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Retry advice" })).toHaveCount(0);
+  const failedUser = requests[1].messages.at(-1)!;
+  const retriedUser = requests[2].messages.at(-1)!;
+  expect(retriedUser.id).toBe(failedUser.id);
+  expect(retriedUser.metadata?.shoppingAction).toEqual({ type: "advice", operationId: "op-coffee" });
+  expect(new Set(requests[2].messages.map((message) => message.id)).size).toBe(requests[2].messages.length);
+  await expect(page.locator(".chat-message.user")).toHaveCount(2);
+  await page.reload();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await expect(page.getByText("The mugs are convenient for sharing.")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Retry advice" })).toHaveCount(0);
+});
+
+test("retrying older failed explicit advice preserves intervening turns and targets its original operation", async ({ page }) => {
+  const requests: { messages: { id: string; role: string; metadata?: { shoppingAction?: { type: string; operationId?: string } } }[] }[] = [];
+  await page.route("**/api/chat", async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    const action = body.messages.at(-1).metadata?.shoppingAction;
+    const isAdvice = action?.type === "advice";
+    const adviceCount = requests.filter((request) => request.messages.at(-1)?.metadata?.shoppingAction?.type === "advice").length;
+    const op = action?.type === "details" ? "op-details" : "op-coffee";
+    const parts = [
+      ...text(op === "op-details" ? "Here are the details." : "Here are the results."),
+      { type: "data-operation", data: { id: op, kind: action?.type === "details" ? "details" : "search", status: "completed" } },
+      { type: "data-products", data: results },
+      { type: "data-advice", data: !isAdvice ? { status: "not-requested" } : adviceCount === 1 ? { status: "unavailable", reason: "temporary" } : { status: "included", text: "The mugs are convenient for sharing." } },
+      { type: "data-turnStatus", data: { status: "complete" } },
+    ];
+    await route.fulfill({ status: 200, contentType: "text/event-stream", headers, body: answer(parts) });
+  });
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "My morning coffee", exact: true }).click();
+  await page.getByRole("button", { name: "Help me choose", exact: true }).click();
+  await expect(page.getByText("Advice is unavailable right now.")).toBeVisible();
+  const failedUser = requests[1].messages.at(-1)!;
+  await page.getByRole("button", { name: "More details" }).click();
+  await expect(page.getByText("Here are the details.")).toBeVisible();
+  await page.getByRole("button", { name: "Retry advice" }).click();
+  await expect(page.getByText("The mugs are convenient for sharing.")).toBeVisible();
+  const retry = requests[3].messages.at(-1)!;
+  expect(retry.id).not.toBe(failedUser.id);
+  expect(retry.metadata?.shoppingAction).toEqual({ type: "advice", operationId: "op-coffee" });
+  expect(requests[3].messages.some((message) => message.id === failedUser.id)).toBe(true);
+  await expect(page.getByText("Here are the details.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry advice" })).toHaveCount(0);
+});
+
+test("advice restores missing cards and retains its sole checkpoint when retried", async ({ page }) => {
+  const requests: { messages: { id: string; role: string; metadata?: { shoppingAction?: { type: string; operationId?: string } } }[] }[] = [];
+  await page.route("**/api/chat", async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    const advice = body.messages.at(-1).metadata?.shoppingAction?.type === "advice";
+    const parts: object[] = [
+      ...text("Here are the results."),
+      { type: "data-operation", data: { id: "op-legacy", kind: "search", status: "completed" } },
+    ];
+    if (advice) parts.push(
+      { type: "data-products", data: results },
+      { type: "data-shoppingState", data: { userMessageId: body.messages.at(-1).id, text: "Coffee", before: initialAgentState(), after: initialAgentState(), presentedIds: ["mugs", "carafe"] } },
+      { type: "data-advice", data: requests.length === 2 ? { status: "unavailable", reason: "temporary" } : { status: "included", text: "The mugs are convenient for sharing." } },
+    );
+    parts.push({ type: "data-turnStatus", data: { status: "complete" } });
+    await route.fulfill({ status: 200, contentType: "text/event-stream", headers, body: answer(parts) });
+  });
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "My morning coffee", exact: true }).click();
+  await page.getByRole("button", { name: "Help me choose", exact: true }).click();
+  await expect(page.getByText("Advice is unavailable right now.")).toBeVisible();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await expect(page.getByText("Here are the results.")).toHaveCount(1);
+  const firstAdviceId = requests[1].messages.at(-1)!.id;
+  await page.getByRole("button", { name: "Retry advice" }).click();
+  await expect(page.getByText("The mugs are convenient for sharing.")).toBeVisible();
+  expect(requests[2].messages.at(-1)!.id).not.toBe(firstAdviceId);
+  expect(requests[2].messages.some((message) => message.id === firstAdviceId)).toBe(true);
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Retry advice" })).toHaveCount(0);
 });

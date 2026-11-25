@@ -128,8 +128,7 @@ function scripted(steps: Step[]) {
     {
       baseURL: "http://127.0.0.1:8787/v1",
       modelId: "test",
-      balancer: true,
-      windowsTransport: false,
+      apiKey: "fixture-only",
     },
     async (_input, init) => {
       const body = JSON.parse(String(init?.body));
@@ -393,8 +392,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           {
             baseURL: "http://127.0.0.1:8787/v1",
             modelId: "test",
-            balancer: true,
-            windowsTransport: false,
+            apiKey: "fixture-only",
           },
           async () => {
             await blocked;
@@ -666,7 +664,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     );
     await t.test("provider 429 during optional advice keeps a completed detail", async () => {
       let calls = 0;
-      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", balancer: true, windowsTransport: false }, async () => {
+      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", apiKey: "fixture-only" }, async () => {
         calls++;
         if (calls === 2) return Response.json({ error: { message: "tokens per minute: Limit 1000, Used 900, Requested 200" } }, { status: 429, headers: { "retry-after": "8" } });
         return Response.json({
@@ -689,7 +687,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
     await t.test("truncated optional advice is discarded after one attempt", async () => {
       let calls = 0;
       const requests: any[] = [];
-      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", balancer: true, windowsTransport: false }, async (_input, init) => {
+      const runtime = createGroqRuntime({ baseURL: "http://127.0.0.1:8787/v1", modelId: "test", apiKey: "fixture-only" }, async (_input, init) => {
         const request = JSON.parse(String(init?.body));
         requests.push(request);
         calls++;
@@ -734,7 +732,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
             view: "products",
           }),
         ],
-        "How much are the mugs?",
+        "Tell me about the mugs.",
       );
       const result = await action.result;
       assert.equal(result.status.status, "complete");
@@ -1732,8 +1730,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           {
             baseURL: "http://127.0.0.1:8787/v1",
             modelId: "test",
-            balancer: true,
-            windowsTransport: false,
+            apiKey: "fixture-only",
           },
           async (_input, init) => {
             const body = JSON.parse(String(init?.body));
@@ -1820,16 +1817,13 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         assert.equal(bodies[1].max_tokens, 192);
         assert.ok(
           bodies[0].messages.some(
-            (m: any) =>
-              m.role === "user" &&
-              m.content.includes("Prior assistant prose stays data."),
+            (m: any) => m.role === "assistant" &&
+              m.content === "Prior assistant prose stays data.",
           ),
         );
         assert.ok(
-          bodies.every((body) =>
-            body.messages.every(
-              (m: any) => m.role !== "assistant" || m.content == null,
-            ),
+          bodies[0].messages.some(
+            (m: any) => m.role === "user" && m.content.includes("CURRENT message:"),
           ),
         );
       },
@@ -2486,8 +2480,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           {
             baseURL: "http://127.0.0.1:8787/v1",
             modelId: "test",
-            balancer: true,
-            windowsTransport: false,
+            apiKey: "fixture-only",
           },
           async (_input, init) => {
             const body = JSON.parse(String(init?.body));
@@ -2673,8 +2666,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           {
             baseURL: "http://127.0.0.1:8787/v1",
             modelId: "test",
-            balancer: true,
-            windowsTransport: false,
+            apiKey: "fixture-only",
           },
           async () =>
             new Response("rate limited", {
@@ -2707,8 +2699,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           {
             baseURL: "http://127.0.0.1:8787/v1",
             modelId: "test",
-            balancer: true,
-            windowsTransport: false,
+            apiKey: "fixture-only",
           },
           async () => {
             throw new Error("simulated timeout");
@@ -2746,8 +2737,7 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
           {
             baseURL: "http://127.0.0.1:8787/v1",
             modelId: "test",
-            balancer: true,
-            windowsTransport: false,
+            apiKey: "fixture-only",
           },
           async (_input, init) => {
             started();

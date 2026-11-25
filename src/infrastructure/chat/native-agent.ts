@@ -8,6 +8,9 @@ import {
   ToolChoiceViolationError,
 } from "ai";
 import { products } from "@/data/products";
+import { conversationContext, compactProduct, shoppingCapabilities, capabilityAnswerError, capabilityFallback } from "@/application/chat/conversation-context";
+import { validatePresentation, type Evidence } from "@/application/chat/presentation-validation";
+import { detailQuestionResponse, groundedDetailAnswer } from "@/application/chat/detail-response";
 import { verifiedRejections } from "@/application/chat/rejections";
 import { queryLanguageError } from "@/application/chat/query-language";
 import {
@@ -25,6 +28,8 @@ import {
   agentInstructions,
   adviceInstructions,
   answerSchema,
+  detailAnswerSchema,
+  detailAnswerInstructions,
   cartProposalSchema,
   type PresentedAnswer,
 } from "@/application/chat/native-tools";
@@ -57,7 +62,6 @@ import type { CartAction } from "@/application/chat/cart-action";
 import type { ChatRuntime } from "./runtime";
 import {
   assistantTextError,
-  catalogFactAbsenceError,
   resolveLanguage,
 } from "@/application/chat/assistant-text";
 import {
@@ -75,19 +79,13 @@ import {
   type PendingCartIntent,
 } from "@/application/chat/cart-intent";
 
-type Evidence = {
-  id: string;
-  tool: string;
-  input: unknown;
-  output: unknown;
-  productIds: string[];
-};
 export interface AgentTurn {
   text: string;
   userMessageId: string;
   conversationId?: string;
   state: AgentState;
   history?: ModelMessage[];
+  priorProductGroups?: { userText: string; productIds: string[] }[];
   cart?: { productId: string; quantity: number }[];
   action?: ShoppingAction;
   adviceFor?: AgentResult;
@@ -112,6 +110,7 @@ interface Resolution {
   search?: SearchEvidence;
 }
 type AgentOptions = Partial<ChatRuntime> & {
+  attemptId?: string;
   onProgress?: (progress: ChatProgress) => void;
 };
 function rejectionCode(reason: string) {
@@ -137,21 +136,6 @@ const operationResults = new Map<
   string,
   { expires: number; result: AgentResult }
 >();
-const compactProduct = (p: Product, detail = false) => ({
-  id: p.id,
-  name: p.name,
-  priceEUR: p.price,
-  inStock: p.inStock,
-  features: detail ? p.features : p.features.slice(0, 2),
-  ...(detail
-    ? {
-        material: p.material,
-        dimensions: p.dimensions,
-        description: p.fullDescription,
-        limitations: p.limitations,
-      }
-    : {}),
-});
 const foldComparison = (value: string) =>
   value
     .toLowerCase()
@@ -249,6 +233,12 @@ function cleanCaches() {
     while (map.size > 300) map.delete(map.keys().next().value!);
   }
 }
+/** Stable, non-reversible identifier for one user turn across retries. */
+export function shoppingOperationId(conversationId: string | undefined, userMessageId: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([conversationId ?? "", userMessageId, "shopping-operation"]))
+    .digest("hex");
+}
 function turnKey(turn: AgentTurn) {
   return createHash("sha256")
     .update(
@@ -261,370 +251,6 @@ function turnKey(turn: AgentTurn) {
       ]),
     )
     .digest("hex");
-}
-function numericText(text: string, evidence: Evidence[]) {
-  return text
-    .replace(/\[\[amount:([^:]+):([^\]]+)\]\]/g, (_match, id, field) => {
-      const record = evidence.find((e) => e.id === id)?.output;
-      const value =
-        field === "totalEUR" &&
-        record &&
-        typeof record === "object" &&
-        field in record
-          ? (record as { totalEUR: number }).totalEUR
-          : undefined;
-      if (typeof value !== "number")
-        throw new Error("Unverified monetary reference.");
-      return `${value.toFixed(2)} EUR`;
-    })
-    .replace(
-      /\[\[(difference|dimensions):([^\]]+)\]\]/g,
-      (_match, kind, id) => {
-        const record = evidence.find((e) => e.productIds.includes(id));
-        const product = products.find((p) => p.id === id);
-        if (!record || !product)
-          throw new Error("Unverified measurement reference.");
-        if (kind === "dimensions") return product.dimensions;
-        const row = evidence
-          .flatMap((e) => (e.output as Comparison)?.differencesCents ?? [])
-          .find((row) => row.productId === id);
-        if (!row) throw new Error("Unverified difference reference.");
-        return `${(row.cents / 100).toFixed(2)} EUR`;
-      },
-    )
-    .replace(/\[\[(price|name):([^\]]+)\]\](\s+EUR\b)?/g, (_match, kind, id, suffix) => {
-      if (!evidence.some((e) => e.productIds.includes(id)))
-        throw new Error("Unverified product reference.");
-      const product = products.find((p) => p.id === id)!;
-      return kind === "price"
-        ? `${product.price.toFixed(2)} EUR`
-        : product.name + (suffix ?? "");
-    })
-    .replace(/\[\[count:([^:]+):([^\]]+)\]\]/g, (_match, id, field) => {
-      const record = evidence.find((e) => e.id === id)?.output;
-      const value =
-        field === "productCount" &&
-        record &&
-        typeof record === "object" &&
-        "productIds" in record &&
-        Array.isArray(record.productIds)
-          ? record.productIds.length
-          : record && typeof record === "object" && field in record
-            ? (record as Record<string, unknown>)[field]
-            : undefined;
-      if (typeof value !== "number")
-        throw new Error("Unverified count reference.");
-      return String(value);
-    });
-}
-function validatePresentation(
-  answer: PresentedAnswer,
-  evidence: Evidence[],
-  search?: SearchEvidence,
-) {
-  if (answer.evidenceIds.some((id) => !evidence.some((e) => e.id === id)))
-    throw new Error("Unknown evidence ID.");
-  const cited = evidence.filter((e) => answer.evidenceIds.includes(e.id));
-  const knownProducts = products.filter((product) =>
-    cited.some((record) => record.productIds.includes(product.id)),
-  );
-  const missingFact = catalogFactAbsenceError(answer.text, {
-    price: knownProducts.some((product) => Number.isFinite(product.price)),
-    dimensions: knownProducts.some((product) => !!product.dimensions),
-  });
-  if (missingFact) throw new Error(missingFact);
-  if (
-    /\b(?:smaller|larger|bigger|taller|shorter|lighter|heavier|faster|slower|(?:less|more)\s+space)\b|mniejsz|większ|wyższ|niższ|lżejsz|cięższ|szybsz|wolniejsz|mniej.{0,20}miejsc|więcej.{0,20}miejsc/i.test(
-      answer.text,
-    )
-  )
-    throw new Error("UNVERIFIED_PHYSICAL_COMPARISON");
-  const foldedReply = answer.text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replaceAll("ł", "l");
-  if (
-    /\bi(?:'ve| have)?\s+added\b|\bwe(?:'ve| have)?\s+added\b|\b(?:was|were|have been|has been)\s+added\b|(?:^|[.!?]\s+)(?:added|saved)\b|dodal(?:em|am)|\bdodano\b|zostal.{0,25}dodan/i.test(
-      foldedReply,
-    )
-  )
-    throw new Error(
-      "Only the browser may confirm a saved cart operation. Say the selection is prepared and the device will confirm after saving.",
-    );
-  const offerWords =
-    /\b(?:discounts?|promotions?|promo codes?|free|sale)\b|rabat|gratis|darmo/i.test(
-      answer.text,
-    );
-  const denyingOffer =
-    /\bno (?:discounts?|promotions?|promo codes?|free)|\bnot free\b|(?:cannot|can't|do not|don't|does not|doesn't).{0,60}(?:offer|apply|provide|discount|promo|free)|(?:nie|brak).{0,50}(?:rabat|promoc|darmo|gratis)/i.test(
-      answer.text,
-    );
-  const approximateBudget = cited.some(
-    (record) =>
-      (record.output as SearchEvidence)?.appliedCriteria?.targetPrice !==
-      undefined,
-  );
-  if (
-    (offerWords && !denyingOffer) ||
-    (/%/.test(answer.text) && !approximateBudget)
-  )
-    throw new Error(
-      "There is no verified promotion, free offer or discount. Use canonical prices and policies.",
-    );
-  if (
-    answer.view === "products" &&
-    search &&
-    !evidence.some(
-      (record) =>
-        record.tool === "getProductDetails" &&
-        record.productIds.some((id) => answer.productIds.includes(id)),
-    )
-  ) {
-    const source = evidence.find((record) => record.id === search.evidenceId);
-    if (source && !cited.includes(source)) {
-      cited.push(source);
-      answer.evidenceIds.push(source.id);
-    }
-    if (
-      answer.productIds.some(
-        (id) => !cited.some((record) => record.productIds.includes(id)),
-      )
-    )
-      throw new Error("Products require cited evidence.");
-    // The application owns the requested page size; an omitted presentation ID never hides a matching card.
-    answer.productIds = search.products.map((product) => product.id);
-  }
-  const absence =
-    /\b(?:no (?:products|items|stock|matches|assortment)|nothing (?:available|in stock)|we (?:do not|don't) (?:have|stock)|brak (?:produkt|asortyment|dopasowa)|nie (?:mamy|ma (?:produkt|takich)))/i.test(
-      answer.text,
-    );
-  if (
-    absence &&
-    !cited.some(
-      (e) =>
-        (e.tool === "searchProducts" &&
-          (e.output as SearchEvidence).products?.length === 0) ||
-        (e.tool === "getCatalogOverview" &&
-          (e.output as { total: number }).total === 0) ||
-        (e.tool === "deviceCart" &&
-          (e.output as { totalUnits: number }).totalUnits === 0 &&
-          /cart|basket|koszyk/i.test(answer.text)),
-    )
-  )
-    throw new Error("Check the exact catalog scope before claiming absence.");
-  if (
-    /we (?:do not|don't) (?:have|stock)|no assortment|nie mamy|brak asortymentu/i.test(
-      answer.text,
-    ) &&
-    !/\bmore\b|additional|new options|kolejn|nowych/i.test(answer.text) &&
-    cited.some(
-      (record) =>
-        record.tool === "searchProducts" &&
-        ["exhausted", "unconfirmed-feature"].includes(
-          (record.output as SearchEvidence).outcome,
-        ),
-    )
-  )
-    throw new Error(
-      "Shown items or an unconfirmed feature do not establish absence of assortment.",
-    );
-  if (
-    new Set(answer.productIds).size !== answer.productIds.length ||
-    answer.productIds.some(
-      (id) => !cited.some((e) => e.productIds.includes(id)),
-    )
-  )
-    throw new Error("Products require cited evidence.");
-  if (
-    answer.claim &&
-    answer.claim !== "none" &&
-    !cited.some(
-      (e) =>
-        (e.output as SearchEvidence)?.outcome === answer.claim ||
-        (answer.claim === "unavailable" &&
-          e.productIds.some((id) =>
-            products.some((product) => product.id === id && !product.inStock),
-          )) ||
-        (answer.claim === "no-assortment" &&
-          e.tool === "getCatalogOverview" &&
-          (e.output as { total: number }).total === 0),
-    )
-  )
-    throw new Error("Absence requires a measured scoped result.");
-  if (
-    /https?:|www\.|\]\(|<\w|\[\[(?!price:|name:|count:|difference:|dimensions:|amount:)/i.test(
-      answer.text,
-    )
-  )
-    throw new Error(
-      "Use canonical cards and supported references, not URLs/markup.",
-    );
-  // Prices in advice are resolved by the application. Avoid unchecked numeric currency claims.
-  const withoutReferences = answer.text.replace(/\[\[[^\]]+\]\]/g, "");
-  if (cited.length) {
-    if (
-      /(?:all.*(?:in stock|available)|wszystk.*dostępn)/i.test(answer.text) &&
-      !/(?:not all|nie wszystk)/i.test(answer.text) &&
-      cited.some((record) =>
-        record.productIds.some(
-          (id) => products.find((p) => p.id === id)?.inStock === false,
-        ),
-      )
-    )
-      throw new Error("Not all cited products are in stock.");
-  }
-  const counts = cited.flatMap((e) => {
-    const record = e.output as Record<string, unknown>;
-    return [
-      "total",
-      "scopeTotal",
-      "totalMatches",
-      "unseenMatches",
-      "remainingMatches",
-      "requestedCount",
-      "totalLines",
-      "totalUnits",
-    ]
-      .flatMap((field) =>
-        typeof record?.[field] === "number" ? [record[field] as number] : [],
-      )
-      .concat(
-        Array.isArray(record?.productIds) ? [record.productIds.length] : [],
-      )
-      .concat(
-        ...["products", "categories"].flatMap((field) =>
-          Array.isArray(record?.[field])
-            ? [(record[field] as unknown[]).length]
-            : [],
-        ),
-      )
-      .concat(
-        Array.isArray(record?.categories)
-          ? record.categories.flatMap((category) =>
-              category &&
-              typeof category === "object" &&
-              "count" in category &&
-              typeof category.count === "number"
-                ? [category.count]
-                : [],
-            )
-          : [],
-      );
-  });
-  for (const match of withoutReferences.matchAll(
-    /\b(\d+)\s+(?:products?|items?|matches|categories|produkt\w*|kategor\w*|dopasowa\w*)\b/gi,
-  ))
-    if (!counts.includes(Number(match[1])))
-      throw new Error(
-        "Unverified catalog count. Use [[count:EVIDENCE:FIELD]].",
-      );
-  const countWords: Record<string, number> = {
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-    jeden: 1,
-    dwa: 2,
-    trzy: 3,
-    cztery: 4,
-    pięć: 5,
-    sześć: 6,
-    siedem: 7,
-    osiem: 8,
-    dziewięć: 9,
-    dziesięć: 10,
-  };
-  for (const match of withoutReferences.matchAll(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|jeden|dwa|trzy|cztery|pięć|sześć|siedem|osiem|dziewięć|dziesięć)\s+(?:products?|items?|matches|categories|produkt\w*|kategor\w*|dopasowa\w*)\b/gi,
-  ))
-    if (
-      !counts.includes(countWords[match[1].toLowerCase()]) &&
-      !(
-        countWords[match[1].toLowerCase()] === 10 &&
-        /(?:up to|at most)\s*$/i.test(withoutReferences.slice(0, match.index))
-      )
-    )
-      throw new Error("Unverified catalog count.");
-  const units = cited
-    .filter((e) => e.tool === "deviceCart" || e.tool === "proposeCart")
-    .flatMap((e) => {
-      const value = e.output as {
-        totalUnits?: number;
-        products?: { quantity?: number }[];
-        items?: { quantity?: number }[];
-      };
-      return [
-        value.totalUnits,
-        ...(value.products ?? value.items ?? []).map((row) => row.quantity),
-      ].filter((n): n is number => typeof n === "number");
-    });
-  for (const match of withoutReferences.matchAll(
-    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|jeden|dwa|trzy|cztery|pięć|sześć|siedem|osiem|dziewięć|dziesięć)\s+(?:units?|pieces?|sztuk\w*)\b/gi,
-  ))
-    if (!units.includes(countWords[match[1].toLowerCase()] ?? Number(match[1])))
-      throw new Error("Unverified cart unit count.");
-  if (
-    /\b\d+(?:[.,]\d+)?\s*(?:mm|cm|metres?|meters?|kg|grams?|kilograms?|litres?|liters?|ml|watts?|hours?)\b/i.test(
-      withoutReferences,
-    )
-  )
-    throw new Error("Unverified measurement. Use [[dimensions:ID]].");
-  const policies = cited
-    .filter((e) => e.tool === "getPolicy")
-    .map((e) => (e.output as { policy: string }).policy);
-  for (const match of withoutReferences.matchAll(
-    /\b(\d+)\s+(?:business\s+)?(?:days?|dni|dniach)\b/gi,
-  ))
-    if (
-      !policies.some((policy) =>
-        (policy.match(/\d+/g) ?? ([] as string[])).includes(match[1]),
-      )
-    )
-      throw new Error("Unverified policy duration.");
-  const amounts = cited.flatMap((e) => {
-    const record = e.output as {
-      appliedCriteria?: ProductSearch;
-      differencesCents?: { cents: number }[];
-      policy?: string;
-      totalEUR?: number;
-    };
-    return [
-      ...e.productIds.flatMap((id) =>
-        products.filter((p) => p.id === id).map((p) => p.price),
-      ),
-      record?.appliedCriteria?.maxPrice,
-      record?.appliedCriteria?.targetPrice,
-      record?.totalEUR,
-      ...(record?.differencesCents ?? []).map((p) => p.cents / 100),
-      ...(record?.policy?.match(/\d+(?:\.\d+)?/g) ?? []).map(Number),
-    ].filter((n): n is number => typeof n === "number");
-  });
-  for (const match of withoutReferences.matchAll(
-    /(?:EUR|€)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:EUR|euros?|€)\b/gi,
-  )) {
-    const amount = Number((match[1] ?? match[2]).replace(",", "."));
-    if (
-      !amounts.includes(amount) ||
-      !cited.some((e) => e.tool === "getPolicy" || e.tool === "userPreferences")
-    )
-      throw new Error(
-        "Unverified monetary amount. Use [[price:ID]] or a verified criterion.",
-      );
-  }
-  if (
-    /(?:USD|GBP|PLN|[$£¥₹])\s*\d|\d+\s*(?:USD|GBP|PLN|zł|zl|£|¥|₹)\b/i.test(
-      withoutReferences,
-    )
-  )
-    throw new Error("The catalog is priced in EUR; do not convert currencies.");
-  return numericText(answer.text, cited);
 }
 export function stateFromMessages(
   messages: ChatMessage[],
@@ -772,7 +398,7 @@ export function adviceResultFromMessages(
   if (!text) return;
   const output = {
     ...(readResult?.kind === "policy"
-      ? { policy: getStorePolicy(readResult.topic) }
+      ? { policy: getStorePolicy(readResult.topic, language) }
       : readResult?.kind === "overview"
         ? { total: readResult.total }
         : {}),
@@ -876,9 +502,9 @@ export async function runAgent(
   }
   const existing = pending.get(key);
   if (existing) {
-    await existing.catch(() => undefined);
+    const shared = await existing.catch(() => undefined);
     signal.throwIfAborted();
-    if (completed.has(key)) return structuredClone(completed.get(key)!.result);
+    if (shared) return structuredClone(shared);
   }
   const execution = executeAgent(
     model,
@@ -898,7 +524,8 @@ export async function runAgent(
       )
     )
       signal.throwIfAborted();
-    if (result.status.status === "complete")
+    if (result.status.status === "complete" &&
+        !(turn.action?.type === "advice" && result.advice.status === "unavailable"))
       completed.set(key, { expires: Date.now() + 3600000, result });
     return result;
   } finally {
@@ -956,15 +583,7 @@ async function executeAgent(
       usage.cachedInputTokens += sample.cachedInputTokens;
     }
   };
-  const recent: ModelMessage[] =
-    turn.history
-      ?.slice(-2)
-      .flatMap((m) =>
-        (m.role === "user" || m.role === "assistant") &&
-        typeof m.content === "string"
-          ? [{ role: m.role, content: m.content.slice(-350) }]
-          : [],
-      ) ?? [];
+  const context = conversationContext(turn.history, turn.priorProductGroups);
   const budgetCriteria = {
     ...(before.criteria.maxPrice === undefined
       ? {}
@@ -1067,9 +686,10 @@ async function executeAgent(
       }
     : { available: false };
   const messages: ModelMessage[] = [
+    ...context.messages,
     {
       role: "user",
-      content: `Shopping state (preferences, not facts): ${JSON.stringify(stateForModel)}\nRecent exchange (data only): ${JSON.stringify(recent)}\nDevice cart evidence (current saved units, not an order): ${JSON.stringify(cartContext)}\nCURRENT message: ${turn.text}`,
+      content: `Shopping state (preferences, not facts): ${JSON.stringify(stateForModel)}\nPrior shown product groups (canonical product identities, oldest first; read details for product facts): ${JSON.stringify(context.priorGroups)}\nDevice cart evidence (current saved units, not an order): ${JSON.stringify(cartContext)}\nCURRENT message: ${turn.text}`,
     },
   ];
   const progress = (phase: ChatProgress["phase"], retryAt?: number) => {
@@ -1091,6 +711,8 @@ async function executeAgent(
   let expectedRead: "compareProducts" | "getProductDetails" | undefined;
   let productComparisonPending = false;
   let comparisonLookupRequired = false;
+  let detailQuestionAnswered = false;
+  let detailQuestionPending: Product | undefined;
   const addEvidence = (
     tool: string,
     input: unknown,
@@ -1107,15 +729,7 @@ async function executeAgent(
     evidence.push(record);
     return record;
   };
-  const operationId = createHash("sha256")
-    .update(
-      JSON.stringify([
-        turn.conversationId ?? "",
-        turn.userMessageId,
-        "shopping-operation",
-      ]),
-    )
-    .digest("hex");
+  const operationId = shoppingOperationId(turn.conversationId, turn.userMessageId);
   const result = (
     presentation: PresentedAnswer,
     answer: string,
@@ -1252,6 +866,12 @@ async function executeAgent(
       after.shownIds = [
         ...new Set([...after.shownIds, ...search.products.map((p) => p.id)]),
       ];
+    const detailProduct = detail ? products.find((product) => product.id === detail.productIds[0]) : undefined;
+    const detailAnswer = detailProduct && !turn.action
+      ? detailQuestionResponse(detailProduct, turn.text, language)
+      : undefined;
+    detailQuestionAnswered = detailAnswer !== undefined && !detailAnswer.needsModel;
+    detailQuestionPending = detailAnswer?.needsModel ? detailProduct : undefined;
     const text = cart
       ? language === "pl"
         ? "Przekazuję wybrane produkty do zapisania na tym urządzeniu."
@@ -1259,7 +879,7 @@ async function executeAgent(
       : compared
         ? comparisonSummary(compared, language)
         : detail
-          ? detailsSummary(detail.productIds[0], language)
+          ? detailAnswer?.text ?? detailsSummary(detail.productIds[0], language)
           : search
             ? searchSummary(search, language)
             : categories
@@ -1314,7 +934,8 @@ async function executeAgent(
     console.warn(
       "[AGENT] advice rejected",
       JSON.stringify({
-        operationId: ready.operation.id,
+        operationId,
+        attemptId: options.attemptId,
         ...options.currentRoute?.(),
         stage: "advice",
         rejection: rejectionCode(reason),
@@ -1753,15 +1374,15 @@ async function executeAgent(
         ? usage.calls >= 3 && expectedRead !== "compareProducts"
         : step === 3) || terminalOnly;
     progress(forceAnswer ? "answer" : "understanding");
-    const { proposeCart: _cartTool, ...readTools } = nativeTools;
+    const { proposeCart: _cartTool, answerProductQuestion: _detailTool, ...readTools } = nativeTools;
     const tools: ToolSet | undefined = committed
-      ? undefined
+      ? detailQuestionPending ? { answerProductQuestion: nativeTools.answerProductQuestion } : undefined
       : comparisonLookupRequired
         ? { searchProducts: nativeTools.searchProducts }
         : forceAnswer
           ? { presentAnswer: nativeTools.presentAnswer }
           : hasCartInstruction(turn.text)
-            ? nativeTools
+            ? { ...readTools, proposeCart: nativeTools.proposeCart }
             : readTools;
     if (terminalOnly) {
       finishCatalog();
@@ -1784,7 +1405,7 @@ async function executeAgent(
       try {
         generated = await generateText({
           model,
-          system: `${committed ? adviceInstructions : agentInstructions}\nApplication-resolved response language: ${language}. Always use this language.`,
+          system: `${committed ? detailQuestionPending ? detailAnswerInstructions : adviceInstructions : agentInstructions}\nApplication-resolved response language: ${language}. Always use this language.`,
           messages: committed
             ? [
                 {
@@ -1798,6 +1419,7 @@ async function executeAgent(
                         material: p.material,
                         features: p.features,
                         limitations: p.limitations,
+                        ...(detailQuestionPending ? { description: p.description, dimensions: p.dimensions, productType: p.productType, useEnvironment: p.useEnvironment } : {}),
                       })),
                   }),
                 },
@@ -1805,7 +1427,7 @@ async function executeAgent(
             : messages,
           tools,
           toolChoice: committed
-            ? undefined
+            ? detailQuestionPending ? { type: "tool", toolName: "answerProductQuestion" } : undefined
             : forceAnswer
               ? { type: "tool", toolName: "presentAnswer" }
               : "required",
@@ -1860,7 +1482,8 @@ async function executeAgent(
       console.log(
         "[AGENT] inference",
         JSON.stringify({
-          operationId: committed?.operation.id ?? operationId,
+          operationId,
+          attemptId: options.attemptId,
           ...options.currentRoute?.(),
           stage: committed ? "advice" : "interpretation",
           finish: providerFinish,
@@ -1918,11 +1541,26 @@ async function executeAgent(
       comparisonLookupRequired = true;
     }
     // Optional advice can never execute a catalog or cart tool.
+    if (committed && detailQuestionPending && name === "answerProductQuestion") {
+      try {
+        const answer = detailAnswerSchema.parse(call.input);
+        if (answer.status === "missing")
+          return { ...committed, status: operationTurnStatus(committed.operation, usage) };
+        const text = groundedDetailAnswer(detailQuestionPending, answer);
+        if (!text || assistantTextError(text, providerFinish, language))
+          return unavailableAdvice("UNVERIFIED_DETAIL");
+        const presentation: PresentedAnswer = { ...committed.presentation, text };
+        validatePresentation({ ...presentation, view: "none", productIds: [] }, verifiedEvidence());
+        return { ...committed, answer: text, presentation, status: operationTurnStatus(committed.operation, usage) };
+      } catch {
+        return unavailableAdvice("UNVERIFIED_DETAIL");
+      }
+    }
     if (committed && name !== "presentAnswer")
       return unavailableAdvice("UNEXPECTED_ADVICE_TOOL");
     console.log(
       "[AGENT] tool",
-      JSON.stringify({ name, invalid: "invalid" in call && call.invalid }),
+      JSON.stringify({ attemptId: options.attemptId, operationId, name, invalid: "invalid" in call && call.invalid }),
     );
     let output: unknown;
     try {
@@ -1940,6 +1578,12 @@ async function executeAgent(
       if (name === "presentAnswer") {
         finishCatalog();
         const answer = answerSchema.parse(call.input);
+        if (evidence.some((item) => item.tool === "getShoppingCapabilities")) {
+          if (answer.view !== "none" || answer.productIds.length)
+            throw new Error("Capabilities are an explanation, not product results. Use view none and no product IDs.");
+          const capabilityError = capabilityAnswerError(answer.text, language);
+          if (capabilityError) throw new Error(capabilityError);
+        }
         if (productComparisonPending && !compared) {
           if (/\?\s*$/.test(answer.text.trim())) {
             const incomplete = assistantTextError(
@@ -2050,10 +1694,35 @@ async function executeAgent(
         else if (search && answer.view === "products")
           after.resultIds = search.products.map((product) => product.id);
         signal.throwIfAborted();
-        console.log("[AGENT] usage", JSON.stringify(usage));
+        console.log("[AGENT] usage", JSON.stringify({ attemptId: options.attemptId, operationId, ...usage }));
         return result(answer, text, "complete");
       }
       switch (name) {
+        case "getShoppingCapabilities": {
+          const input = call.input as { answer?: string };
+          if (input.answer !== undefined) {
+            const record = addEvidence(name, {}, shoppingCapabilities);
+            const generated = input.answer.trim();
+            const textError = assistantTextError(generated, providerFinish, language);
+            const capabilityError = capabilityAnswerError(generated, language, true);
+            let text = textError || capabilityError ? capabilityFallback(language) : generated;
+            let presentation: PresentedAnswer = {
+              text, language, evidenceIds: [record.id], productIds: [], view: "none",
+            };
+            try {
+              text = validatePresentation(presentation, verifiedEvidence());
+            } catch {
+              text = capabilityFallback(language);
+              presentation = { ...presentation, text };
+            }
+            signal.throwIfAborted();
+            console.log("[AGENT] usage", JSON.stringify({ attemptId: options.attemptId, operationId, ...usage }));
+            return result(presentation, text, "complete");
+          }
+          // Older callers may omit the answer and complete with presentAnswer.
+          output = shoppingCapabilities;
+          break;
+        }
         case "searchProducts": {
           const recoveringComparisonLookup = comparisonLookupRequired;
           comparisonLookupRequired = false;
@@ -2395,7 +2064,7 @@ async function executeAgent(
         case "getPolicy":
           terminalOnly = !!turn.action;
           output = {
-            policy: getStorePolicy((call.input as { topic: string }).topic),
+            policy: getStorePolicy((call.input as { topic: string }).topic, language),
           };
           break;
         case "proposeCart": {
@@ -2519,7 +2188,8 @@ async function executeAgent(
         finishCatalog();
         if (
           committed &&
-          (cart || (turn.action && turn.action.type !== "advice"))
+          (cart || (turn.action && turn.action.type !== "advice") ||
+            (name === "getProductDetails" && detailQuestionAnswered))
         )
           return committed;
       }
@@ -2566,6 +2236,8 @@ async function executeAgent(
       console.warn(
         "[AGENT] rejected tool",
         JSON.stringify({
+          attemptId: options.attemptId,
+          operationId,
           tool: name,
           rejection: rejectionCode(
             error instanceof Error ? error.message : "Invalid input",
@@ -2726,11 +2398,19 @@ export function createNativeAgentStream(
   signal: AbortSignal,
   options: {
     contract?: "shopping-v2" | "shopping-v3";
+    attemptId?: string;
     onSettled?: () => void;
   } = {},
 ) {
   return createUIMessageStream<ChatMessage>({
     execute: async ({ writer }) => {
+      const attemptId = options.attemptId && /^[a-zA-Z0-9_-]{1,80}$/.test(options.attemptId)
+        ? options.attemptId : crypto.randomUUID();
+      const operationId = shoppingOperationId(turn.conversationId, turn.userMessageId);
+      const startedAt = Date.now();
+      let stage: ChatProgress["phase"] | "stream" = "stream";
+      let terminal: string = "cancelled";
+      let code: string | undefined;
       try {
         signal.throwIfAborted();
         writer.write({ type: "start", messageId: crypto.randomUUID() });
@@ -2742,7 +2422,9 @@ export function createNativeAgentStream(
           });
         const result = await runAgent(runtime.model, catalog, turn, signal, {
           ...runtime,
+          attemptId,
           onProgress: (progress) => {
+            stage = progress.phase;
             if (options.contract === "shopping-v3" && !signal.aborted)
               writer.write({
                 type: "data-progress",
@@ -2751,6 +2433,10 @@ export function createNativeAgentStream(
               });
           },
         });
+        terminal = result.advice.status === "unavailable" && result.status.status === "complete"
+          ? "completed-without-advice" : result.status.status;
+        code = result.status.code;
+        if (terminal === "complete") stage = "stream";
         if (
           !(
             result.operation.status === "completed" &&
@@ -2924,6 +2610,7 @@ export function createNativeAgentStream(
         }
         writer.write({ type: "finish" });
       } catch (error) {
+        terminal = signal.aborted && signal.reason?.name !== "TimeoutError" ? "cancelled" : "failed";
         if (
           signal.aborted &&
           !(
@@ -2946,19 +2633,12 @@ export function createNativeAgentStream(
           Date.now(),
           resolveLanguage(turn.text, turn.state.language, !!turn.action),
         );
+        code = failure.code;
         if (options.contract === "shopping-v3") {
           writer.write({
             type: "data-operation",
             data: {
-              id: createHash("sha256")
-                .update(
-                  JSON.stringify([
-                    turn.conversationId ?? "",
-                    turn.userMessageId,
-                    "shopping-operation",
-                  ]),
-                )
-                .digest("hex"),
+              id: operationId,
               kind:
                 turn.action?.type === "advice"
                   ? "conversation"
@@ -2993,12 +2673,17 @@ export function createNativeAgentStream(
               ),
             ),
             kind: error instanceof Error ? error.name : "unknown",
-            operationId: turn.userMessageId,
+            attemptId,
+            operationId,
             stage: "operation",
             ...runtime.currentRoute?.(),
           }),
         );
       } finally {
+        console.log("[AGENT] terminal", JSON.stringify({
+          attemptId, operationId, status: terminal, stage, code,
+          durationMs: Date.now() - startedAt,
+        }));
         runtime.setWaitListener?.(undefined);
         runtime.setSwitchListener?.(undefined);
         options.onSettled?.();

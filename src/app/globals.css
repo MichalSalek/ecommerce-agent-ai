@@ -818,7 +818,6 @@ nav .assistant-link {
 .chat-message {
   margin: 0 0 28px;
   max-width: 100%;
-  animation: message-in 0.18s ease-out;
 }
 .chat-message.user {
   background: var(--ink);
@@ -974,6 +973,7 @@ nav .assistant-link {
 .chat-error,
 .chat-recovery {
   background: var(--tint);
+  border: 1px solid var(--line);
   padding: 18px;
   border-radius: 10px;
   font-size: 14px;
@@ -984,12 +984,13 @@ nav .assistant-link {
 }
 .chat-error p {
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: 14px;
 }
 .chat-error button,
 .chat-recovery button {
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
+  min-height: 44px;
 }
 .storage-notice {
   position: absolute;
@@ -1116,16 +1117,6 @@ nav .assistant-link {
 .result-toggle:hover {
   background: var(--line);
 }
-@keyframes message-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 @keyframes progress-pulse {
   50% {
     opacity: 0.45;
@@ -1192,9 +1183,6 @@ nav .assistant-link {
   .assistant-identity strong {
     font-size: 13px;
   }
-  .assistant-presence {
-    font-size: 10px;
-  }
   .new-conversation {
     font-size: 11px;
     padding: 6px 9px;
@@ -1237,7 +1225,6 @@ nav .assistant-link {
     display: none;
   }
   .composer-meta {
-    font-size: 10px;
     gap: 8px;
   }
   .product.compact {
@@ -1383,9 +1370,6 @@ textarea::placeholder {
 @media (max-width: 800px) {
   .product.compact .store-image-fallback {
     height: 90px;
-  }
-  .composer-meta {
-    font-size: 11px;
   }
   .store-image-fallback {
     font-size: 10px;

@@ -268,8 +268,8 @@ try {
   checkProfile(profileResponse.status,profileBody);
   report.profile=expectedProfile; await save();
   console.log('[PROFILE] Text returned with no reasoning content');
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/groq|proxy|openai|anthropic/i.test(k)));
-  Object.assign(env, { NODE_ENV:'production', HOSTNAME:'127.0.0.1', CHAT_PROVIDER:'llama', LLAMA_BASE_URL:modelBase, LLAMA_MODEL:model, CHAT_REQUESTS_PER_HOUR:'1000', ...(engine ? {EMBEDDING_MODEL:'minilm'} : {GROQ_API_KEY:'', GROQ_FALLBACK_API_KEY:'', GROQ_BASE_URL:'http://127.0.0.1:1/v1', GROQ_BALANCER:'false', GROQ_TRANSPORT:'node'}) });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/groq|proxy|openai|anthropic|aurelle_local_qa/i.test(k)));
+  Object.assign(env, { NODE_ENV:'production', HOSTNAME:'127.0.0.1', AURELLE_LOCAL_QA:'llama', LLAMA_BASE_URL:modelBase, LLAMA_MODEL:model, CHAT_REQUESTS_PER_HOUR:'1000', ...(engine ? {EMBEDDING_MODEL:'minilm'} : {}) });
   let appPort;
   if (engine) {
     child = spawn(process.execPath, ['--import','tsx',join(root,'scripts/agent-local-core.ts')], {cwd:root, env, stdio:['ignore','pipe','pipe','ipc']});

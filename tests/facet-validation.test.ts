@@ -7,6 +7,21 @@ import {
 import { resolveExplicitFacets } from "../src/application/chat/explicit-facets";
 import { parseSearchIntent } from "../src/application/catalog/search-intent";
 const before = initialAgentState();
+test("a grounded furniture kind survives a model's accidental department label", () => {
+  for (const value of ["Furniture", "furniture"]) {
+    const result = resolveExplicitFacets("Pokaż meble ogrodowe do 150 EUR.", before,
+      { operation: "new", language: "pl", criteria: { query: "garden furniture", useEnvironment: "outdoor" } },
+      [{ facet: "category", value }]);
+    assert.ok(result.change);
+    assert.equal(result.change.criteria.productKind, "furniture");
+    assert.equal(result.change.criteria.maxPrice, 150);
+    assert.equal(result.change.criteria.category, undefined);
+  }
+  const unrelated = resolveExplicitFacets("Pokaż pokrowiec na meble.", before,
+    { operation: "new", language: "pl", criteria: { query: "cover for furniture" } },
+    [{ facet: "category", value: "furniture" }]);
+  assert.ok("error" in unrelated);
+});
 test("hard facet proofs reject implicit subtype narrowing and decorative adjectives", () => {
   const previous = {
     ...before,

@@ -26,14 +26,14 @@ import {
 
 if (process.argv.includes("--help")) {
   console.log(
-    "Usage: CHAT_PROVIDER=llama LLAMA_MODEL=qwen38-uncensored LLAMA_BASE_URL=http://127.0.0.1:<proxy-port>/v1 node --import tsx scripts/agent-local-core.ts\nLocal-only ENGINE functional QA server; uses an ephemeral loopback port and 600s turn timeout. Not production HTTP latency evidence.",
+    "Usage: AURELLE_LOCAL_QA=llama LLAMA_MODEL=qwen38-uncensored LLAMA_BASE_URL=http://127.0.0.1:<proxy-port>/v1 node --import tsx scripts/agent-local-core.ts\nLocal-only ENGINE functional QA server; uses an ephemeral loopback port and 600s turn timeout. Not production HTTP latency evidence.",
   );
   process.exit(0);
 }
 assert.equal(
-  process.env.CHAT_PROVIDER,
+  process.env.AURELLE_LOCAL_QA,
   "llama",
-  "Engine QA requires CHAT_PROVIDER=llama",
+  "Engine QA requires AURELLE_LOCAL_QA=llama",
 );
 assert.equal(
   process.env.LLAMA_MODEL,

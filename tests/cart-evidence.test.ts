@@ -11,8 +11,6 @@ function runtimeFor(answers: { text: string; productIds: string[] }[]) {
       baseURL: "http://fixture/v1",
       modelId: "fixture",
       apiKey: "fixture",
-      balancer: false,
-      windowsTransport: false,
     },
     async () => {
       const answer = answers[calls++];

@@ -3,23 +3,22 @@ import assert from "node:assert/strict";
 import { APICallError, generateText, tool, ToolChoiceViolationError } from "ai";
 import { z } from "zod";
 import { createGroqRuntime } from "../src/infrastructure/chat/groq-model";
-test("Groq balancer uses the background route and preserves purpose attribution", async () => {
+test("Groq uses direct completion route with the expected request options", async () => {
   let called = false;
   const runtime = createGroqRuntime(
     {
       baseURL: "http://127.0.0.1:8787/v1",
       modelId: "openai/gpt-oss-120b",
-      balancer: true,
-      windowsTransport: false,
+      apiKey: "fixture-only",
     },
     async (input, init) => {
       called = true;
       assert.equal(
         String(input),
-        "http://127.0.0.1:8787/v1/background/chat/completions",
+        "http://127.0.0.1:8787/v1/chat/completions",
       );
       const headers = new Headers(init?.headers);
-      assert.equal(headers.get("X-Balancer-Client"), "aurelle-demo");
+      assert.equal(headers.get("X-Balancer-Client"), null);
       const body = JSON.parse(String(init?.body));
       assert.equal(body.max_tokens, 1024);
       assert.equal(body.reasoning_effort, "low");
@@ -57,8 +56,6 @@ test("Groq balancer uses the background route and preserves purpose attribution"
       createGroqRuntime({
         baseURL: "https://api.groq.com/openai/v1",
         modelId: "test",
-        balancer: false,
-        windowsTransport: false,
       }),
     /GROQ_API_KEY/,
   );
@@ -68,8 +65,6 @@ const config = {
   baseURL: "https://fixture.invalid/v1",
   modelId: "fixture-model",
   apiKey: "fixture-only",
-  balancer: false,
-  windowsTransport: false,
 };
 const completion = () =>
   Response.json({
@@ -628,4 +623,123 @@ test("standalone Groq does not wait for multi-minute token recovery", async () =
     error.responseHeaders?.["x-aurelle-local-capacity"] === "1",
   );
   assert.equal(calls, 1);
+});
+
+test("Retry-After permits one reserved probe of the same request despite a conservative local estimate", async () => {
+  let time = 1000, calls = 0;
+  let release!: () => void, started!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) return Response.json(
+      { error: { message: "tokens per minute: Limit 8000, Used 7980, Requested 900" } },
+      { status: 429, headers: { "retry-after": "2" } },
+    );
+    started();
+    await gate;
+    return completion();
+  };
+  const runtime = () => createGroqRuntime(config, fetcher, () => time, undefined, { quotaWaitMaxMs: 0 });
+  await expectLimited(run(runtime()), "2");
+  time += 2000;
+  const probe = run(runtime());
+  // The pending provider call makes a concurrent identical retry contend for the shared bucket.
+  await Promise.race([startedPromise, probe.then(() => { throw new Error("probe unexpectedly completed"); })]);
+  await assert.rejects(run(runtime()), (error: unknown) =>
+    APICallError.isInstance(error) && error.statusCode === 429 &&
+    error.responseHeaders?.["x-aurelle-local-capacity"] === "1",
+  );
+  assert.equal(calls, 2);
+  release();
+  assert.equal((await probe).text, "Ready.");
+});
+
+test("provider classifies input and output token quotas without merging their capacities", async () => {
+  for (const kind of ["input", "output"]) {
+    let calls = 0, time = 1000;
+    const logs: unknown[][] = [];
+    const original = console.info;
+    console.info = (...args: unknown[]) => { logs.push(args); };
+    try {
+      const fetcher: typeof fetch = async () => {
+        calls++;
+        return calls === 1
+          ? Response.json({ error: { message: `private-secret ${kind} tokens per minute (${kind === "input" ? "ITPM" : "OTPM"}): Limit 8000, Used 7980, Requested 900` } }, { status: 429, headers: { "retry-after": "2" } })
+          : completion();
+      };
+      const runtime = () => createGroqRuntime(config, fetcher, () => time, undefined, { quotaWaitMaxMs: 0 });
+      await assert.rejects(run(runtime()), (error: unknown) => {
+        assert.ok(APICallError.isInstance(error));
+        assert.equal(error.responseHeaders?.["x-aurelle-quota-metric"], "tokens");
+        assert.equal(error.responseHeaders?.["x-aurelle-quota-token-kind"], kind);
+        assert.equal(error.responseHeaders?.["retry-after"], "2");
+        return true;
+      });
+      const diagnostic = logs.find(([name]) => name === "[GROQ] provider quota")?.[1] as Record<string, unknown>;
+      assert.equal(diagnostic.tokenKind, kind);
+      assert.doesNotMatch(JSON.stringify(logs), /private-secret/);
+      time += 2000;
+      await run(runtime());
+      assert.equal(calls, 2);
+    } finally { console.info = original; }
+  }
+});
+
+test("the Retry-After probe applies only to the original payload and keeps learned lower limits", async () => {
+  let time = 1000, calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) return Response.json(
+      { error: { message: "tokens per minute: Limit 7000, Used 7000, Requested 900" } },
+      { status: 429, headers: { "retry-after": "2" } },
+    );
+    const response = completion();
+    response.headers.set("x-ratelimit-limit-tokens", "8000");
+    response.headers.set("x-ratelimit-remaining-tokens", "7999");
+    response.headers.set("x-ratelimit-reset-tokens", "1s");
+    return response;
+  };
+  const runtime = () => createGroqRuntime(config, fetcher, () => time, undefined, { quotaWaitMaxMs: 0 });
+  await expectLimited(run(runtime()), "2");
+  time += 2000;
+  const other = runtime();
+  await assert.rejects(generateText({ model: other.model, prompt: "a different request", maxOutputTokens: other.maxOutputTokens, providerOptions: other.providerOptions, maxRetries: 0 }), (error: unknown) =>
+    APICallError.isInstance(error) && error.responseHeaders?.["x-aurelle-local-capacity"] === "1",
+  );
+  assert.equal(calls, 1);
+  await run(runtime());
+  assert.equal(calls, 2);
+  await assert.rejects(run(runtime()), (error: unknown) =>
+    APICallError.isInstance(error) && error.responseHeaders?.["x-aurelle-quota-limit"] === "7000",
+  );
+  assert.equal(calls, 2);
+});
+
+test("input-token Retry-After admits only one unmetered probe at a time", async () => {
+  let time = 1000, calls = 0;
+  let started!: () => void, release!: () => void;
+  const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) return Response.json(
+      { error: { message: "input tokens per minute (ITPM): Limit 8000, Used 7980, Requested 900" } },
+      { status: 429, headers: { "retry-after": "2" } },
+    );
+    started();
+    await gate;
+    return completion();
+  };
+  const runtime = () => createGroqRuntime(config, fetcher, () => time, undefined, { quotaWaitMaxMs: 0 });
+  await expectLimited(run(runtime()), "2");
+  time += 2000;
+  const probe = run(runtime());
+  await startedPromise;
+  await assert.rejects(run(runtime()), (error: unknown) =>
+    APICallError.isInstance(error) && error.responseHeaders?.["x-aurelle-local-capacity"] === "1",
+  );
+  assert.equal(calls, 2);
+  release();
+  await probe;
 });

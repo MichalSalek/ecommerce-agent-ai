@@ -31,25 +31,3 @@ let shop: ReturnType<typeof createShop> | undefined;
 export function getShop() {
   return (shop ??= createShop());
 }
-export function chatConfig() {
-  return {
-    provider: process.env.CHAT_PROVIDER ?? "llama",
-    baseURL: process.env.LLAMA_BASE_URL ?? "http://127.0.0.1:8080/v1",
-    modelId: process.env.LLAMA_MODEL,
-    groq: {
-      baseURL: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
-      modelId: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
-      apiKey: process.env.GROQ_API_KEY,
-      ...(process.env.GROQ_FALLBACK_MODEL && process.env.GROQ_FALLBACK_API_KEY
-        ? {
-            fallback: {
-              modelId: process.env.GROQ_FALLBACK_MODEL,
-              apiKey: process.env.GROQ_FALLBACK_API_KEY,
-            },
-          }
-        : {}),
-      balancer: process.env.GROQ_BALANCER === "true",
-      windowsTransport: process.env.GROQ_TRANSPORT === "windows",
-    },
-  };
-}

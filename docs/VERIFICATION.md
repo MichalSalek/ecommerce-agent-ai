@@ -1,5 +1,16 @@
 # Reliable shopping outcomes — 2026-11-16
 
+## Shopping chat investigation, 2026-11-25
+
+At 20:06:36 UTC the public chat handled the owner's Polish capabilities question with GPT-OSS 120B and called `searchProducts`. At 20:06:42 the same operation took the minute-limit fallback to `qwen/qwen3.8-27b`. The owner saw the roles reversed in the second answer. The first request has no terminal failure record, so its exact visible error and attribution to a particular scanner run remain unknown. An independent pre-change browser run sent just one user message after reset and received five unsolicited products from 120B.
+
+The previous primary credential was separate, while the fallback shared a credential with a background application. The replacement authenticated directly with Groq. A separate test-only Qwen request exceeding the per-request token allowance was rejected before generation. Groq supplied the owning organization in its response for the replacement and every scanner key. Comparison confirmed five distinct scanner organizations, all different from the shop's organization. No account identifiers or secret values are stored in this repository. Groq applies overall limits per organization. [Provider rate limits](https://console.groq.com/docs/rate-limits)
+
+A real browser using test-only `qwen/qwen3.8-27b` exposed two further issues. A capabilities paraphrase spent two full inference contexts and could hit its input-token limit between them. A five-turn coffee conversation retrieved the correct carafe but answered a maximum-temperature question with the generic cold-brew description. The new capabilities tool can complete in one inference. Detail questions use canonical catalog fields and retain the selected product when a fact cannot be established.
+
+A separate real-provider check saved a distinctive 43 EUR budget and reloaded the tab. A fresh tab in the same browser profile started empty with legacy history present before navigation. Only the legacy chat entry was retired. After New conversation, the first actual provider request contained the system instruction and the new customer question, with no previous budget, product marker or user/assistant exchange. The browser preserved unrelated storage and the cart.
+
+
 Application revision: `e7f98a3c9e6fe6519dc1fc315b893a5332264d0d`. Public URL: [Aurelle](https://ecommerce-agent.michalsalek.com). Local, CI, public functional acceptance and the ten-minute runtime observation passed.
 
 Catalog operations now have an independent outcome from optional model advice. A rejected comment leaves the canonical products, comparison, counts and continuation available. Structured controls and known cart selections do not initialize the model. Language follows the current customer message; cart clarification uses a bounded server-owned intention, and browser receipts follow the atomic device write.

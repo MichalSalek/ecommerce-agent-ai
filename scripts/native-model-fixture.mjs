@@ -1,5 +1,6 @@
 // Deterministic OpenAI-compatible tool-calling peer for container smoke only.
 import http from "node:http";
+import net from "node:net";
 
 const server = http.createServer(async (req, res) => {
   if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) {
@@ -86,6 +87,20 @@ const server = http.createServer(async (req, res) => {
       .end(JSON.stringify({ error: { message: error.message } }));
   }
 });
-server.listen(9999, "127.0.0.1", () =>
+server.listen(Number(process.env.FIXTURE_PORT ?? 9999), "127.0.0.1", () =>
   console.log("[fixture] native tool peer listening"),
 );
+
+// Docker Desktop publishes this test-only bridge port to host loopback. The app
+// and model peer themselves remain bound to the container's loopback interface.
+if (process.env.SMOKE_FORWARD_PORT) {
+  const forward = net.createServer((client) => {
+    const target = net.createConnection({ host: "127.0.0.1", port: Number(process.env.PORT) });
+    client.on("error", () => target.destroy());
+    target.on("error", () => client.destroy());
+    client.pipe(target).pipe(client);
+  });
+  forward.listen(Number(process.env.SMOKE_FORWARD_PORT), "0.0.0.0", () =>
+    console.log("[fixture] test-only app forwarder listening"),
+  );
+}

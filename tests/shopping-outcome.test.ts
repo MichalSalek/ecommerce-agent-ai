@@ -36,8 +36,7 @@ function model(responses: unknown[] = []) {
     {
       baseURL: "http://fixture/v1",
       modelId: "fixture",
-      balancer: true,
-      windowsTransport: false,
+      apiKey: "fixture-only",
     },
     async (_input, init) => {
       requests.push(JSON.parse(String(init?.body)));
@@ -428,6 +427,22 @@ test("advice retry targets the committed snapshot and never replays cart or cata
   assert.equal(retry.cart, undefined);
   assert.equal(mock.calls(), 1);
 });
+test("retrying the same failed advice message obtains fresh advice for the completed result", async () => {
+  const original = await run("Compare", model(), { action: { type: "compare", productIds: ["mugs", "carafe"] } });
+  const request = { userMessageId: "retry-advice-after-quota", conversationId: "same-advice-thread",
+    state: original.checkpoint.after, adviceFor: original, action: { type: "advice", operationId: original.operation.id } };
+  const mock = model([undefined, response("presentAnswer", { text: "The carafe is useful for serving drinks." })]);
+  const first = await run("Explain differences", mock, request);
+  const retry = await run("Explain differences", mock, request);
+  const replay = await run("Explain differences", mock, request);
+  assert.equal(first.advice.status, "unavailable");
+  assert.equal(retry.advice.status, "included");
+  assert.equal(retry.operation.id, original.operation.id);
+  assert.deepEqual(retry.checkpoint.after, original.checkpoint.after);
+  assert.deepEqual(replay.advice, retry.advice);
+  assert.equal(mock.calls(), 2);
+});
+
 test("an advice deadline preserves the already committed operation in the UI stream", async () => {
   let calls = 0;
   const deadline = new AbortController();
@@ -436,8 +451,7 @@ test("an advice deadline preserves the already committed operation in the UI str
     {
       baseURL: "http://timeout/v1",
       modelId: "fixture",
-      balancer: true,
-      windowsTransport: false,
+      apiKey: "fixture-only",
     },
     async (_url, init) => {
       if (++calls === 1)

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { products } from "@/data/products";
+import { catalogById } from "@/data/products";
 import { formatPrice } from "@/lib/money";
 import type { Comparison } from "@/application/chat/shopping-v3";
 
@@ -7,7 +7,7 @@ export function ComparisonResults({ comparison }: { comparison: Comparison }) {
   return (
     <div className="comparison-results" aria-label="Product comparison">
       {comparison.productIds.map((id) => {
-        const product = products.find((item) => item.id === id);
+        const product = catalogById.get(id);
         const difference = comparison.differencesCents.find(
           (item) => item.productId === id,
         );

@@ -20,6 +20,10 @@ export const productSchema = z.object({
   inStock: z.boolean(),
 });
 export type Product = z.infer<typeof productSchema>;
+export function indexProducts(records: readonly Product[]): ReadonlyMap<string, Product> {
+  return new Map(records.map((product) => [product.id, product]));
+}
+
 export interface ProductSearch {
   query: string;
   functionalGroup?: FunctionalGroup;

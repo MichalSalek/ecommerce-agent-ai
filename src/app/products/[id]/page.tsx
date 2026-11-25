@@ -1,9 +1,10 @@
 import { StoreImage } from "@/components/StoreImage";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { products } from "@/data/products";
+import { catalogById, products } from "@/data/products";
 import { AddToCart } from "@/components/AddToCart";
 import { ProductCard } from "@/components/ProductCard";
+import { storePolicy } from "@/domain/catalog/policies";
 import { formatPrice } from "@/lib/money";
 export function generateStaticParams() {
   return products.map((p) => ({ id: p.id }));
@@ -15,7 +16,7 @@ export async function generateMetadata({
 }) {
   const { id } = await params;
   return {
-    title: `${products.find((p) => p.id === id)?.name ?? "Product not found"} - Aurelle`,
+    title: `${catalogById.get(id)?.name ?? "Product not found"} - Aurelle`,
   };
 }
 export default async function ProductPage({
@@ -24,7 +25,7 @@ export default async function ProductPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const product = products.find((p) => p.id === id);
+  const product = catalogById.get(id);
   if (!product) notFound();
   const related = products
     .filter((p) => p.category === product.category && p.id !== id)
@@ -53,7 +54,9 @@ export default async function ProductPage({
             {product.inStock ? "In stock" : "Currently out of stock"}
           </p>
           <AddToCart product={product} />
-          <p className="detail-policy">Delivery €4. Returns within 14 days.</p>
+          <p className="detail-policy">
+            Delivery {formatPrice(storePolicy.deliveryPriceEUR)}. Returns within {storePolicy.returnDays} days.
+          </p>
           <dl className="product-specifications">
             <div>
               <dt>Type</dt>

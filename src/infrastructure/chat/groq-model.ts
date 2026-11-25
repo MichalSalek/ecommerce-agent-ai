@@ -1,20 +1,17 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { ChatRuntime, ModelUsage } from "./runtime";
-import { windowsFetch } from "./windows-fetch";
 import { createHash } from "node:crypto";
-import { makeGroqFailover } from "./groq-failover";
+import { GROQ_IDENTITY } from "./groq-identity.mjs";
 export interface GroqConfig {
   baseURL: string;
   modelId: string;
   apiKey?: string;
-  balancer: boolean;
-  windowsTransport: boolean;
-  fallback?: { modelId: string; apiKey: string };
 }
 // Runtime objects are created per request. Share only by underlying transport and
 // endpoint/model identity, without retaining credentials in the cooldown key.
-type Cooldown = { deadline: number; diagnostic?: QuotaDiagnostic };
+type Cooldown = { deadline: number; diagnostic?: QuotaDiagnostic; probeHash?: string };
 const cooldowns = new WeakMap<typeof fetch, Map<string, Cooldown>>();
+const probeLocks = new WeakMap<typeof fetch, Set<string>>();
 type TokenBucket = {
   limit: number;
   remaining: number;
@@ -189,6 +186,7 @@ function rateLimitResponse(
               "x-aurelle-quota-limit": String(diagnostic.limit),
               "x-aurelle-quota-used": String(diagnostic.used),
               "x-aurelle-quota-requested": String(diagnostic.requested),
+              ...(diagnostic.tokenKind ? { "x-aurelle-quota-token-kind": diagnostic.tokenKind } : {}),
             }
           : {}),
       },
@@ -198,6 +196,7 @@ function rateLimitResponse(
 
 type QuotaDiagnostic = {
   metric: "tokens" | "requests";
+  tokenKind?: "input" | "output";
   window: "day" | "minute";
   limit: number;
   used: number;
@@ -239,9 +238,10 @@ async function quotaDiagnostic(
         : undefined;
     if (typeof message !== "string") return undefined;
     const metrics = [
-      ...message.matchAll(/\b(tokens|requests)\s+per\s+(day|minute)\b/gi),
+      ...message.matchAll(/\b(?:(input|output)\s+)?(tokens|requests)\s+per\s+(day|minute)\b/gi),
     ];
     if (metrics.length !== 1) return undefined;
+    if (metrics[0][1] && metrics[0][2].toLowerCase() !== "tokens") return undefined;
     const numeric = (field: string) => {
       const matches = [
         ...message.matchAll(
@@ -261,8 +261,9 @@ async function quotaDiagnostic(
     if (limit === undefined || used === undefined || requested === undefined)
       return undefined;
     return {
-      metric: metrics[0][1].toLowerCase() as QuotaDiagnostic["metric"],
-      window: metrics[0][2].toLowerCase() as QuotaDiagnostic["window"],
+      metric: metrics[0][2].toLowerCase() as QuotaDiagnostic["metric"],
+      ...(metrics[0][1] ? { tokenKind: metrics[0][1].toLowerCase() as "input" | "output" } : {}),
+      window: metrics[0][3].toLowerCase() as QuotaDiagnostic["window"],
       limit,
       used,
       requested,
@@ -276,44 +277,20 @@ async function quotaDiagnostic(
 
 export function createGroqRuntime(
   config: GroqConfig,
-  fetchImplementation: typeof fetch = config.windowsTransport
-    ? windowsFetch
-    : fetch,
+  fetchImplementation: typeof fetch = fetch,
   now: () => number = Date.now,
   wait: Waiter = waitForTokens,
   options?: {
     quotaWaitMaxMs?: number;
-    primaryTimeoutMs?: number;
-    fallbackTimeoutMs?: number;
   },
 ): ChatRuntime {
-  if (!config.balancer && !config.apiKey)
+  if (!config.apiKey)
     throw new Error("GROQ_API_KEY is required for direct Groq access.");
-  if (config.fallback) {
-    const { fallback, ...primaryConfig } = config;
-    const primary = createGroqRuntime(
-      primaryConfig,
-      fetchImplementation,
-      now,
-      wait,
-      { quotaWaitMaxMs: 0 },
-    );
-    const alternative = createGroqRuntime(
-      { ...primaryConfig, modelId: fallback.modelId, apiKey: fallback.apiKey },
-      fetchImplementation,
-      now,
-      wait,
-      { quotaWaitMaxMs: 10_000 },
-    );
-    return makeGroqFailover(
-      primary,
-      alternative,
-      config,
-      fetchImplementation,
-      now,
-      options,
-    );
-  }
+  let reportedModelId: string | undefined;
+  let providerRequestId: string | undefined;
+  const safeId = (value: unknown): string | undefined =>
+    typeof value === "string" && !/^(?:gsk_|sk-|bearer)/i.test(value) && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
+      ? value : undefined;
   const capturedUsage: ModelUsage[] = [];
   let waitListener: ((milliseconds: number) => void) | undefined;
   let transportCooldowns = cooldowns.get(fetchImplementation);
@@ -322,6 +299,12 @@ export function createGroqRuntime(
     cooldowns.set(fetchImplementation, transportCooldowns);
   }
   const deadlines = transportCooldowns;
+  let transportProbeLocks = probeLocks.get(fetchImplementation);
+  if (!transportProbeLocks) {
+    transportProbeLocks = new Set();
+    probeLocks.set(fetchImplementation, transportProbeLocks);
+  }
+  const probes = transportProbeLocks;
   let transportBuckets = tokenBuckets.get(fetchImplementation);
   if (!transportBuckets) {
     transportBuckets = new Map();
@@ -337,12 +320,13 @@ export function createGroqRuntime(
   const key = JSON.stringify([
     config.baseURL.replace(/\/+$/, ""),
     config.modelId,
-    config.balancer,
     createHash("sha256")
       .update(config.apiKey ?? "")
       .digest("hex"),
   ]);
   const transport: typeof fetch = async (input, init) => {
+    reportedModelId = undefined;
+    providerRequestId = undefined;
     const attemptSignal = AbortSignal.timeout(15_000);
     init = {
       ...init,
@@ -351,6 +335,14 @@ export function createGroqRuntime(
         : attemptSignal,
     };
     init?.signal?.throwIfAborted();
+    const requestHash = typeof init?.body === "string"
+      ? createHash("sha256").update(init.body).digest("hex")
+      : undefined;
+    if (probes.has(key)) {
+      const response = rateLimitResponse(1);
+      response.headers.set("x-aurelle-local-capacity", "1");
+      return response;
+    }
     const cooldown = deadlines.get(key);
     const remaining = (cooldown?.deadline ?? 0) - now();
     if (remaining > 0) {
@@ -361,7 +353,10 @@ export function createGroqRuntime(
         cooldown?.diagnostic,
       );
     }
-    deadlines.delete(key);
+    // A rolling provider window can reopen sooner than our smooth refill estimate.
+    // Admit one identical request after Retry-After while reserving shared capacity.
+    const canProbe = Boolean(cooldown?.probeHash && requestHash === cooldown.probeHash && now() <= cooldown.deadline + 60_000);
+    if (cooldown && (!cooldown.probeHash || now() > cooldown.deadline + 60_000)) deadlines.delete(key);
     const estimate = estimatedTokens(init?.body);
     let reserved: TokenBucket | undefined;
     let waited = 0;
@@ -371,7 +366,15 @@ export function createGroqRuntime(
       if (!bucket) break;
       refill(bucket, now());
       const needed = Math.min(estimate, bucket.limit);
+      if (canProbe && bucket.inFlight === 0 && bucket.remaining < needed && deadlines.get(key) === cooldown) {
+        deadlines.delete(key);
+        bucket.remaining = 0;
+        bucket.inFlight++;
+        reserved = bucket;
+        break;
+      }
       if (bucket.remaining >= needed) {
+        if (canProbe && deadlines.get(key) === cooldown) deadlines.delete(key);
         bucket.remaining -= needed;
         bucket.inFlight++;
         reserved = bucket;
@@ -425,16 +428,23 @@ export function createGroqRuntime(
         cooldownAfterWait?.diagnostic,
       );
     }
-    // Background traffic preserves the balancer's dictation reservation; never use its cleanup route.
-    const url = String(input).replace(
-      /\/chat\/completions$/,
-      config.balancer ? "/background/chat/completions" : "/chat/completions",
-    );
+    if (probes.has(key)) {
+      if (reserved) reserved.inFlight--;
+      const response = rateLimitResponse(1);
+      response.headers.set("x-aurelle-local-capacity", "1");
+      return response;
+    }
+    const unmeteredProbe = !reserved && canProbe && deadlines.get(key) === cooldown;
+    if (unmeteredProbe) {
+      deadlines.delete(key);
+      probes.add(key);
+    }
     let response: Response;
     try {
-      response = await fetchImplementation(url, init);
+      response = await fetchImplementation(input, init);
     } finally {
       if (reserved) reserved.inFlight--;
+      if (unmeteredProbe) probes.delete(key);
     }
     if (response.ok) {
       const quota = readTokenQuota(response.headers, now());
@@ -465,6 +475,11 @@ export function createGroqRuntime(
       ) {
         try {
           const body: unknown = await response.clone().json();
+          reportedModelId = safeId(body && typeof body === "object" && "model" in body ? body.model : undefined);
+          const groq = body && typeof body === "object" && "x_groq" in body ? body.x_groq : undefined;
+          providerRequestId = safeId(response.headers.get("x-request-id")) ??
+            safeId(groq && typeof groq === "object" && "id" in groq ? groq.id : undefined);
+          console.info("[GROQ] response", JSON.stringify({ reportedModelId, providerRequestId }));
           const usage =
             body && typeof body === "object" && "usage" in body
               ? body.usage
@@ -512,6 +527,8 @@ export function createGroqRuntime(
         } catch {
           // Malformed or unreadable usage never changes the provider response.
         }
+        if (config.baseURL === GROQ_IDENTITY.baseURL && reportedModelId !== config.modelId)
+          return Response.json({ error: { message: "The provider did not confirm the requested model." } }, { status: 502 });
       }
     }
     if (response.status !== 429) return response;
@@ -525,7 +542,7 @@ export function createGroqRuntime(
     if (deadline !== undefined) {
       const existing = deadlines.get(key);
       if (!existing || deadline >= existing.deadline) {
-        ownCooldown = { deadline };
+        ownCooldown = { deadline, probeHash: requestHash };
         deadlines.set(key, ownCooldown);
       }
       console.info("[GROQ] provider cooldown recorded: upstream Retry-After");
@@ -534,6 +551,7 @@ export function createGroqRuntime(
     if (diagnostic) {
       if (
         diagnostic.metric === "tokens" &&
+        !diagnostic.tokenKind &&
         diagnostic.window === "minute" &&
         diagnostic.limit > 0
       ) {
@@ -578,12 +596,7 @@ export function createGroqRuntime(
     baseURL: config.baseURL,
     apiKey: config.apiKey ?? "not-needed",
     fetch: transport,
-    headers: config.balancer
-      ? {
-          "X-Balancer-Client": "aurelle-demo",
-          "X-Balancer-Purpose": "shopping-assistant",
-        }
-      : undefined,
+
   });
   return {
     model: provider(config.modelId),
@@ -596,7 +609,7 @@ export function createGroqRuntime(
       },
     },
     maxOutputTokens: 1024,
-    currentRoute: () => ({ modelId: config.modelId, reason: "primary" }),
+    currentRoute: () => ({ modelId: config.modelId, reason: "primary", reportedModelId, providerRequestId }),
     takeUsage: () => capturedUsage.splice(0),
     setWaitListener: (listener) => {
       waitListener = listener;

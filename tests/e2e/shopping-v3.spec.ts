@@ -176,8 +176,8 @@ test("restored legacy results replace a presentation failure with a canonical su
 }) => {
   await page.addInitScript(
     ({ savedEvidence }) => {
-      localStorage.setItem(
-        "aurelle.conversation.v1",
+      sessionStorage.setItem(
+        "aurelle.conversation.session.v1",
         JSON.stringify({
           version: 1,
           id: "legacy-failure",
@@ -736,7 +736,7 @@ test("a partial twentieth response can retry the same user turn", async ({
   page,
 }) => {
   await page.addInitScript(() => {
-    if (localStorage.getItem("aurelle.conversation.v1")) return;
+    if (sessionStorage.getItem("aurelle.conversation.session.v1")) return;
     const messages = Array.from({ length: 20 }, (_, i) => [
       {
         id: `u-${i}`,
@@ -757,8 +757,8 @@ test("a partial twentieth response can retry the same user turn", async ({
         ],
       },
     ]).flat();
-    localStorage.setItem(
-      "aurelle.conversation.v1",
+    sessionStorage.setItem(
+      "aurelle.conversation.session.v1",
       JSON.stringify({ version: 1, id: "partial20", draft: "", messages }),
     );
   });

@@ -259,6 +259,15 @@ export function resolveExplicitFacets(
     ...(change.remove ? { remove: [...retained] } : {}),
   };
   const fresh = change.operation === "new" || change.operation === "browse";
+  const departmentNamed = /\bcategory\b|\bdepartment\b|kategori/.test(fold(text));
+  const recovered: ReturnType<typeof recoverKind> = criteria.query ? recoverKind(text, criteria.query) : {};
+  // A translated kind may have the same name as a shop department. Only the
+  // shopper can select that department; a grounded ordinary kind spans departments.
+  if (!departmentNamed && recovered.kind) {
+    const kind = recovered.kind;
+    filters = filters.map((filter) => filter.facet === "category" && fold(filter.value) === fold(kind)
+      ? { ...filter, facet: "kind", value: kind } : filter);
+  }
   const oldTypes = new Set(
     before.criteria.productTypes ??
       (before.criteria.productType ? [before.criteria.productType] : []),
@@ -307,7 +316,7 @@ export function resolveExplicitFacets(
     );
     const categoryChoice =
       filter.facet !== "category" ||
-      /\bcategory\b|\bdepartment\b|kategori/.test(fold(text));
+      departmentNamed;
     if (
       !carried &&
       (!named ||
@@ -335,7 +344,6 @@ export function resolveExplicitFacets(
     !filters.some((filter) => filter.facet === "kind") &&
     criteria.query
   ) {
-    const recovered = recoverKind(text, criteria.query);
     if (recovered.ambiguous)
       issues.push(
         "Multiple product kinds or conflicting product types were named; clarify the intended scope.",

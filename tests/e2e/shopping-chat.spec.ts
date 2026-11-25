@@ -259,8 +259,8 @@ test("a full saved conversation locks input, survives reload and resets only thr
         parts: [{ type: "text", text: "How can I help?" }],
       },
     ]).flat();
-    localStorage.setItem(
-      "aurelle.conversation.v1",
+    sessionStorage.setItem(
+      "aurelle.conversation.session.v1",
       JSON.stringify({ version: 1, id: "full", draft: "", messages }),
     );
   });
@@ -309,6 +309,8 @@ test("manual retry reuses the failed user message and context without duplicatin
   await expect(
     page.getByRole("button", { name: "Retry last message" }),
   ).toBeVisible();
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(page.getByText("Połączenie zostało przerwane. Spróbuj ponownie.")).toBeVisible();
   await page.getByRole("button", { name: "Retry last message" }).click();
   await expect(page.locator(".product.compact")).toHaveCount(2);
   await expect(page.locator(".chat-message.user")).toHaveCount(1);
@@ -371,4 +373,135 @@ test("capability guide is explicit about mock data and sends the advertised comp
   expect(sent).toBe("Compare mugs and carafe");
   await page.reload();
   await expect(page.locator(".product.compact")).toHaveCount(2);
+});
+
+test("a fresh tab starts empty, purges legacy history and leaves unrelated local data intact", async ({ page, context }) => {
+  await fixture(page);
+  await page.goto("/chat");
+  await page.evaluate(() => {
+    localStorage.setItem("aurelle.conversation.v1", JSON.stringify({ version: 1, id: "old", draft: "Legacy draft", messages: [{ id: "old-user", role: "user", parts: [{ type: "text", text: "Legacy secret" }] }] }));
+    localStorage.setItem("unrelated-marker", "keep");
+  });
+  await page.getByRole("textbox").fill("First tab marker");
+  await page.getByRole("textbox").press("Enter");
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.locator(".product.compact").first().getByRole("button", { name: "Add to cart" }).click();
+  const cartBefore = await page.evaluate(() => localStorage.getItem("aurelle.cart.v1"));
+  expect(cartBefore).toBeTruthy();
+  const cooldownBefore = JSON.stringify({ version: 1, status: { status: "provider-limit", retryAt: Date.now() + 60_000 } });
+  await page.evaluate((value) => localStorage.setItem("aurelle.chat.cooldown.v1", value), cooldownBefore);
+  await page.getByRole("textbox").fill("First tab draft");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("aurelle.conversation.session.v1"))).toContain("First tab draft");
+  const fresh = await context.newPage();
+  await fresh.goto("/chat");
+  await expect(fresh.locator(".chat-message.user")).toHaveCount(0);
+  await expect(fresh.getByRole("textbox")).toHaveValue("");
+  await expect(fresh.getByText("Legacy secret")).toHaveCount(0);
+  expect(await fresh.evaluate(() => localStorage.getItem("aurelle.conversation.v1"))).toBeNull();
+  expect(await fresh.evaluate(() => localStorage.getItem("unrelated-marker"))).toBe("keep");
+  expect(await fresh.evaluate(() => localStorage.getItem("aurelle.cart.v1"))).toBe(cartBefore);
+  expect(await fresh.evaluate(() => localStorage.getItem("aurelle.chat.cooldown.v1"))).toBe(cooldownBefore);
+  await expect(page.getByText("First tab marker", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveValue("First tab draft");
+  await fresh.close();
+});
+
+test("reset excludes the old marker and conversation id from the next request", async ({ page }) => {
+  const bodies: { conversationId: string; messages: { id: string; role: string; parts: unknown[] }[] }[] = [];
+  await page.route("**/api/chat", async (route) => {
+    bodies.push(route.request().postDataJSON());
+    await route.fulfill({ status: 200, contentType: "text/event-stream", headers: { "x-vercel-ai-ui-message-stream": "v1" }, body: response(`reset-${bodies.length}`) });
+  });
+  await page.goto("/chat");
+  await page.getByRole("textbox").fill("OLD PRIVATE MARKER");
+  await page.getByRole("textbox").press("Enter");
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("textbox").fill("Fresh question");
+  await page.getByRole("textbox").press("Enter");
+  await expect.poll(() => bodies.length).toBe(2);
+  expect(bodies[1].conversationId).not.toBe(bodies[0].conversationId);
+  expect(JSON.stringify(bodies[1])).not.toContain("OLD PRIVATE MARKER");
+  expect(bodies[1].messages).toHaveLength(1);
+  expect(bodies[1].messages[0].role).toBe("user");
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.reload();
+  await expect(page.getByText("Fresh question", { exact: true })).toBeVisible();
+  await expect(page.getByText("OLD PRIVATE MARKER", { exact: true })).toHaveCount(0);
+});
+
+test("chat remains usable when session storage is disabled", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "sessionStorage", { get() { throw new DOMException("Storage blocked", "SecurityError"); } });
+  });
+  await fixture(page);
+  await page.goto("/chat");
+  await expect(page.getByText("Conversation saving is unavailable.", { exact: false })).toBeVisible();
+  await page.getByRole("textbox").fill("Find coffee");
+  await page.getByRole("textbox").press("Enter");
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.getByRole("button", { name: "New conversation" }).click();
+  await expect(page.locator(".chat-message.user")).toHaveCount(0);
+  await page.getByRole("textbox").fill("Another question");
+  await page.getByRole("textbox").press("Enter");
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+});
+
+test("Polish request limit without retry timing shows one translated failure and retries the same turn", async ({ page }) => {
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
+  const bodies: { conversationId: string; messages: { id: string; role: string }[] }[] = [];
+  await page.route("**/api/chat", async (route) => {
+    bodies.push(route.request().postDataJSON());
+    if (bodies.length === 1) await route.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ code: "REQUEST_LIMIT" }) });
+    else await route.fulfill({ status: 200, contentType: "text/event-stream", headers: { "x-vercel-ai-ui-message-stream": "v1" }, body: response("after-limit") });
+  });
+  await page.goto("/chat");
+  await page.getByRole("textbox").fill("Szukam kubka do kawy");
+  await page.getByRole("textbox").press("Enter");
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(page.getByText("Wersja demonstracyjna osiągnęła godzinowy limit zapytań.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry last message" })).toBeDisabled();
+  await page.clock.fastForward("00:01");
+  await page.reload();
+  await expect(page.locator(".chat-error")).toHaveCount(1);
+  await expect(page.getByText("Wersja demonstracyjna osiągnęła godzinowy limit zapytań.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry last message" })).toBeDisabled();
+  await page.clock.fastForward("00:30");
+  await page.getByRole("button", { name: "Retry last message" }).click();
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  expect(bodies[1].conversationId).toBe(bodies[0].conversationId);
+  expect(bodies[1].messages.at(-1)?.id).toBe(bodies[0].messages.at(-1)?.id);
+  await expect(page.locator(".chat-message.user")).toHaveCount(1);
+});
+
+test("a child tab does not inherit its opener's conversation and keeps its own after reload", async ({ page, context }) => {
+  let calls = 0;
+  await context.route("**/api/chat", async (route) => {
+    calls++;
+    await route.fulfill({ status: 200, contentType: "text/event-stream", headers: { "x-vercel-ai-ui-message-stream": "v1" }, body: response(`child-${calls}`) });
+  });
+  await page.goto("/chat");
+  await page.getByRole("textbox").fill("Opener private marker");
+  await page.getByRole("textbox").press("Enter");
+  await expect(page.locator(".product.compact")).toHaveCount(2);
+  await page.getByRole("textbox").fill("Opener draft");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("aurelle.conversation.session.v1"))).toContain("Opener draft");
+  const popupPromise = page.waitForEvent("popup");
+  await page.evaluate(() => window.open("/chat", "_blank"));
+  const child = await popupPromise;
+  await expect(child.getByRole("textbox")).toHaveValue("");
+  await expect(child.locator(".chat-message.user")).toHaveCount(0);
+  await child.getByRole("textbox").fill("Child question");
+  await child.getByRole("textbox").press("Enter");
+  await expect(child.locator(".product.compact")).toHaveCount(2);
+  await child.getByRole("textbox").fill("Child draft");
+  await expect.poll(() => child.evaluate(() => sessionStorage.getItem("aurelle.conversation.session.v1"))).toContain("Child draft");
+  await child.reload();
+  await expect(child.getByText("Child question", { exact: true })).toBeVisible();
+  await expect(child.getByRole("textbox")).toHaveValue("Child draft");
+  await expect(child.getByText("Opener private marker", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Opener private marker", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveValue("Opener draft");
+  await child.close();
 });

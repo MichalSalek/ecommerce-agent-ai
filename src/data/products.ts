@@ -1,4 +1,4 @@
-import type { Product } from "@/domain/catalog/product";
+import { indexProducts, type Product } from "@/domain/catalog/product";
 import { productTypes } from "@/domain/catalog/taxonomy";
 const existingProducts: Array<
   Omit<
@@ -1540,3 +1540,5 @@ export const products: Product[] = [
       ),
   ),
 ];
+
+export const catalogById = indexProducts(products);

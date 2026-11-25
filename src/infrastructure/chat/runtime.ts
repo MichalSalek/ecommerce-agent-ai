@@ -9,7 +9,7 @@ export interface ChatRuntime {
   label: string;
   providerOptions: Record<string, Record<string, JSONValue>>;
   maxOutputTokens: number;
-  currentRoute?: () => { modelId: string; reason: string };
+  currentRoute?: () => { modelId: string; reason: string; reportedModelId?: string; providerRequestId?: string };
   takeUsage?: () => ModelUsage[];
   setWaitListener?: (
     listener: ((milliseconds: number) => void) | undefined,

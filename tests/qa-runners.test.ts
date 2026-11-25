@@ -224,11 +224,11 @@ test('contract resume selectively excludes changed parsing, prior copy, comparis
 });
 
 test('engine QA helper rejects unsafe providers, routes, keys and public bind before starting', () => {
-  const base={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,CHAT_PROVIDER:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
+  const base={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,AURELLE_LOCAL_QA:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
   const invoke=(extra:Record<string,string>, args:string[]=[])=>spawnSync(process.execPath,['--import','tsx','scripts/agent-local-core.ts',...args],{encoding:'utf8',env:{...base,...extra},timeout:5000});
   const help=invoke({},['--help']); assert.equal(help.status,0,help.stderr); assert.match(help.stdout,/ENGINE functional QA/);
   for(const [override,pattern] of [
-    [{CHAT_PROVIDER:'groq'},/requires CHAT_PROVIDER=llama/],
+    [{AURELLE_LOCAL_QA:'groq-proxy'},/requires AURELLE_LOCAL_QA=llama/],
     [{LLAMA_MODEL:'other'},/requires LLAMA_MODEL/],
     [{LLAMA_BASE_URL:'http://10.0.0.1:1/v1'},/requires a loopback llama proxy/],
     [{GROQ_API_KEY:'fixture'},/refuses Groq keys and routes/],
@@ -239,7 +239,7 @@ test('engine QA helper rejects unsafe providers, routes, keys and public bind be
 });
 
 test('engine QA helper serves real deterministic comparison over loopback without a model call', async () => {
-  const env={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,CHAT_PROVIDER:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
+  const env={PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV,AURELLE_LOCAL_QA:'llama',LLAMA_MODEL:'qwen38-uncensored',LLAMA_BASE_URL:'http://127.0.0.1:1/v1',HOSTNAME:'127.0.0.1',EMBEDDING_MODEL:'minilm'};
   const child=spawn(process.execPath,['--import','tsx','scripts/agent-local-core.ts'],{env,stdio:['ignore','pipe','pipe','ipc']});
   let errors=''; child.stderr?.on('data',chunk=>{errors+=chunk.toString();});
   try {
@@ -278,6 +278,8 @@ test('continuation preserves the root ledger and public usage is reserved and se
     git('init');
     mkdirSync(join(dir,'scripts'));
     copyFileSync('scripts/groq-canary.mjs',join(dir,'scripts/groq-canary.mjs'));
+    mkdirSync(join(dir,'src/infrastructure/chat'),{recursive:true});
+    copyFileSync('src/infrastructure/chat/groq-identity.mjs',join(dir,'src/infrastructure/chat/groq-identity.mjs'));
     writeFileSync(join(dir,'change.txt'),'first'); git('add','change.txt');
     git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','first');
     const root=git('rev-parse','HEAD');

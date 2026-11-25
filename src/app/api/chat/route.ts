@@ -4,11 +4,12 @@ import {
   MAX_CONVERSATION_TURNS,
   MAX_CONVERSATION_CHARACTERS,
 } from "@/application/chat/conversation-limit";
+import { priorProductGroups } from "@/application/chat/prior-selections";
 import { settledMessages } from "@/application/chat/history";
 import { chatAdmission } from "@/composition/admission";
 import { z } from "zod";
 import { getShop } from "@/composition/shop";
-import { products } from "@/data/products";
+import { catalogById } from "@/data/products";
 import { resolveChatRuntime, catalogOnlyRuntime } from "@/composition/chat";
 import { legacyButtonAction } from "@/application/chat/shopping-v3";
 import {
@@ -16,18 +17,25 @@ import {
   stateFromMessages,
   adviceResultFromMessages,
   needsModel,
+  shoppingOperationId,
 } from "@/infrastructure/chat/native-agent";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
-  console.log("[AGENT] started");
+  const attemptId = crypto.randomUUID();
+  let operationId: string | undefined;
+  let stage = "validation";
   let release: (() => void) | undefined;
+  function reject(status: number, error: string, code: string, retryAfter?: number) {
+    console.info("[AGENT] terminal", JSON.stringify({ attemptId, operationId, stage, status: "failed", code, http: status }));
+    return Response.json(
+      { error, code, ...(retryAfter === undefined ? {} : { retryAfter, retryAt: Date.now() + retryAfter * 1000 }) },
+      { status, headers: { "X-Request-ID": attemptId, "Cache-Control": "no-store", ...(retryAfter === undefined ? {} : { "Retry-After": String(retryAfter) }) } },
+    );
+  }
   try {
     const raw = await request.text();
     if (raw.length > 100000)
-      return Response.json(
-        { error: "Conversation is too long." },
-        { status: 413 },
-      );
+      return reject(413, "Conversation is too long.", "REQUEST_SIZE");
     const body = z
       .object({
         messages: z.array(z.unknown()).min(1).max(60),
@@ -42,13 +50,13 @@ export async function POST(request: Request) {
                     .string()
                     .max(150)
                     .refine(
-                      (id) => products.some((product) => product.id === id),
+                      (id) => catalogById.has(id),
                       "Unknown cart product.",
                     ),
                   quantity: z.number().int().min(1).max(99),
                 }),
               )
-              .max(products.length)
+              .max(catalogById.size)
               .refine(
                 (lines) =>
                   new Set(lines.map((line) => line.productId)).size ===
@@ -61,51 +69,31 @@ export async function POST(request: Request) {
       .parse(JSON.parse(raw));
     const normalized = settledMessages(body.messages);
     if (normalized.length !== body.messages.length)
-      return Response.json(
-        { error: "Unsupported conversation messages." },
-        { status: 400 },
-      );
+      return reject(400, "Unsupported conversation messages.", "INVALID_HISTORY");
+    const user = normalized.at(-1);
+    if (!user || user.role !== "user")
+      return reject(400, "The final message must be a user turn.", "INVALID_FINAL_ROLE");
+    operationId = shoppingOperationId(body.conversationId, user.id);
     const usage = conversationUsage(normalized);
     if (
       usage.turns > MAX_CONVERSATION_TURNS ||
       usage.characters > MAX_CONVERSATION_CHARACTERS
     )
-      return Response.json(
-        {
-          error:
-            "This conversation has reached its safety limit. Start a new conversation; your cart will be kept.",
-          code: "CONVERSATION_LIMIT",
-        },
-        { status: 409 },
-      );
+      return reject(409, "This conversation has reached its safety limit. Start a new conversation; your cart will be kept.", "CONVERSATION_LIMIT");
+    stage = "admission";
     const shop = getShop();
-    const user = normalized.findLast((m) => m.role === "user");
-    if (!user || normalized.at(-1)?.role !== "user")
-      return Response.json(
-        { error: "The final message must be a user turn." },
-        { status: 400 },
-      );
     const admission = chatAdmission()?.acquire();
     if (admission && !admission.allowed)
-      return Response.json(
-        {
-          code: admission.reason === "busy" ? "BUSY" : "REQUEST_LIMIT",
-          retryAfter: admission.retryAfter,
-          retryAt: Date.now() + admission.retryAfter * 1000,
-          error:
-            admission.reason === "busy"
-              ? "The assistant is helping other visitors. Please retry in a few seconds."
-              : "The demo has reached its hourly conversation limit. Please return later.",
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(admission.retryAfter),
-            "Cache-Control": "no-store",
-          },
-        },
+      return reject(
+        429,
+        admission.reason === "busy"
+          ? "The assistant is helping other visitors. Please retry in a few seconds."
+          : "The demo has reached its hourly conversation limit. Please return later.",
+        admission.reason === "busy" ? "BUSY" : "REQUEST_LIMIT",
+        admission.retryAfter,
       );
     release = admission?.allowed ? admission.release : undefined;
+    stage = "setup";
     const signal = AbortSignal.any([
       request.signal,
       AbortSignal.timeout(30000),
@@ -120,7 +108,9 @@ export async function POST(request: Request) {
     const runtime = needsModel({ text, action })
       ? await resolveChatRuntime(signal)
       : catalogOnlyRuntime;
+    const previous = normalized.slice(0, -1);
     return createUIMessageStreamResponse({
+      headers: { "Content-Type": "text/event-stream; charset=utf-8", "X-Request-ID": attemptId },
       stream: createNativeAgentStream(
         runtime,
         shop.catalog,
@@ -135,8 +125,8 @@ export async function POST(request: Request) {
               ? adviceResultFromMessages(normalized, action.operationId)
               : undefined,
           cart: body.cart?.lines,
-          history: normalized
-            .slice(0, -1)
+          priorProductGroups: priorProductGroups(previous),
+          history: previous
             .filter((m) => m.role === "user" || m.role === "assistant")
             .map((m) => ({
               role: m.role as "user" | "assistant",
@@ -148,6 +138,7 @@ export async function POST(request: Request) {
         },
         signal,
         {
+          attemptId,
           onSettled: release,
           contract: body.contract,
         },
@@ -155,26 +146,8 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     release?.();
-    console.error(
-      "[AGENT] failed:",
-      JSON.stringify({
-        stage: "request",
-        kind: error instanceof Error ? error.name : "UnknownError",
-      }),
-    );
-    return Response.json(
-      {
-        error:
-          error instanceof z.ZodError || error instanceof SyntaxError
-            ? "Invalid conversation format."
-            : "The assistant is temporarily unavailable. Your message is saved — please try again.",
-      },
-      {
-        status:
-          error instanceof z.ZodError || error instanceof SyntaxError
-            ? 400
-            : 503,
-      },
-    );
+    if (stage === "validation" && (error instanceof z.ZodError || error instanceof SyntaxError))
+      return reject(400, "Invalid conversation format.", "INVALID_FORMAT");
+    return reject(503, "The assistant is temporarily unavailable. Your message is saved. Please try again.", "UNAVAILABLE");
   }
 }
