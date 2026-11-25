@@ -686,9 +686,34 @@ test("a named product type can be searched without a model-invented use or kind"
     assert.equal(result.error, undefined);
     assert.equal(result.change?.criteria.functionalGroup, undefined);
     assert.equal(result.change?.criteria.query, "mug");
+    assert.deepEqual(result.change?.criteria.productTypes, ["mug"]);
     assert.equal(result.change?.criteria.maxPrice, 43);
   }
   assert.equal(resolveExplicitFacets("Szukam kubka do kawy.", before, raw, []).change?.criteria.functionalGroup, "coffee");
+  assert.equal(resolveExplicitFacets("Szukam kubka do kawy i karafki.", before, raw, []).change?.criteria.productTypes, undefined);
   assert.ok(resolveExplicitFacets("Szukam pokrowca do kubka.", before, raw, []).error);
   assert.ok(resolveExplicitFacets("Nie chcę kubka.", before, raw, []).error);
+});
+
+test("searching for a mug retains products of that type rather than related coffee accessories", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { CatalogService } = await import("../src/application/catalog/catalog-service");
+  const { LanceProductRepository } = await import("../src/infrastructure/catalog/lance-product-repository");
+  const { products } = await import("../src/data/products");
+  const vectors = { identity: "named-type-test-v1", dimensions: 2, embedDocuments: async (texts: string[]) => texts.map(() => [1, 0]), embedQuery: async () => [1, 0] };
+  const directory = await mkdtemp(join(tmpdir(), "aurelle-named-type-"));
+  try {
+    const catalog = new CatalogService(new LanceProductRepository(directory, vectors, products));
+    for (const request of ["Budżet to 43 EUR, szukam kubka do granatowego termosu.", "I need a mug under EUR 43."]) {
+      const result = resolveExplicitFacets(request, before, { operation: "new", language: "pl", criteria: { query: "mug", maxPrice: 43 } }, []);
+      assert.ok(result.change);
+      const state = transitionState(before, result.change);
+      const found = await catalog.searchResult({ query: "", ...state.criteria, limit: 10 });
+      assert.deepEqual(new Set(found.products.map(p => p.id)), new Set(["mugs", "travel-mug"]));
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

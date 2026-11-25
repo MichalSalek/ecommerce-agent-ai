@@ -188,6 +188,12 @@ function positivelyMentions(
     return false;
   });
 }
+function directlyRequestsProductType(text: string, terms: readonly string[]): boolean {
+  const labels = terms.map(term => fold(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length);
+  const target = new RegExp(`\\b(?:szukam|pokaz(?: mi)?|poprosze o|chce kupic|find(?: me)?|show me|looking for|i (?:want|need))(?: (?:a|an|some|the))? (?:${labels.join("|")})\\b(?=\\s*(?:$|[,.;!?]|(?:do|dla|for|under|below|within|up to|za|ponizej)\\b))`);
+  return positiveClauses(text).some(clause => target.test(clause) &&
+    !/\b(?:nie|bez|not|no|without|or|lub|albo|and|oraz)\b|\bi (?!want\b|need\b)/.test(clause));
+}
 function recoverKind(
   text: string,
   query: string,
@@ -312,16 +318,22 @@ export function resolveExplicitFacets(
   // A literal product-type query is useful without a guessed use case (a mug
   // does not require coffee). Keep the user's query, and omit redundant guesses.
   const queryTypes = criteria.query
-    ? Object.values(productTypes).filter(type => fold(type.en) === fold(criteria.query!) &&
+    ? Object.entries(productTypes).filter(([, type]) => fold(type.en) === fold(criteria.query!) &&
       positiveClauses(text).some(clause => positivelyMentions(clause, [type.en, type.pl, ...type.aliases], true)))
     : [];
-  const namedType = queryTypes.length === 1 ? queryTypes[0] : undefined;
-  if (namedType) {
+  if (queryTypes.length === 1) {
+    const [typeId, namedType] = queryTypes[0];
     const group = criteria.functionalGroup;
     if (group && group !== before.criteria.functionalGroup && !mentions(text, functionalGroups[group].aliases))
       delete criteria.functionalGroup;
     filters = filters.filter(filter => filter.facet !== "kind" || filter.value !== namedType.kind ||
       mentions(text, aliases(filter)) || (filter.userQuote && !fold(text).includes(fold(filter.userQuote))));
+    const typeNames = [namedType.en, namedType.pl, ...namedType.aliases];
+    if (!filters.some(filter => filter.facet === "type" || filter.facet === "excludeType") &&
+        directlyRequestsProductType(text, typeNames)) {
+      filters = [...filters, { facet: "type", value: typeId }];
+    }
+
   }
   const explicit = explicitConstraints(text);
   issues.push(...explicit.issues);
