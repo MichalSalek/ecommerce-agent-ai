@@ -1,6 +1,6 @@
 // Use an isolated browser profile and synthetic customer conversations.
 import { chromium } from '@playwright/test';
-import { text, normalize, customerWritingChecks, customerSourceChecks, customerExternalChecks, customerAccountChecks, customerCheckoutChecks, customerChoiceChecks } from './agent-browser-quality.mjs';
+import { text, normalize, containsPolish, customerWritingChecks, customerSourceChecks, customerExternalChecks, customerAccountChecks, customerCheckoutChecks, customerChoiceChecks } from './agent-browser-quality.mjs';
 import { open, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -188,8 +188,7 @@ async function capture(page, scenario, number, prompt) {
 }
 function catalogCards(turn) { return turn.visible?.cards?.filter(card => card.id && card.name) ?? []; }
 function checkPolish(turn) {
-  const answer = normalize(turn.visible?.answer);
-  assertCheck(turn, 'Visible response contains Polish language', /\b(?:pokaz|produkt|katalog|moz|pom|szuk|porown|cen|dostep|nie|jest|to|z|i|dla|w|moge|mam|informac|wedlug|ofert|asortymen)\w*\b/.test(answer), { answer: turn.visible?.answer });
+  assertCheck(turn, 'Visible response contains Polish language', containsPolish(turn.visible?.answer), { answer: turn.visible?.answer });
 }
 function comparisonChecks(turn, items) {
   const ids = items.map(item => item.id);
@@ -268,6 +267,15 @@ async function runScenario(browser, name) {
       for (const item of [...customerWritingChecks(choice.visible?.answer), ...customerChoiceChecks(choice.visible?.answer)])
         assertCheck(choice, item.label, item.pass, { answer: choice.visible?.answer });
       comparisonChecks(choice, [{ id: 'mugs', price: '€22.00', inStock: true }, { id: 'carafe', price: '€19.00', inStock: true }]);
+      const cold = await ask('Zmiana planu. Wolę podawać cold brew. Który z tych dwóch produktów polecisz mi teraz?');
+      comparisonChecks(cold, [{ id: 'mugs', price: '€22.00', inStock: true }, { id: 'carafe', price: '€19.00', inStock: true }]);
+      const coldAnswer = normalize(cold.visible?.answer);
+      assertCheck(cold, 'Changing preference recommends the carafe for serving cold brew', /polecam glass carafe/.test(coldAnswer) && /na zimno|cold brew/.test(coldAnswer), { answer: cold.visible?.answer });
+      const boiling = await ask('Czy w tej karafce mogę bezpiecznie podawać wrzątek?');
+      missingFactCheck(boiling);
+      const back = await ask('Wróć do pierwszych kubków. Czy Ceramic mugs mają uchwyty?');
+      const backAnswer = normalize(back.visible?.answer);
+      assertCheck(back, 'Returning to the mugs confirms their documented handles', back.checkpoint?.presentedIds?.includes('mugs') && /uchwyt/.test(backAnswer) && !unconfirmed.test(backAnswer), { answer: back.visible?.answer });
     } else if (name === 'coffee') {
       const discovery = await ask('Szukam czegoś do porannej kawy.');
       assertCheck(discovery, 'Coffee discovery shows products', Boolean(discovery.products?.products?.length && catalogCards(discovery).length));

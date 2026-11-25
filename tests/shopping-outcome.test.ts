@@ -678,6 +678,16 @@ test("plain advice receives only qualitative facts without raw prices or measure
   );
   assert.equal(mock.requests[0].max_tokens, 384);
 });
+test("a direct policy question uses its canonical answer without an unnecessary second inference", async () => {
+  const mock = model([response("getPolicy", { topic: "delivery" })]);
+  const result = await run("Ile kosztuje dostawa i ile trwa?", mock);
+  assert.equal(result.operation.kind, "policy");
+  assert.equal(result.status.status, "complete");
+  assert.equal(result.advice.status, "not-requested");
+  assert.equal(result.answer, "Przykładowa dostawa kosztuje 4 EUR i trwa od 2 do 3 dni roboczych.");
+  assert.equal(mock.calls(), 1);
+});
+
 test("policy advice restores its completed read after process-cache loss without another catalog call", async () => {
   const policy = await run("Delivery", model(), {
     action: { type: "policy", topic: "delivery" },
@@ -719,6 +729,7 @@ test("policy advice restores its completed read after process-cache loss without
     action: { type: "advice", operationId: restored.operation.id },
     state: policy.checkpoint.after,
   });
+  assert.ok(mock.requests.some((request) => JSON.stringify(request.messages).includes("delivery costs EUR 4") && JSON.stringify(request.messages).includes("storePolicy")));
   assert.equal(result.advice.status, "included");
   assert.equal(result.operation.id, "restored-policy-operation");
   assert.equal(mock.calls(), 1);
@@ -746,7 +757,7 @@ test("canonical measurement references do not establish an unmeasured size compa
 });
 test("a completed policy read survives a provider failure during adaptive continuation", async () => {
   const mock = model([response("getPolicy", { topic: "delivery" })]);
-  const result = await run("How much is delivery?", mock);
+  const result = await run("How much is delivery to an address abroad?", mock);
   assert.equal(result.operation.status, "completed");
   assert.equal(result.operation.kind, "policy");
   assert.equal(result.advice.status, "unavailable");

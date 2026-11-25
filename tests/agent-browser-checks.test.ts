@@ -58,3 +58,9 @@ test('a recommendation needs a direct choice and a recorded hot-drink handle rea
   assert.ok(allPass(checks.customerChoiceChecks(uncertain)));
   assert.ok(allPass(checks.customerChoiceChecks('Ceramic mugs to dobry wybór do gorącej kawy, ponieważ mają uchwyty.')));
 });
+
+
+test('a short Polish fact is recognized even when the catalog name is English', () => {
+  assert.ok(checks.containsPolish('Tak, Ceramic mugs mają uchwyty.'));
+  assert.equal(checks.containsPolish('Glass carafe is in stock.'), false);
+});

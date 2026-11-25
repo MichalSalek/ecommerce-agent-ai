@@ -38,6 +38,7 @@ import { type CatalogService } from "@/application/catalog/catalog-service";
 import { criteriaError, meetsFeature } from "@/domain/catalog/requirements";
 import type { Product, ProductSearch } from "@/domain/catalog/product";
 import { getStorePolicy } from "@/domain/catalog/policies";
+import { directlyAnsweredByPolicy } from "@/application/chat/policy-question";
 import {
   nativeTools,
   agentInstructions,
@@ -636,6 +637,7 @@ async function executeAgent(
   let terminalOnly = false;
   let effectReferences: string[] = [];
   let committed: AgentResult | undefined;
+  let directPolicyAnswer = false;
   let originalAdviceRequest: string | undefined;
   let expectedRead: "compareProducts" | "getProductDetails" | undefined;
   let productComparisonPending = false;
@@ -1358,7 +1360,10 @@ async function executeAgent(
         if (committed) {
           const stage = detailQuestionPending ? "detail" : committed.comparison ? "comparison" : committed.search?.products.length ? "search" : "advice";
           const input = catalogAdviceContext(turn.text, committed.presentation.productIds, language, stage, context.messages, originalAdviceRequest);
-          inputMessages = [{ role: "user", content: JSON.stringify(input) }];
+          const policy = committed.checkpoint.readResult?.kind === "policy"
+            ? getStorePolicy(committed.checkpoint.readResult.topic, language)
+            : undefined;
+          inputMessages = [{ role: "user", content: JSON.stringify(policy ? { ...input, storePolicy: policy } : input) }];
           instructions = stage === "detail" ? detailAnswerInstructions : adviceInstructions;
           if (stage === "search") instructions += "\n" + searchAdviceFormat;
           if (stage === "comparison") {
@@ -2115,12 +2120,13 @@ async function executeAgent(
           };
           break;
         }
-        case "getPolicy":
-          terminalOnly = !!turn.action;
-          output = {
-            policy: getStorePolicy((call.input as { topic: string }).topic, language),
-          };
+        case "getPolicy": {
+          const topic = (call.input as { topic: string }).topic;
+          directPolicyAnswer = !turn.action && directlyAnsweredByPolicy(turn.text, topic);
+          terminalOnly = !!turn.action || directPolicyAnswer;
+          output = { policy: getStorePolicy(topic, language) };
           break;
+        }
         case "proposeCart": {
           progress("cart");
           let proposal = cartProposalSchema.parse(call.input);
@@ -2246,7 +2252,7 @@ async function executeAgent(
         if (
           committed &&
           (cart || (turn.action && turn.action.type !== "advice") ||
-            (name === "getProductDetails" && detailQuestionAnswered))
+            (name === "getProductDetails" && detailQuestionAnswered) || (name === "getPolicy" && directPolicyAnswer))
         )
           return committed;
       }

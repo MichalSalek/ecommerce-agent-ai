@@ -1,5 +1,9 @@
 export const text = value => typeof value === 'string' ? value : '';
 export const normalize = value => text(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replaceAll('ł', 'l');
+export function containsPolish(value) {
+  return /[ąćęłńóśźż]/iu.test(text(value)) ||
+    /\b(?:tak|nie|jest|to|dla|wedlug|mam|moge|pokaz\w*|produkt\w*|katalog\w*|szuk\w*|porown\w*|dostep\w*|pomog\w*|uchwyt\w*|cen(?:a|e|y|ie|ach)|asortyment\w*)\b/.test(normalize(value));
+}
 const customerClauses = value => normalize(value).split(/[.!?;\n]|\b(?:ale|jednak|natomiast|zas|za to)\b/).map(clause => clause.trim()).filter(Boolean);
 const customerDenial = /\b(?:nie|brak|bez|niemozliw\w*)\b/;
 const customerJargon = /\b(?:system prompt|prompt|prompty|llm|rag|embedding\w*|wektor\w*|model jezykow\w*|wywolan\w* narzedz\w*|narzedzi(?:a|em) (?:modelu|systemu)|api|json|tool.call|evidence.id|endpoint|pipeline|token\w*|schemat (?:narzedzia|modelu))\b/;
