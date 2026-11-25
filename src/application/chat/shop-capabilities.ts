@@ -1,3 +1,5 @@
+import { getStorePolicy } from "@/domain/catalog/policies";
+
 /** The same shop boundaries are visible to each model stage and to capability validation. */
 export const shoppingCapabilities = {
   operations: [
@@ -13,7 +15,7 @@ export const shoppingCapabilities = {
 
 const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
 
-export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "sessions" | "identity" | "catalogAccess" | "unprovidedBudget";
+export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "payments" | "sessions" | "identity" | "catalogAccess" | "unprovidedBudget";
 export function capabilityTopic(request: string, freshConversation = false): CapabilityTopic | undefined {
   const text = fold(request);
   if (freshConversation && /\b(?:budzet\w*|budget)\b/.test(text) &&
@@ -23,6 +25,7 @@ export function capabilityTopic(request: string, freshConversation = false): Cap
   if (/\b(?:kont(?:a|o|ach)|accounts?|order history|histor\w* zamowien)\b/.test(text)) return "accounts";
   if (/\b(?:poprzedni\w* (?:sesj\w*|wizyt\w*|czat\w*)|past visits?|previous (?:sessions?|visits?|chats?))\b/.test(text)) return "sessions";
   if (/\b(?:innym sklepie|innych sklepow|innego sklepu|another (?:shop|store)|other (?:shops|stores)|external)\b/.test(text)) return "external";
+  if (/\b(?:obciaz\w*.{0,35}kart\w*|kart\w*.{0,35}obciaz\w*|(?:charg\w*|bill\w*).{0,35}(?:card|me)|card.{0,35}(?:charg\w*|bill\w*))\b/.test(text)) return "payments";
   if (/\b(?:zaplac\w*|(?:moje|mojego) zamowieni\w*|sledz\w*|track\w*|checkout|pay|place an order)\b/.test(text)) return "orders";
   if (/\b(?:co widzisz.{0,50}(?:gdy|kiedy|jesli) (?:pytam|zapytam)|what (?:can |do )?you see.{0,35}when i ask)\b/.test(text) ||
       /\b(?:(?:jakie dane|jakie informacje) (?:widzisz|masz)|what (?:data|information) (?:do|can) you)\b.{0,60}\b(?:produkt\w*|product\w*|katalog\w*|catalog\w*|cen\w*|pric\w*|stock)\b/.test(text) ||
@@ -38,6 +41,7 @@ const topicInstructions: Record<CapabilityTopic, string> = {
   technology: "This is an explicit technical question. Explain the roles of LanceDB search and the canonical store record that supplies a product's price and stock.",
   external: "Address the other seller explicitly: you cannot inspect its inventory or transfer its product. You may offer to look for a comparable item in Aurelle if the shopper wants it.",
   accounts: "Address personal data explicitly: you cannot see customer accounts or other stores' orders. Only mention this conversation or device cart if useful.",
+  payments: `Speak for the whole storefront: ${getStorePolicy("payments", "en")} Adding to this browser’s cart never charges the shopper’s card. There is no later checkout, order confirmation or payment step here. Say that plainly, even if the shopper assumes otherwise.`,
   orders: "Answer the requested transaction or tracking question directly: Aurelle is a demo, cannot take a real payment or place an order, and has no shipment to track. Ordinary shipping or returns terms come from the policy tool.",
   sessions: "Address which conversation you can see: only the supplied current thread and device cart. You cannot retrieve past visits, closed conversations or real orders.",
 };
@@ -52,6 +56,10 @@ export function capabilityAnswerError(text: string, language: "pl" | "en", requi
       (language === "en" && /\byou can help me\b/.test(folded)) ||
       (requireFirstPerson && !(language === "pl" ? /\b(?:moge|pomoge|mam|widze|korzystam|pomagam|opieram|doradzam|sprawdzam|pracuje|dzialam|jestem|odpowiadam|znam|nie przyjmuje|nie skladam|nie sledze|nie realizuje|nie przyjmuje platnosci)\b/ : /\b(?:i am|i have|i see|i can|i will|i work|i use|i rely|i help|i check|i don.t|i cannot|i can.t|i'm|i'll)\b/).test(folded)))
     return "Speak as the assistant in the first person, addressing the customer.";
+  const promisedPayment = /\b(?:platnosc|obciazenie|karta|payment|charge|card)\b.{0,55}\b(?:nastepuje|nastapi|zostanie|bedzie|dopiero|occurs?|happens?|takes place|will be|at checkout|when you (?:check out|place))\b/;
+  if (folded.split(/[.!?;,]|\b(?:but|however|ale|jednak|natomiast)\b/).some(clause =>
+    promisedPayment.test(clause) && !/\b(?:nie|bez|brak|no|never|cannot|can.t|won.t|not)\b/.test(clause)))
+    return "No card will be charged at any point. This demonstration store has no checkout.";
   const externalAccess = /\b(?:i (?:can )?(?:access|look up|browse|search|check|track)|(?:moge |potrafie )?(?:sprawdzac|przeszukiwac|przegladac|sledzic)|mam dostep do)\b.{0,45}\b(?:other stores?|other shops?|other websites?|your account|your order history|zewnetrzn\w* stron\w*|innych sklepow|twojego konta|historii zamowien)\b/;
   const unsupported = /\b(?:place (?:an? |the )?order|track (?:an? |the )?order|checkout|book (?:a |an )?(?:delivery|appointment)|apply (?:a |an )?(?:discount|promo)|realizowac zamowieni\w*|skladac zamowieni\w*|sledzic (?:twoje )?zamowieni\w*|rezerwowac dostawe|naliczac rabat\w*)\b/;
   const denial = /\b(?:cannot|can't|do not|don't|does not|doesn't|no|nie|bez)\b/;
@@ -80,6 +88,9 @@ export function capabilityFallback(language: "pl" | "en", topic?: CapabilityTopi
     return language === "pl"
       ? "Mam dostęp do katalogu Aurelle i koszyka w tej przeglądarce. Nie widzę Twoich kont, zamówień ani produktów z innych sklepów."
       : "I can check Aurelle’s catalog and the cart in this browser. I cannot access your accounts, orders or other stores’ products.";
+  if (topic === "payments") return language === "pl"
+    ? `Dodanie produktu do koszyka nie obciąży Twojej karty. ${getStorePolicy("payments", language)}`
+    : `Adding an item to this cart will not charge your card. ${getStorePolicy("payments", language)}`;
   if (topic === "orders")
     return language === "pl"
       ? "Mogę pomóc wybrać produkt i dodać go do koszyka w tej przeglądarce. To sklep demonstracyjny, więc nie przyjmuje płatności ani zamówień do śledzenia."

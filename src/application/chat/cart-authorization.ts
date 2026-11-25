@@ -71,7 +71,9 @@ export function hasCartInstruction(text: string) {
     value !== undefined &&
     !/\b(?:example|examples|quote|quoted|repeat|story|fiction|simulate|hypothetical|suppose|if|gdyby|gdybym|przyklad\w*|cytuj\w*|powtorz\w*|opowiedz\w*|histori\w*)\b/.test(original) &&
     !/\b(?:never|not|don't|do not|nie|nigdy)\s+(?:(?:actually|really|ever|wcale|faktycznie|naprawde)\s+)*(?:add|buy|take|dodawaj|dodaj|kupuj)\b/.test(original) &&
-    cartVerb.test(value)
+    // "When I add it to my cart" describes the shopper’s own hypothetical
+    // action. It cannot authorize an addition by the assistant.
+    cartVerb.test(value.replace(/\b(?:after|before|when|once)\s+(?:i|we)\s+(?:add|put|place|buy)\b[^.!?;,]*/g, " "))
   );
 }
 type CartProposal = z.infer<typeof cartProposalSchema>;

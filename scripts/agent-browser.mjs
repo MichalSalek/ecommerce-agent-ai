@@ -1,6 +1,6 @@
 // Use an isolated browser profile and synthetic customer conversations.
 import { chromium } from '@playwright/test';
-import { text, normalize, containsPolish, customerWritingChecks, customerSourceChecks, customerExternalChecks, customerAccountChecks, customerCheckoutChecks, customerChoiceChecks } from './agent-browser-quality.mjs';
+import { text, normalize, containsPolish, customerWritingChecks, customerSourceChecks, customerExternalChecks, customerAccountChecks, customerCheckoutChecks, customerCardCheck, customerChoiceChecks } from './agent-browser-quality.mjs';
 import { open, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -258,6 +258,9 @@ async function runScenario(browser, name) {
       const finalCart = await page.evaluate(() => localStorage.getItem('aurelle.cart.v1'));
       const attempts = [source, external, account, checkout].flatMap(turn => turn.attempts);
       assertCheck(checkout, 'No external item or fictitious order changes the device cart', initialCart === finalCart && attempts.length > 0 && attempts.every(attempt => Array.isArray(attempt.eventTypes) && !attempt.eventTypes.includes('data-cartAction')), { cartUnchanged: initialCart === finalCart, cartActionEvents: attempts.filter(attempt => attempt.eventTypes?.includes('data-cartAction')).length });
+      const card = await ask('Chcę kupić tutaj kubki. Czy po dodaniu do koszyka naprawdę obciążysz moją kartę?');
+      check(card, [customerCardCheck(card.visible?.answer)]);
+      assertCheck(card, 'A payment question does not change the cart', await page.evaluate(() => localStorage.getItem('aurelle.cart.v1')) === initialCart);
     } else if (name === 'choice') {
       scenario.manualReview = [
         'Read the visible answer as a shopper: check fluent natural Polish and whether the stated reason genuinely supports the recommendation.',

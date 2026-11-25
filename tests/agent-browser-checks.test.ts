@@ -64,3 +64,8 @@ test('a short Polish fact is recognized even when the catalog name is English', 
   assert.ok(checks.containsPolish('Tak, Ceramic mugs mają uchwyty.'));
   assert.equal(checks.containsPolish('Glass carafe is in stock.'), false);
 });
+
+test('a disclaimer about the assistant cannot conceal a promise of a real later checkout', () => {
+  assert.equal(checks.customerCardCheck('Nie pobieram płatności – ale rzeczywiste obciążenie karty nastąpi dopiero przy finalizacji zamówienia.').pass, false);
+  assert.equal(checks.customerCardCheck('Nie obciążę Twojej karty. Ten sklep demonstracyjny nie przyjmuje płatności.').pass, true);
+});

@@ -63,6 +63,20 @@ test("a fresh conversation answers a recalled budget in one provider call withou
   }
 });
 
+test("a card-charge question never promises checkout later in this demo", async () => {
+  for (const [request, incorrect, boundary] of [
+    ["Czy po dodaniu do koszyka naprawdę obciążysz moją kartę?", "Nie pobieram płatności, ale rzeczywiste obciążenie karty nastąpi dopiero przy finalizacji zamówienia w sklepie.", "nie przyjmuje płatności"],
+    ["Will you charge my card after I add something to the cart?", "I cannot charge your card, but payment takes place when you check out.", "does not accept payments"],
+  ]) {
+    const mock = scripted([{ name: "getShoppingCapabilities", input: { answer: incorrect } }]);
+    const result = await runAgent(mock.runtime.model, unusedCatalog, { text: request, userMessageId: "card-charge", state: initialAgentState() }, new AbortController().signal, mock.runtime);
+    assert.equal(mock.requests[0].tool_choice.function.name, "getShoppingCapabilities");
+    assert.match(result.answer, new RegExp(boundary));
+    assert.equal(result.status.usage?.calls, 1);
+    assert.equal(result.cart, undefined);
+  }
+});
+
 test("a customer's introduction does not turn their question about data access into a product lookup", async () => {
   assert.equal(capabilityTopic("Co widzisz w moim koszyku?"), undefined);
   assert.equal(capabilityTopic("What information can you see about a product?"), "catalogAccess");

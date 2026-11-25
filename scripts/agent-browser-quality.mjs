@@ -47,6 +47,13 @@ export function customerAccountChecks(answer) {
     { label: 'Other-store orders are explicitly outside the assistant’s access', pass: denied(orders) && !claimed },
   ];
 }
+export function customerCardCheck(answer) {
+  const value = normalize(answer);
+  const boundary = /\b(?:nie|bez|brak|zadn\w*)\b/.test(value) && /(?:obciaz|platnos|pobier|transakc|zaplac|karty)/.test(value);
+  const delayedPayment = value.split(/[.!?;,]|\b(?:ale|jednak|natomiast)\b/).some(clause =>
+    !customerDenial.test(clause) && /(?:platnosc|obciazenie|karta).{0,60}(?:nastepuje|nastapi|zostanie|dopiero|przy finalizacji)/.test(clause));
+  return { label: 'The demo cannot charge a card now or at a later checkout', pass: boundary && !delayedPayment };
+}
 export function customerCheckoutChecks(answer) {
   const clauses = customerClauses(answer);
   const cannotPay = clauses.some(clause => customerDenial.test(clause) && /\b(?:plac\w*|zaplac\w*|oplat\w*|platnos\w*)\b/.test(clause));
