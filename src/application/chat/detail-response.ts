@@ -1,3 +1,4 @@
+import { asksStorageCare } from "./product-references";
 import { productLimitationFact } from "./comparison-facts";
 import { materialLabel } from "@/application/catalog/material-language";
 import type { Product } from "@/domain/catalog/product";
@@ -9,6 +10,7 @@ const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0
 const performanceTopics = [
   { question: /\b(?:durab\w*|long[ -]lasting|trwal\w*)\b/, source: /\b(?:durab\w*|long[ -]lasting|wear[ -]resistant)\b/, pl: "trwałości", en: "durability" },
   { question: /\b(?:ventilat\w*|airflow|breathab\w*|wentylac\w*|przewiew\w*)\b/, source: /\b(?:ventilat\w*|airflow|breathab\w*)\b/, pl: "przewiewności", en: "ventilation" },
+  { question: /\b(?:waterproof\w*|rainproof\w*|downpour\w*|rain|ulew\w*|deszcz\w*|wodoodpor\w*|nieprzemak\w*)\b/, source: /\b(?:waterproof|rainproof)\b/, pl: "odporności na deszcz", en: "rain protection" },
   { question: /\b(?:comfort\w*|wygod\w*|komfort\w*)\b/, source: /\bcomfort\w*\b/, pl: "wygody", en: "comfort" },
 ];
 
@@ -24,7 +26,7 @@ export function detailQuestionResponse(product: Product, request: string, langua
   const namesField = fieldCount > 0;
   const generalDetails = /\b(?:tell me more|powiedz mi wiecej)\b/.test(text) &&
     !namesField && !/\b(?:what|which|how|does|is|are|can|czy|jak\w*|ile)\b/.test(text);
-  const asksFact = namesField || /\?/.test(text) || /\b(?:what|which|how|does|is|are|can|czy|jak\w*|ile|temperature|udzwig|wage)\b/.test(text);
+  const asksFact = namesField || /\?/.test(text) || /\b(?:what|which|how|where|does|is|are|can|czy|gdzie|jak\w*|ile|temperature|udzwig|wage)\b/.test(text);
   if (generalDetails || !asksFact) return undefined;
   // Multiple requested facts require contextual interpretation; do not imply one answers the rest.
   const compound = fieldCount > 1 || (text.match(/\?/g)?.length ?? 0) > 1 || /\b(?:oraz|and|also|takze)\b/.test(text) || /\b(?:i|a)\s+(?:czy|jak\w*|ile|what|how|is|does)\b/.test(text);
@@ -102,8 +104,7 @@ export type GroundedDetailAnswer = {
 /** For an open care question, state the actual storage instruction without inferring a protective effect. */
 export function storageCareAnswer(product: Product, request: string, language: Language, answer: GroundedDetailAnswer): string | undefined {
   if (answer.status !== "supported" || answer.source !== "limitations" || !answer.quote) return;
-  const text = fold(request);
-  if (!/\b(?:jak|gdzie|how|where)\b/.test(text) || !/\b(?:przechow\w*|schow\w*|stor(?:e|ing|age)|keep)\b/.test(text)) return;
+  if (!asksStorageCare(request)) return;
   if (!/\b(?:stor(?:e|ed|age|ing))\b/i.test(answer.quote)) return;
   return productLimitationFact(product, answer.quote, language)?.statement;
 }

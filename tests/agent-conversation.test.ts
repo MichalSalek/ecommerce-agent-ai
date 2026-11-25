@@ -566,3 +566,19 @@ test("a conditional storage instruction remains usable in Polish without a model
   assert.equal(storageCareAnswer(product, "Czy poduszki są wodoodporne?", "pl", record), undefined);
   assert.equal(storageCareAnswer(catalogById.get("mugs")!, "Where should I store it?", "en", record), undefined);
 });
+
+test("a first-visit storage question reads the named product before asking Groq for advice", async () => {
+  const { asksStorageCare } = await import("../src/application/chat/product-references");
+  for (const source of ["Gdzie po użyciu przechowywać poduszki z Patio sofa?", "A jak schować poduszki z Patio sofa?", "Where can I store Patio sofa cushions?"])
+    assert.equal(asksStorageCare(source), true, source);
+  for (const source of ["Gdzie kupić pokrowiec, żeby przechowywać Patio sofa?", "Where can I buy a bag to store Patio sofa cushions?", "How much is Patio sofa?"])
+    assert.equal(asksStorageCare(source), false, source);
+  const product = products.find(item => item.id === "patio-sofa")!;
+  const catalog = { details: async (id: string) => id === product.id ? product : undefined } as unknown as CatalogService;
+  const mock = scripted([{ name: "answerProductQuestion", input: { status: "supported", answer: "Keep them under cover.", source: "limitations", quote: "Store cushions under cover when not in use" } }]);
+  const result = await runAgent(mock.runtime.model, catalog, { text: "Gdzie po użyciu przechowywać poduszki z Patio sofa?", userMessageId: "named-care", state: initialAgentState() }, new AbortController().signal, mock.runtime);
+  assert.equal(result.operation.kind, "details");
+  assert.equal(mock.requests.length, 1);
+  assert.match(result.answer, /w osłoniętym miejscu/);
+  assert.deepEqual(result.presentation.productIds, [product.id]);
+});

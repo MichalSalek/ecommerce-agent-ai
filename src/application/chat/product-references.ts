@@ -32,6 +32,14 @@ export function exactNamedProducts(text: string): string[] {
   return namedProductMatches(text, false);
 }
 
+/** An open storage-care question asks about the named item's instructions, even on a first visit. */
+export function asksStorageCare(text: string): boolean {
+  const current = foldComparison(text).trim();
+  return /^(?:(?:a|wiec|and|so|then)\s+)?(?:jak|gdzie|how|where)\b/.test(current) &&
+    /\b(?:przechow\w*|schow\w*|stor(?:e|ing)|keep|put away)\b/.test(current) &&
+    !/["“”„]|\b(?:buy|sell|find|shop|recommend\w*|compar\w*|kup\w*|szuk\w*|polec\w*|porown\w*|track\w*|zamow\w*)\b/.test(current);
+}
+
 export function asksForChoice(text: string): boolean {
   const request = foldComparison(text);
   return /\b(?:ktor\w*|which)\b[^.!?]{0,100}\b(?:lepsz\w*|wybra\w*|polec\w*|sprawdzi|nadaje|better|recommend|choose|pick|best|suit\w*)\b|\b(?:co polecasz|doradz mi|help me choose|pick one|give me a recommendation)\b/.test(request);

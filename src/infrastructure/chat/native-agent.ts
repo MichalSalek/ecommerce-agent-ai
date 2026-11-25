@@ -29,6 +29,7 @@ import {
   exactNamedChoice,
   asksForChoice,
   exactNamedProducts,
+  asksStorageCare,
   hasDistinctComparisonSubjects,
   literalProductList,
   mentionsBudget,
@@ -1306,6 +1307,13 @@ async function executeAgent(
   if (!turn.action && !hasCartInstruction(turn.text)) {
     namedComparison = exactNamedComparison(turn.text);
     if (!namedComparison.length) namedComparison = exactNamedChoice(turn.text, before.resultIds);
+  }
+  if (!turn.action && !forcedCall && !namedComparison.length && !hasCartInstruction(turn.text) && asksStorageCare(turn.text)) {
+    const ids = exactNamedProducts(turn.text);
+    if (ids.length === 1) {
+      // Read the identified record before asking the model for care advice. A storage instruction does not request a new product.
+      forcedCall = { toolName: "getProductDetails", toolCallId: "app-product-care", input: { productId: ids[0] } };
+    }
   }
   const capabilityRequest = !turn.action && !hasCartInstruction(turn.text) && (
     asksForShoppingIntroduction(turn.text) || externalCartDependency || shopperTopic === "payments" || shopperTopic === "unprovidedBudget" || shopperTopic === "catalogAccess" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
