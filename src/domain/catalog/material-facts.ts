@@ -97,6 +97,11 @@ const aliases: Readonly<Record<string, string>> = {
   aluminum: "aluminium",
 };
 
+export function canonicalMaterialKey(value: string): string {
+  const key = normalize(value);
+  return Object.hasOwn(aliases, key) ? aliases[key] : key;
+}
+
 /** Match a recorded material or a reviewed base class, never an inferred substring. */
 export function matchesMaterial(
   material: string,
@@ -106,9 +111,7 @@ export function matchesMaterial(
   const requested = normalize(requirement);
   if (!label || !requested) return false;
   if (label === requested) return true;
-  const base = Object.hasOwn(aliases, requested)
-    ? aliases[requested]
-    : requested;
+  const base = canonicalMaterialKey(requested);
   return (
     Object.hasOwn(MATERIAL_FACTS, base) && MATERIAL_FACTS[base].includes(label)
   );

@@ -15,6 +15,12 @@ export const shoppingCapabilities = {
 
 const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
 
+/** Keep a standalone introduction with the store assistant; a product or policy follow-up still needs its own tool. */
+export function asksForShoppingIntroduction(request: string): boolean {
+  const message = fold(request).trim().replace(/^(?:czesc|hej|witaj|dzien dobry|hi|hello|hey)[,! .]+/, "").replace(/[?!.]+$/, "").trim();
+  return /^(?:(?:w czym|jak) (?:mozesz|potrafisz) (?:mi )?pomoc|co (?:tu )?potrafisz|jakie sprawy zakupowe (?:mozesz|potrafisz) dla mnie zalatwic|what can you (?:do(?: for me)?|help me with)|how can you help(?: me)?)$/.test(message);
+}
+
 export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "payments" | "sessions" | "identity" | "catalogAccess" | "unprovidedBudget";
 export function capabilityTopic(request: string, freshConversation = false): CapabilityTopic | undefined {
   const text = fold(request);

@@ -203,7 +203,7 @@ const definitions: Array<[string, string, string, string, string[]]> = [
     "kitchenware",
     "mug",
     "kubek",
-    ["mug", "mugs", "kubek", "kubki", "kubka"],
+    ["mug", "mugs", "kubek", "kubki", "kubka", "kubków", "kubkiem", "kubkach"],
   ],
   [
     "cup",

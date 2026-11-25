@@ -659,6 +659,11 @@ test("captured garden to seating to alternatives preserves filters against the c
     assert.equal(fullScope.total, 6);
     state = { ...state, shownIds: initial.products.map((p) => p.id), lastIds: initial.products.map((p) => p.id), resultIds: initial.products.map((p) => p.id), rejectedIds: ["garden-bench"] };
     const model = { operation: "new" as const, language: "pl" as const, criteria: { functionalGroup: "seating" as const, inStockOnly: true, maxPrice: 150, useEnvironment: "outdoor" as const }, requestedCount: 5 };
+    // A real 120B correction repeated the inherited kind but omitted the newly requested seating group.
+    const omitted = resolveExplicitFacets("Szukam czegoś do siedzenia.", state,
+      { operation: "refine", language: "pl", criteria: { maxPrice: 150, useEnvironment: "outdoor", inStockOnly: true } },
+      [{ facet: "kind", value: "furniture" }]);
+    assert.equal(omitted.change?.criteria.functionalGroup, "seating");
     const refine = resolveExplicitFacets("Szukam czegoś do siedzenia.", state, model, []);
     assert.equal(refine.change?.operation, "refine");
     state = transitionState(state, refine.change!);
@@ -716,4 +721,72 @@ test("searching for a mug retains products of that type rather than related coff
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("real 120B material and localized type filters reach the canonical catalog", async () => {
+  const { nativeTools } = await import("../src/application/chat/native-tools");
+  const { asSchema } = await import("ai");
+  const { products } = await import("../src/data/products");
+  const { meetsFeature } = await import("../src/domain/catalog/requirements");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { CatalogService } = await import("../src/application/catalog/catalog-service");
+  const { LanceProductRepository } = await import("../src/infrastructure/catalog/lance-product-repository");
+  const directory = await mkdtemp(join(tmpdir(), "aurelle-material-request-"));
+  const vectors = { identity: "material-request-v1", dimensions: 2, embedDocuments: async (texts: string[]) => texts.map(() => [1, 0]), embedQuery: async () => [1, 0] };
+  try {
+    const catalog = new CatalogService(new LanceProductRepository(directory, vectors, products));
+    for (const [text, type] of [["Szukam ceramicznych kubków do kawy.", "kubek"], ["I'm looking for ceramic mugs.", "mugs"]]) {
+      const facets = [{ facet: "type" as const, value: type }, { facet: "material" as const, value: "ceramic" }];
+      const input = { operation: "new" as const, language: "pl" as const, criteria: {}, mode: "recommend", continueWith: "presentAnswer", explicitFilters: facets };
+      const wire = asSchema(nativeTools.searchProducts.inputSchema);
+      assert.ok((await wire.validate!(input)).success);
+      const resolved = resolveExplicitFacets(text, before, input, facets);
+      assert.ok(resolved.change, JSON.stringify(resolved));
+      const state = transitionState(before, resolved.change);
+      assert.deepEqual(state.criteria.productTypes, ["mug"]);
+      assert.deepEqual(state.criteria.requiredFeatures, ["ceramic"]);
+      const result = await catalog.searchResult({ query: "", ...state.criteria, limit: 5 });
+      assert.deepEqual(result.products.map(product => [product.id, product.price]), [["mugs", 22]]);
+      assert.ok(result.products.every(product => meetsFeature(product, "ceramic")));
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a hard material belongs to the requested item and keeps other active requirements", () => {
+  const material = { facet: "material" as const, value: "ceramic" };
+  const change = { operation: "refine" as const, language: "en" as const, criteria: {} };
+  const state = { ...before, criteria: { productTypes: ["mug"], maxPrice: 27, requiredFeatures: ["handles for hot drinks"] } };
+  const result = resolveExplicitFacets("Only ceramic this time.", state, change, [material]);
+  assert.ok(result.change);
+  const next = transitionState(state, result.change).criteria;
+  assert.deepEqual(next.requiredFeatures, ["handles for hot drinks", "ceramic"]);
+  assert.equal(next.maxPrice, 27);
+  assert.deepEqual(next.productTypes, ["mug"]);
+  for (const text of ["No ceramic mugs.", "Looking for lids for my ceramic mugs.", "Szukam pokrywki do ceramicznego kubka.", "I would prefer ceramic.", "Najlepiej ceramiczne.", "Ceramic or metal mugs.", 'The sign says "ceramic mugs".']) {
+    assert.ok(resolveExplicitFacets(text, state, change, [material]).error, text);
+    assert.ok(resolveExplicitFacets(text, state, { ...change, criteria: { requiredFeatures: ["ceramic"] } }, []).error, text);
+  }
+  assert.ok(resolveExplicitFacets("Only ceramic.", state, change, [{ ...material, userQuote: "wood" }]).error);
+  const replay = resolveExplicitFacets("Szukam ceramicznych kubków do kawy.", before,
+    { operation: "new", language: "pl", criteria: { query: "ceramiczny kubek", functionalGroup: "coffee", inStockOnly: true } }, [material]);
+  assert.equal(replay.change?.criteria.query, "mug");
+  assert.deepEqual(replay.change?.criteria.productTypes, ["mug"]);
+  assert.deepEqual(replay.change?.criteria.requiredFeatures, ["ceramic"]);
+  const shopper = "Szukam ceramicznych kubków do kawy.";
+  for (const filters of [
+    [{ facet: "type" as const, value: "mug", userQuote: "kubek" }, { ...material, userQuote: "ceramiczny" }], [],
+  ]) {
+    const actual = resolveExplicitFacets(shopper, before,
+      { operation: "new", language: "pl", criteria: { query: "kubek ceramiczny", functionalGroup: "coffee", useEnvironment: "indoor" } }, filters);
+    assert.deepEqual(actual.change?.criteria.productTypes, ["mug"]);
+    assert.deepEqual(actual.change?.criteria.requiredFeatures, ["ceramic"]);
+    assert.equal(actual.change?.criteria.useEnvironment, undefined);
+  }
+  assert.ok(resolveExplicitFacets(shopper, before,
+    { operation: "new", language: "pl", criteria: { query: "kubek ceramiczny" } }, [{ ...material, userQuote: "only glazed stoneware" }]).error);
+  const qualified = resolveExplicitFacets("I'm looking for ceramic mugs with blue handles.", before,
+    { operation: "new", language: "en", criteria: { query: "ceramic mugs with blue handles" } }, [material]);
+  assert.equal(qualified.change?.criteria.query, "ceramic mugs with blue handles");
 });

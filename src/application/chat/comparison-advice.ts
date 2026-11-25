@@ -1,7 +1,7 @@
 import { catalogById } from "@/data/products";
 import type { Product } from "@/domain/catalog/product";
 import { assistantTextError, type Language } from "./assistant-text";
-import { materialLabel } from "./detail-response";
+import { materialLabel } from "@/application/catalog/material-language";
 import { comparisonFactOptions } from "./comparison-facts";
 export { comparisonFactOptions } from "./comparison-facts";
 

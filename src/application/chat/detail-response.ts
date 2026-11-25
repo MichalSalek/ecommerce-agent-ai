@@ -1,27 +1,9 @@
+import { materialLabel } from "@/application/catalog/material-language";
 import type { Product } from "@/domain/catalog/product";
 import type { Language } from "./assistant-text";
 import { productTypes } from "@/domain/catalog/taxonomy";
 
 const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
-
-const materialsPL: Record<string, string> = {
-  "glazed ceramic": "ceramika szkliwiona", glass: "szkło", "walnut wood": "drewno orzechowe",
-  stoneware: "kamionka", "stainless steel": "stal nierdzewna", "brass-finish metal": "metal z mosiężnym wykończeniem",
-  paper: "papier", metal: "metal", linen: "len", "cushion filling": "wypełnienie poduszki", wool: "wełna",
-  wax: "wosk", cloth: "tkanina", brass: "mosiądz", "woven natural fibre": "plecione włókno naturalne",
-  terracotta: "terakota", steel: "stal", cotton: "bawełna", "solid oak": "lite drewno dębowe",
-  "boucle fabric": "tkanina bouclé", "oak wood": "drewno dębowe", wood: "drewno", reeds: "patyczki",
-  "amber glass": "bursztynowe szkło", stone: "kamień", plastic: "tworzywo sztuczne",
-  "cushioned fabric": "tkanina z wypełnieniem", fabric: "tkanina", aluminium: "aluminium", felt: "filc",
-  "cotton canvas": "płótno bawełniane", ceramic: "ceramika", bamboo: "bambus", cork: "korek",
-  wire: "drut", rubber: "guma", "powder-coated steel": "stal malowana proszkowo",
-  polyester: "poliester", foam: "pianka", latex: "lateks", filling: "wypełnienie",
-};
-export function materialLabel(material: string, language: Language): string | undefined {
-  if (language === "en") return material;
-  const parts = material.split(" and ").map((part) => materialsPL[part]);
-  return parts.every(Boolean) ? parts.join(" i ") : undefined;
-}
 
 /** Answer simple recorded fields from the canonical product. Do not infer other attributes. */
 export function detailQuestionResponse(product: Product, request: string, language: Language, allowSplit = true): { text: string; needsModel: boolean } | undefined {

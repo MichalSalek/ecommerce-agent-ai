@@ -50,11 +50,11 @@ export function catalogAdviceContext(
   request: string,
   ids: string[],
   language: Language,
-  stage: "detail" | "comparison" | "advice" | "search",
+  stage: "detail" | "comparison" | "advice" | "search" | "productOverview",
   history: ModelMessage[],
   originalRequest?: string,
 ) {
-  const previousRequests = stage === "comparison"
+  const previousRequests = stage === "comparison" || stage === "productOverview"
     ? [...new Set([
         ...history.flatMap((message) => message.role === "user" && typeof message.content === "string" ? [message.content] : []),
         ...(originalRequest ? [originalRequest] : []),
@@ -74,6 +74,9 @@ export function catalogAdviceContext(
           priceEUR: product.price,
           inStock: product.inStock,
           ...(index < 5 ? { shoppingReasons: comparisonFactOptions(product, language).slice(0, 2).map((option) => option.statement) } : {}),
+        } : {}),
+        ...(stage === "productOverview" ? {
+          shoppingReasons: comparisonFactOptions(product, language).map(option => option.statement),
         } : {}),
         ...(stage === "detail" ? { description, dimensions, productType, useEnvironment } : {}),
       }];

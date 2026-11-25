@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { products } from "../src/data/products";
 import { groundedDetailAnswer } from "../src/application/chat/detail-response";
-import { capabilityTopic } from "../src/application/chat/shop-capabilities";
+import { asksForShoppingIntroduction, capabilityTopic } from "../src/application/chat/shop-capabilities";
 import { conversationContext } from "../src/application/chat/conversation-context";
 import { initialAgentState } from "../src/application/chat/shopping-v3";
 import type { CatalogService } from "../src/application/catalog/catalog-service";
@@ -534,4 +534,11 @@ test("a return to a named earlier product reads its ID even if the model sends i
   assert.deepEqual(details, ["mugs"]);
   assert.equal(result.operation.kind, "details");
   assert.equal(result.answer, "Tak, Ceramic mugs mają uchwyty.");
+});
+
+test("a standalone capability paraphrase stays with the assistant without swallowing a concrete request", () => {
+  for (const text of ["w czym możesz mi pomóc", "Cześć, w czym możesz mi pomóc?", "Jakie sprawy zakupowe potrafisz dla mnie załatwić?", "Hello! What can you help me with?"])
+    assert.equal(asksForShoppingIntroduction(text), true, text);
+  for (const text of ["W czym możesz mi pomóc? Szukam ceramicznych kubków.", "Jak możesz mi pomóc z wyborem prezentu?", "How can you help me compare these chairs?", "Jaki jest koszt dostawy?"])
+    assert.equal(asksForShoppingIntroduction(text), false, text);
 });

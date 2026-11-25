@@ -1,6 +1,6 @@
 import type { Product } from "@/domain/catalog/product";
 import type { Language } from "./assistant-text";
-import { materialLabel } from "./detail-response";
+import { materialLabel } from "@/application/catalog/material-language";
 
 export interface ComparisonFactOption {
   statement: string;

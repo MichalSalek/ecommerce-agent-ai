@@ -6,12 +6,15 @@ import {
   groupScopeTypes,
 } from "@/domain/catalog/functional-groups";
 import { allowedCriteria } from "@/domain/catalog/requirements";
+import { MATERIAL_FACTS } from "@/domain/catalog/material-facts";
+import { catalogMaterial } from "@/application/catalog/material-language";
 import { categoryLabels } from "@/domain/catalog/category-labels";
 import { mentionsBudget } from "./product-references";
 import { canonicalSemanticQuery } from "./query-language";
 import type { AgentState, Transition } from "./shopping-v3";
+export const explicitFacetNames = ["kind", "type", "excludeType", "category", "material"] as const;
 export type ExplicitFacet = {
-  facet: "kind" | "type" | "excludeType" | "category";
+  facet: typeof explicitFacetNames[number];
   value: string;
   userQuote?: string;
 };
@@ -50,6 +53,16 @@ function aliases(facet: ExplicitFacet): string[] {
   return type
     ? [type.en, type.pl, ...type.aliases]
     : [facet.value.replaceAll("-", " "), facet.value];
+}
+
+// A model may return the shopper-facing type label rather than the catalog ID.
+// Only an unambiguous exact alias is eligible for normalization.
+function normalizeTypeFacet(filter: ExplicitFacet): ExplicitFacet {
+  if ((filter.facet !== "type" && filter.facet !== "excludeType") || allowedCriteria.productType.includes(filter.value)) return filter;
+  const label = fold(filter.value.trim());
+  const matches = Object.entries(productTypes).filter(([, type]) =>
+    [type.en, type.pl, ...type.aliases].some(name => fold(name) === label));
+  return matches.length === 1 ? { ...filter, value: matches[0][0] } : filter;
 }
 
 // Only recover a kind when both sources name it in a positive, non-quoted
@@ -188,12 +201,45 @@ function positivelyMentions(
     return false;
   });
 }
-function directlyRequestsProductType(text: string, terms: readonly string[]): boolean {
-  const labels = terms.map(term => fold(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length);
-  const target = new RegExp(`\\b(?:szukam|pokaz(?: mi)?|poprosze o|chce kupic|find(?: me)?|show me|looking for|i (?:want|need))(?: (?:a|an|some|the))? (?:${labels.join("|")})\\b(?=\\s*(?:$|[,.;!?]|(?:do|dla|for|under|below|within|up to|za|ponizej)\\b))`);
+function hardMaterialMention(text: string, terms: string[], quote?: string): boolean {
+  if (quote && (!fold(text).includes(fold(quote)) || !mentions(quote, terms))) return false;
+  return positiveClauses(text).some(clause => {
+    if (/\b(?:prefer\w*|ideally|optional\w*|or|lub|albo|ewentualnie|wole|najchetniej|najlepiej|mile widzian\w*)\b/.test(clause)) return false;
+    // The material in “a cover for my ceramic mug” belongs to the mug.
+    const subject = clause.replace(/\b(?:for|do|dla|na)\s+(?!(?:sale|sprzedazy)\b)/g, (match, index: number) =>
+      /\b(?:look(?:ing)?|search(?:ing)?|shop(?:ping)?)\s*$/.test(clause.slice(0, index)) ? match : "|").split("|")[0];
+    return positivelyMentions(subject, terms);
+  });
+}
+
+const escapeTerm = (term: string) => fold(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function directlyRequestsProductType(text: string, terms: readonly string[], materialTerms: string[] = []): boolean {
+  const labels = terms.map(escapeTerm).sort((a, b) => b.length - a.length);
+  const material = materialTerms.length ? `(?:(?:${materialTerms.map(escapeTerm).join("|")})\\w*\\s+)?` : "";
+  const target = new RegExp(`\\b(?:szukam|pokaz(?: mi)?|poprosze o|chce kupic|find(?: me)?|show me|looking for|i (?:want|need))(?: (?:a|an|some|the))? ${material}(?:${labels.join("|")})\\b(?=\\s*(?:$|[,.;!?]|(?:do|dla|for|under|below|within|up to|za|ponizej)\\b))`);
   return positiveClauses(text).some(clause => target.test(clause) &&
     !/\b(?:nie|bez|not|no|without|or|lub|albo|and|oraz)\b|\bi (?!want\b|need\b)/.test(clause));
 }
+/** A complete material + noun on both sides can ground an inflected wire quote without discarding other qualifiers. */
+function materialTypeScope(text: string, query: string, filters: ExplicitFacet[], required: string[]) {
+  const claimed = new Set([...required, ...filters.filter(filter => filter.facet === "material").map(filter => filter.value)]);
+  const candidates = [...new Set([...Object.keys(MATERIAL_FACTS), ...claimed])];
+  const normalized = fold(query.trim());
+  for (const candidate of candidates) {
+    const material = catalogMaterial(candidate);
+    if (!material || !hardMaterialMention(text, material.terms)) continue;
+    const modifier = new RegExp(`\\b(?:${material.terms.map(escapeTerm).join("|")})\\w*\\b`, "g");
+    const noun = normalized.replace(modifier, " ").replace(/\s+/g, " ").trim();
+    if (noun === normalized && !claimed.has(candidate)) continue;
+    const types = Object.entries(productTypes).filter(([, type]) => {
+      const names = [type.en, type.pl, ...type.aliases];
+      return names.some(name => fold(name) === noun) && directlyRequestsProductType(text, names, material.terms);
+    });
+    if (types.length === 1) return { typeId: types[0][0], material: material.key, terms: material.terms };
+  }
+}
+
 function recoverKind(
   text: string,
   query: string,
@@ -256,7 +302,7 @@ function outdoorFurnitureIntent(text: string): boolean {
 function normalizeFunctionalTransition(
   text: string, before: AgentState, change: Transition, filters: ExplicitFacet[],
 ): Transition {
-  if (change.operation !== "new" || change.remove?.length) return change;
+  if ((change.operation !== "new" && change.operation !== "refine") || change.remove?.length) return change;
   // The model can repeat the inherited kind as a hard facet or as a same-named
   // department. An existing kind adds no restriction to a simple refinement.
   if (filters.some((filter) =>
@@ -306,15 +352,37 @@ export function resolveExplicitFacets(
   filters: ExplicitFacet[],
 ) {
   const issues: string[] = [];
-  const proposedOperation = change.operation;
+  filters = filters.map(normalizeTypeFacet);
+  const proposed = change;
   change = normalizeFunctionalTransition(text, before, change, filters);
-  if (proposedOperation === "new" && (change.operation === "refine" || change.operation === "more")) {
+  if (change !== proposed) {
     // The only accepted incoming facets here echo the established kind. Keep its
     // existing domain value without adding a department that the shopper never named.
     filters = [];
   }
   const criteria = { ...change.criteria };
+  const materialScope = criteria.query ? materialTypeScope(text, criteria.query, filters, criteria.requiredFeatures ?? []) : undefined;
   if (criteria.query !== undefined) criteria.query = canonicalSemanticQuery(criteria.query);
+  if (materialScope) {
+    const { typeId, material, terms } = materialScope;
+    criteria.query = productTypes[typeId].en;
+    filters = filters.map(filter => {
+      if (!filter.userQuote || fold(text).includes(fold(filter.userQuote))) return filter;
+      // Groq may lemmatize source quotes ("kubek" for "kubków"). Replace only an
+      // exact closed label for the very same material or directly requested type.
+      const isType = filter.facet === "type" && filter.value === typeId &&
+        aliases(filter).some(alias => fold(alias) === fold(filter.userQuote!));
+      const isMaterial = filter.facet === "material" && catalogMaterial(filter.value)?.key === material &&
+        new RegExp(`^(?:${terms.map(escapeTerm).join("|")})\\w*$`).test(fold(filter.userQuote));
+      return isType || isMaterial ? { ...filter, userQuote: text } : filter;
+    });
+    if (!filters.some(filter => filter.facet === "material" && catalogMaterial(filter.value)?.key === material))
+      filters = [...filters, { facet: "material", value: material, userQuote: text }];
+    if (!filters.some(filter => filter.facet === "type" || filter.facet === "excludeType"))
+      filters = [...filters, { facet: "type", value: typeId, userQuote: text }];
+    if ((change.operation === "new" || change.operation === "browse") && criteria.useEnvironment &&
+        !/\b(?:outdoor\w*|indoor\w*|ogrod\w*|dom\w*|zewnatrz|wewnatrz|garden|patio)\b/.test(fold(text))) delete criteria.useEnvironment;
+  }
   // A literal product-type query is useful without a guessed use case (a mug
   // does not require coffee). Keep the user's query, and omit redundant guesses.
   const queryTypes = criteria.query
@@ -446,7 +514,28 @@ export function resolveExplicitFacets(
     [...oldTypes].every((type) => proposedTypes.has(type));
   const includes: string[] = [],
     excludes: string[] = [];
+  const materialFilters = [
+    ...filters.filter(filter => filter.facet === "material"),
+    ...(criteria.requiredFeatures ?? []).filter(feature => catalogMaterial(feature)).map(value => ({ value, userQuote: undefined })),
+  ];
+  if (materialFilters.length) {
+    const priorFeatures = !fresh && !change.remove?.includes("requiredFeatures") ? before.criteria.requiredFeatures ?? [] : [];
+    const required = new Set([
+      ...priorFeatures.filter(feature => change.operation !== "change" || !catalogMaterial(feature)),
+      ...(criteria.requiredFeatures ?? []).filter(feature => !catalogMaterial(feature)),
+    ]);
+    for (const { value, userQuote } of materialFilters) {
+      const material = catalogMaterial(value);
+      const carried = !fresh && priorFeatures.includes(material?.key ?? value) && !userQuote && !mentions(text, material?.terms ?? [value]);
+      if (!material || (!carried && !hardMaterialMention(text, material.terms, userQuote))) {
+        issues.push("Use a catalog material only when CURRENT requires it. Keep a preference soft and leave an accessory's material with its own product.");
+      } else required.add(material.key);
+    }
+    if (required.size > 8) issues.push("Too many required features. Clarify which ones are essential.");
+    else criteria.requiredFeatures = [...required];
+  }
   for (const filter of filters) {
+    if (filter.facet === "material") continue;
     if (filter.facet === "type") {
       const group = statedPurpose(filter.value, filter.userQuote ?? text);
       if (group && (!criteria.functionalGroup || criteria.functionalGroup === group)) {

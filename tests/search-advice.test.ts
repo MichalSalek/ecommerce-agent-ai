@@ -75,3 +75,22 @@ test("incomplete or unidentifiable results are never repaired or replaced", () =
   assert.equal(groundedSearchAdvice("Folding garden chair ma składaną ramę.", [chair.id, chair.id], "pl"), undefined);
   assert.equal(groundedSearchAdvice("Folding garden chair ma składaną ramę.", [chair.id, "unknown"], "pl"), undefined);
 });
+
+test("telling a shopper more about one product cannot invent benefits from its construction", () => {
+  const context = catalogAdviceContext("Tell me more about Folding garden chair.", [chair.id], "pl", "productOverview", [
+    { role: "user", content: "I need a chair for a balcony." },
+    { role: "assistant", content: "This chair is indestructible." },
+  ]);
+  assert.deepEqual(context.previousShopperRequests, ["I need a chair for a balcony."]);
+  assert.doesNotMatch(JSON.stringify(context), /indestructible/);
+  const reasons = context.records[0].shoppingReasons!;
+  const valid = reasons.slice(0, 2).join(" ");
+  const accept = (value: string) => groundedSearchAdvice(value, [chair.id], "pl", undefined, "productOverview");
+  assert.equal(accept(valid), valid);
+  assert.equal(accept(reasons.at(-1)!), reasons.at(-1));
+  for (const value of [
+    "Folding garden chair ma siedzisko i oparcie z listew, co zapewnia trwałość i dobrą wentylację.",
+    "Folding garden chair ma składaną ramę. Jest wygodny i odporny na działanie wody.",
+    "Mogę pomóc Ci wybrać.",
+  ]) assert.equal(accept(value), valid);
+});

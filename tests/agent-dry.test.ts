@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@huggingface/transformers";
 import { products } from "../src/data/products";
+import { expandFunctionalGroup } from "../src/domain/catalog/functional-groups";
 import { CatalogService } from "../src/application/catalog/catalog-service";
 import { restoreConversation } from "../src/application/chat/history";
 import {
@@ -1367,7 +1368,13 @@ test("native agent dry run with real MiniLM and LanceDB", async (t) => {
         ).result;
         assert.equal(accidental.status.status, "complete");
         assert.deepEqual(accidental.checkpoint.after.rejectedIds, []);
-        assert.equal(accidental.search?.totalMatches, 6);
+        const seatTypes = expandFunctionalGroup("seating");
+        const outdoorSeats = products.filter(product => product.productKind === "furniture" &&
+          ["outdoor", "both"].includes(product.useEnvironment) && seatTypes.includes(product.productType));
+        assert.equal(accidental.search?.totalMatches, outdoorSeats.length);
+        assert.deepEqual(new Set(accidental.search?.products.map(product => product.id)), new Set(outdoorSeats.map(product => product.id)));
+        assert.ok(state.shownIds.every(id => accidental.search?.products.some(product => product.id === id)));
+        assert.equal(accidental.search?.products.some(product => product.id === "outdoor-bistro-table"), false);
         const rejected = await run(
           catalog,
           [

@@ -2,8 +2,9 @@ import { tool } from "ai";
 import { z } from "zod";
 export { agentInstructions, adviceInstructions, detailAnswerInstructions } from "./assistant-instructions";
 import { modelCriteriaSchema, modelTransitionSchema, omitNullModelFields } from "./model-search-criteria";
+import { explicitFacetNames } from "./explicit-facets";
 const explicitFacetSchema = z.object({
-  facet: z.enum(["kind", "type", "excludeType", "category"]),
+  facet: z.enum(explicitFacetNames),
   value: z.string().min(1).max(80),
   userQuote: z.string().max(300).nullish(),
 }).transform(omitNullModelFields);
@@ -81,7 +82,7 @@ export const nativeTools = {
         .max(12)
         .nullish()
         .describe(
-          "Hard facets need CURRENT words or established scope; category must be a department.",
+          "Use the catalog ID in value and the shopper’s exact words in userQuote. Required material (e.g. ceramic) is a material facet. Category must be an explicitly named department.",
         ),
       rejections: z
         .array(

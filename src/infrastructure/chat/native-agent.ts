@@ -9,9 +9,9 @@ import {
 } from "ai";
 import { products } from "@/data/products";
 import { catalogAdviceContext, conversationContext, compactProduct } from "@/application/chat/conversation-context";
-import { shoppingCapabilities, capabilityAnswerError, capabilityFallback, capabilityTopic, specificCapabilityInstructions } from "@/application/chat/shop-capabilities";
+import { asksForShoppingIntroduction, shoppingCapabilities, capabilityAnswerError, capabilityFallback, capabilityTopic, specificCapabilityInstructions } from "@/application/chat/shop-capabilities";
 import { groundedSearchAdvice } from "@/application/chat/search-advice";
-import { capabilityInstructions, comparisonAnswerFormat, searchAdviceFormat } from "@/application/chat/assistant-instructions";
+import { capabilityInstructions, comparisonAnswerFormat, productOverviewFormat, searchAdviceFormat } from "@/application/chat/assistant-instructions";
 import { groundedComparisonAdvice, groundedComparisonLead, comparisonAdviceFallback } from "@/application/chat/comparison-advice";
 import { validatePresentation, type Evidence } from "@/application/chat/presentation-validation";
 import { detailQuestionResponse, groundedDetailAnswer, renderCanonicalDetailFact } from "@/application/chat/detail-response";
@@ -1308,7 +1308,7 @@ async function executeAgent(
     if (!namedComparison.length) namedComparison = exactNamedChoice(turn.text, before.resultIds);
   }
   const capabilityRequest = !turn.action && !hasCartInstruction(turn.text) && (
-    externalCartDependency || shopperTopic === "payments" || shopperTopic === "unprovidedBudget" || shopperTopic === "catalogAccess" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
+    asksForShoppingIntroduction(turn.text) || externalCartDependency || shopperTopic === "payments" || shopperTopic === "unprovidedBudget" || shopperTopic === "catalogAccess" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
     (shopperTopic === "orders" && /naprawdę|naprawde|rzeczywi|real(?:ly)?|tracking|śledz|sledz|gdzie jest|where is|track my/i.test(turn.text))
   );
   for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {
@@ -1358,7 +1358,7 @@ async function executeAgent(
         if (topicHint) instructions += "\n" + topicHint;
         let inputMessages = messages;
         if (committed) {
-          const stage = detailQuestionPending ? "detail" : committed.comparison ? "comparison" : committed.search?.products.length ? "search" : "advice";
+          const stage = detailQuestionPending ? "detail" : committed.comparison ? "comparison" : committed.search?.products.length ? "search" : committed.operation.kind === "details" ? "productOverview" : "advice";
           const input = catalogAdviceContext(turn.text, committed.presentation.productIds, language, stage, context.messages, originalAdviceRequest);
           const policy = committed.checkpoint.readResult?.kind === "policy"
             ? getStorePolicy(committed.checkpoint.readResult.topic, language)
@@ -1366,6 +1366,7 @@ async function executeAgent(
           inputMessages = [{ role: "user", content: JSON.stringify(policy ? { ...input, storePolicy: policy } : input) }];
           instructions = stage === "detail" ? detailAnswerInstructions : adviceInstructions;
           if (stage === "search") instructions += "\n" + searchAdviceFormat;
+          if (stage === "productOverview") instructions += "\n" + productOverviewFormat;
           if (stage === "comparison") {
             const choose = asksForChoice(turn.text) || (!!originalAdviceRequest && asksForChoice(originalAdviceRequest));
             instructions += "\n" + comparisonAnswerFormat(choose, language);
@@ -1576,7 +1577,7 @@ async function executeAgent(
       if ("invalid" in call && call.invalid)
         throw new Error(
           name === "searchProducts" || name === "getCatalogOverview"
-            ? "Invalid input. Hard kind/type/category belong in explicitFilters with CURRENT source words. Functional needs use functionalGroup, not a guessed subtype list."
+            ? "Invalid input. Hard kind/type/category/material belong in explicitFilters with catalog values and CURRENT source words. Functional needs use functionalGroup, not a guessed subtype list."
             : "Invalid tool input. Correct the tool schema once.",
         );
       if (name === "presentAnswer") {
@@ -1678,8 +1679,9 @@ async function executeAgent(
           if (committed.comparison && !groundedComparisonAdvice(text, committed.comparison.productIds, language)) {
             const ids = committed.comparison.productIds;
             adviceText = groundedComparisonLead(text, ids, language) ?? comparisonAdviceFallback(ids, language);
-          } else if (committed.search?.products.length) {
-            const checked = groundedSearchAdvice(text, committed.presentation.productIds, language);
+          } else if (committed.search?.products.length || committed.operation.kind === "details") {
+            const purpose = committed.operation.kind === "details" ? "productOverview" : "selection";
+            const checked = groundedSearchAdvice(text, committed.presentation.productIds, language, providerFinish, purpose);
             if (!checked) return unavailableAdvice("UNVERIFIED_SEARCH_ADVICE");
             adviceText = checked;
           }

@@ -238,7 +238,8 @@ async function runScenario(browser, name) {
         assertCheck(turn, 'Help remains a capability answer rather than unsolicited product search', !turn.products?.products?.length && turn.operation?.kind !== 'search', { operation: turn.operation?.kind });
       }
       const product = await ask('Szukam ceramicznych kubków do kawy.');
-      assertCheck(product, 'A contrasting shopping request produces product results', Boolean(product.products?.products?.length && catalogCards(product).length), { productIds: product.products?.products?.map(row => row.id) });
+      const matched = product.products?.products?.map(row => row.id) ?? [];
+      assertCheck(product, 'Both the mug type and ceramic material match the single catalog card', matched.length === 1 && matched[0] === 'mugs' && catalogCards(product).length === 1, { productIds: matched });
     } else if (name === 'awareness') {
       scenario.manualReview = [
         'Read every visible answer as a shopper: check fluent natural Polish, direct answers and no invented access or promises.',
@@ -317,7 +318,7 @@ async function runScenario(browser, name) {
       assertCheck(search, 'Garden budget and outdoor scope are retained', search.checkpoint?.after?.criteria?.maxPrice === 150 && search.checkpoint?.after?.criteria?.useEnvironment === 'outdoor', { criteria: search.checkpoint?.after?.criteria });
       const seating = await ask('Szukam czegoś do siedzenia.');
       const choices = catalogCards(seating);
-      assertCheck(seating, 'Seating offers at least two named products within budget', choices.length >= 2 && choices.every(card => Number(card.price?.replace(/[^0-9.,]/g, '').replace(',', '.')) <= 150), { choices });
+      assertCheck(seating, 'Only the three matching outdoor seats remain within EUR 150', seating.checkpoint?.after?.criteria?.functionalGroup === 'seating' && choices.length === 3 && choices.every(card => ['folding-garden-chair', 'garden-bench', 'sun-lounger'].includes(card.id) && Number(card.price?.replace(/[^0-9.,]/g, '').replace(',', '.')) <= 150), { choices });
       if (choices.length >= 2) {
         const selected = choices.slice(0, 2);
         const comparison = await ask(`Porównaj ${selected[0].name} i ${selected[1].name}.`);
