@@ -18,7 +18,15 @@ import {
   type ExplicitFacet,
 } from "@/application/chat/explicit-facets";
 import { expandFunctionalGroup } from "@/domain/catalog/functional-groups";
-import { productTypes } from "@/domain/catalog/taxonomy";
+import {
+  directComparisonRequest,
+  exactNamedComparison,
+  exactNamedProducts,
+  hasDistinctComparisonSubjects,
+  literalProductList,
+  mentionsBudget,
+  queryListGrounded,
+} from "@/application/chat/product-references";
 import { type CatalogService } from "@/application/catalog/catalog-service";
 import { criteriaError, meetsFeature } from "@/domain/catalog/requirements";
 import type { Product, ProductSearch } from "@/domain/catalog/product";
@@ -136,96 +144,6 @@ const operationResults = new Map<
   string,
   { expires: number; result: AgentResult }
 >();
-const foldComparison = (value: string) =>
-  value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replaceAll("ł", "l");
-function literalProductList(text: string): string[] {
-  const current = foldComparison(text);
-  const named = products
-    .flatMap((product) => {
-      const positions = [product.id, product.name].flatMap((label) => {
-        const escaped = foldComparison(label).replace(
-          /[.*+?^${}()|[\]\\]/g,
-          "\\$&",
-        );
-        const match = new RegExp(
-          `(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`,
-        ).exec(current);
-        return match ? [match.index] : [];
-      });
-      return positions.length
-        ? [{ id: product.id, position: Math.min(...positions) }]
-        : [];
-    })
-    .sort((a, b) => a.position - b.position)
-    .map((product) => product.id);
-  let remaining = current;
-  for (const label of products
-    .filter((product) => named.includes(product.id))
-    .flatMap((product) => [product.id, product.name])
-    .sort((a, b) => b.length - a.length)) {
-    const escaped = foldComparison(label).replace(
-      /[.*+?^${}()|[\]\\]/g,
-      "\\$&",
-    );
-    remaining = remaining.replace(
-      new RegExp(`(?:^|[^a-z0-9-])${escaped}(?=$|[^a-z0-9-])`, "g"),
-      " ",
-    );
-  }
-  const residue = remaining
-    .replace(
-      /\b(?:compare|porownaj|and|i|oraz|with|vs|versus|to|z|please|prosze|could|can|you|czy|mozesz|the|products?|items?|produkty|produktow)\b/g,
-      "",
-    )
-    .replace(/[\s.,?!&:;'"/()-]+/g, "");
-  return !residue && named.length >= 2 ? named : [];
-}
-function queryListGrounded(ids: string[], text: string): boolean {
-  const current = foldComparison(text);
-  if (
-    /["'“”„]/.test(current) ||
-    /\b(?:not|no|without|except|excluding|nie|bez|oprocz|poza)\b/.test(current)
-  )
-    return false;
-  const used = new Set<number>();
-  return ids.every((id) => {
-    const product = products.find((p) => p.id === id)!;
-    const type = productTypes[product.productType];
-    return [
-      product.id,
-      product.name,
-      ...(type ? [type.en, type.pl, ...type.aliases] : []),
-    ].some((label) => {
-      const escaped = foldComparison(label).replace(
-        /[.*+?^${}()|[\]\\]/g,
-        "\\$&",
-      );
-      const match = new RegExp(`\\b${escaped}`).exec(current);
-      if (!match || used.has(match.index)) return false;
-      used.add(match.index);
-      return true;
-    });
-  });
-}
-function directComparisonRequest(text: string): boolean {
-  return /^(?:(?:please|prosze|could you|can you|czy mozesz)\s+)*(?:compare|porownaj)\b/.test(
-    foldComparison(text).trim(),
-  );
-}
-function hasDistinctComparisonSubjects(text: string): boolean {
-  const candidates = products.filter((product) =>
-    queryListGrounded([product.id], text),
-  );
-  return candidates.some((product, index) =>
-    candidates.slice(index + 1).some((other) =>
-      queryListGrounded([product.id, other.id], text),
-    ),
-  );
-}
 function cleanCaches() {
   for (const map of [resolutions, completed, operationResults]) {
     for (const [key, value] of map)
@@ -703,7 +621,6 @@ async function executeAgent(
   options.setWaitListener?.((milliseconds) =>
     progress("provider-wait", Date.now() + milliseconds),
   );
-  options.setSwitchListener?.(() => progress("provider-switch"));
   let correction = false;
   let terminalOnly = false;
   let effectReferences: string[] = [];
@@ -1365,6 +1282,8 @@ async function executeAgent(
       delete after.pendingCartIntent;
     }
   }
+  const namedComparison = !turn.action && !hasCartInstruction(turn.text)
+    ? exactNamedComparison(turn.text) : [];
   for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {
     if (committed && signal.reason?.name === "TimeoutError")
       return unavailableAdvice("TIMEOUT");
@@ -1518,6 +1437,12 @@ async function executeAgent(
         });
         continue;
       }
+    }
+    if (!committed && namedComparison.length === 2 &&
+      ["searchProducts", "getProductDetails", "getCatalogOverview", "compareProducts", "presentAnswer"].includes(call.toolName)) {
+      productComparisonPending = true;
+      expectedRead = "compareProducts";
+      call = { toolName: "compareProducts", toolCallId: "app-named-comparison", input: { productIds: namedComparison } };
     }
     const name = call.toolName;
     if (
@@ -1774,6 +1699,13 @@ async function executeAgent(
               ...checked.change.criteria,
               limit: 10,
             };
+            const named = exactNamedProducts(turn.text);
+            const namedDetail = !productComparisonPending && continuation === "getProductDetails" &&
+              named.length === 1 && queryListGrounded(named, turn.text);
+            if (namedDetail && !mentionsBudget(turn.text)) {
+              delete lookupCriteria.maxPrice;
+              delete lookupCriteria.targetPrice;
+            }
             const invalid =
               criteriaError(lookupCriteria) ??
               queryLanguageError(lookupCriteria.query);
@@ -1791,6 +1723,14 @@ async function executeAgent(
               totalMatches: found.totalMatches,
             };
             effectReferences = found.products.map((product) => product.id);
+            if (namedDetail && found.totalMatches === 1 && found.products.length === 1 &&
+              named[0] === found.products[0].id) {
+              forcedCall = {
+                toolName: "getProductDetails",
+                toolCallId: "app-named-details",
+                input: { productId: named[0] },
+              };
+            }
             if (
               productComparisonPending &&
               raw.mode !== "lookup" &&
@@ -2685,7 +2625,6 @@ export function createNativeAgentStream(
           durationMs: Date.now() - startedAt,
         }));
         runtime.setWaitListener?.(undefined);
-        runtime.setSwitchListener?.(undefined);
         options.onSettled?.();
       }
     },

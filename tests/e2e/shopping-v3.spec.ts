@@ -396,7 +396,7 @@ test("transient progress animates and stopped or reset streams cannot update it"
     (window as unknown as { emitSwitch: () => void }).emitSwitch(),
   );
   await expect(
-    page.getByText("Switching to an available model…"),
+    page.getByText("Waiting for the assistant to become available…"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Stop response" }).click();
   await page.evaluate(() =>

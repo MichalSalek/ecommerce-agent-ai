@@ -99,12 +99,14 @@ const ancestors = readdirSync(releaseDir).map(name=>name.match(/^aurelle-groq-ca
 if (!values['continue-release']) assert.ok(ancestors.every(sha=>sha===release),'Existing ancestor release ledger found; use --continue-release to preserve its budget');
 else assert.ok(ancestors.every(sha=>sha===rootRelease), 'Multiple ancestor ledgers exist; reconcile their spending before continuing');
 assert.ok(!(values['reserve-public'] && values['settle-public']), 'Choose one public ledger action');
-assert.ok(!publicAction || (values['continue-release'] && !values['advice-only']), 'Public accounting requires --continue-release and no --advice-only');
+// The first acceptance can be a real browser turn. Starting the ledger here
+// avoids spending tokens on an unrelated canary just to initialize accounting.
+assert.ok(!publicAction || !values['advice-only'], 'Public accounting cannot run advice-only mode');
 assert.ok(publicAction || Boolean(values['continue-release']) === Boolean(values['advice-only']), 'Continuation requires both --continue-release and --advice-only');
 assert.ok(!process.env.GROQ_MODEL || process.env.GROQ_MODEL === MODEL, `Canary supports ${MODEL} only`);
 const ledgerPath = join(releaseDir, `aurelle-groq-canary-${rootRelease}.json`);
 const lockPath = join(releaseDir, `aurelle-groq-canary-${rootRelease}.lock`);
-if (values['continue-release']) assert.ok(existsSync(ledgerPath), 'Root release ledger is missing; refusing to create a new budget');
+if (values['continue-release'] || values['settle-public']) assert.ok(existsSync(ledgerPath), 'Root release ledger is missing; refusing to create a new budget');
 // Crash leaves lock and reservation for manual investigation; no silent reset.
 mkdirSync(lockPath, {mode:0o700});
 let ledger;

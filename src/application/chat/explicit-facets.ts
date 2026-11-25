@@ -158,6 +158,7 @@ function positivelyMentions(
   clause: string,
   terms: readonly string[],
   exact = false,
+  usage: "subject" | "purpose" = "subject",
 ): boolean {
   return terms.some((term) => {
     const escaped = fold(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -166,7 +167,7 @@ function positivelyMentions(
       const prefix = clause.slice(0, match.index).trimEnd();
       // A relation such as a cover for furniture does not request furniture.
       if (
-        /\b(?:for|do|na)\s*$/.test(prefix) &&
+        usage === "subject" && /\b(?:for|do|na)\s*$/.test(prefix) &&
         !/\b(?:look(?:ing)?|search(?:ing)?|shop(?:ping)?)\s+for$/.test(prefix)
       )
         continue;
@@ -283,6 +284,16 @@ export function resolveExplicitFacets(
   const includes: string[] = [],
     excludes: string[] = [];
   for (const filter of filters) {
+    if (filter.facet === "type" && Object.hasOwn(functionalGroups, filter.value)) {
+      const group = filter.value as keyof typeof functionalGroups;
+      const userQuote = filter.userQuote ?? text;
+      if ((!criteria.functionalGroup || criteria.functionalGroup === group) &&
+          fold(text).includes(fold(userQuote)) &&
+          positiveClauses(userQuote).some((clause) => positivelyMentions(clause, functionalGroups[group].aliases, false, "purpose"))) {
+        criteria.functionalGroup = group;
+        continue;
+      }
+    }
     const vocabulary =
       filter.facet === "kind"
         ? allowedCriteria.productKind

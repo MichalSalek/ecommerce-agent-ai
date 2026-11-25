@@ -29,18 +29,21 @@ function isFailedMessage(message: ChatMessage): boolean {
     )
   );
 }
-const progressLabels: Record<
-  ChatProgress["phase"] | "provider-switch",
-  string
-> = {
-  understanding: "Understanding your request…",
-  catalog: "Searching the collection…",
-  details: "Checking product details…",
-  comparison: "Comparing products…",
-  cart: "Preparing your cart selection…",
-  answer: "Putting your response together…",
-  "provider-wait": "Waiting for the assistant to become available…",
-  "provider-switch": "Switching to an available model…",
+const progressLabels: Record<Language, Record<ChatProgress["phase"], string>> = {
+  en: {
+    understanding: "Understanding your request…", catalog: "Searching the collection…",
+    details: "Checking product details…", comparison: "Comparing products…",
+    cart: "Preparing your cart selection…", answer: "Putting your response together…",
+    "provider-wait": "Waiting for the assistant to become available…",
+    "provider-switch": "Waiting for the assistant to become available…",
+  },
+  pl: {
+    understanding: "Czytam Twoją wiadomość…", catalog: "Szukam produktów w katalogu…",
+    details: "Sprawdzam szczegóły produktu…", comparison: "Porównuję produkty…",
+    cart: "Przygotowuję produkty do koszyka…", answer: "Przygotowuję odpowiedź…",
+    "provider-wait": "Czekam na dostępność modelu…",
+    "provider-switch": "Czekam na dostępność modelu…",
+  },
 };
 function failureMessage(failure: TurnStatus, language: Language): string {
   const pl = language === "pl";
@@ -409,8 +412,8 @@ export default function ChatView() {
               <strong>Aurelle assistant</strong>
               <span className="assistant-presence">
                 {busy
-                  ? "Working on your request…"
-                  : "Products, prices and delivery"}
+                  ? (language === "pl" ? "Przygotowuję odpowiedź…" : "Working on your request…")
+                  : (language === "pl" ? "Produkty i zasady sklepu" : "Products and policies")}
               </span>
             </div>
           </div>
@@ -754,10 +757,10 @@ export default function ChatView() {
                 •••
               </span>
               {progress
-                ? progressLabels[progress.phase]
+                ? progressLabels[language][progress.phase]
                 : status === "submitted"
-                  ? "Thinking about your request…"
-                  : "Putting your response together…"}
+                  ? (language === "pl" ? progressLabels.pl.understanding : "Thinking about your request…")
+                  : progressLabels[language].answer}
             </div>
           )}
           {error && !latestTypedFailure && !latestCompleted && (

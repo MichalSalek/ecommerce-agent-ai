@@ -14,7 +14,4 @@ export interface ChatRuntime {
   setWaitListener?: (
     listener: ((milliseconds: number) => void) | undefined,
   ) => void;
-  setSwitchListener?: (
-    listener: ((modelId: string) => void) | undefined,
-  ) => void;
 }

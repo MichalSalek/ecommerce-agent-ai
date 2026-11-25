@@ -379,3 +379,94 @@ test("mixed factual requests retain a known dimension while admitting an unknown
   assert.match(result.answer, /25 cm wysokości/);
   assert.match(result.answer, /Nie potrafię potwierdzić pozostałych informacji/);
 });
+
+test("a single named lookup honors its promised detail read without another interpretation", async () => {
+  const carafe = products.find((p) => p.id === "carafe")!;
+  const searches: any[] = [];
+  const details: string[] = [];
+  const catalog = {
+    searchResult: async (criteria: unknown) => { searches.push(criteria); return { products: [carafe], totalMatches: 1 }; },
+    details: async (id: string) => { details.push(id); return products.find((p) => p.id === id); },
+  } as unknown as CatalogService;
+  const mock = scripted([
+    { name: "searchProducts", input: { operation: "new", mode: "lookup", language: "pl", criteria: { query: "glass carafe", maxPrice: 1000 }, continueWith: "getProductDetails" } },
+    { name: "answerProductQuestion", input: { status: "missing", answer: "" } },
+  ]);
+  const result = await runAgent(mock.runtime.model, catalog, { text: "Czy sklep podaje maksymalną temperaturę dla Glass carafe?", userMessageId: "named-lookup-detail", state: initialAgentState() }, new AbortController().signal, mock.runtime);
+  assert.equal(mock.requests.length, 2);
+  assert.equal(searches[0].maxPrice, undefined);
+  assert.deepEqual(details, ["carafe"]);
+  assert.equal(result.operation.kind, "details");
+  assert.deepEqual(result.presentation.productIds, ["carafe"]);
+  assert.match(result.answer, /nie potrafię potwierdzić/i);
+  const records = JSON.parse(mock.requests[1].messages.find((message: any) => message.role === "user").content).records;
+  assert.equal(records[0].description, carafe.description);
+  assert.equal(records[0].dimensions, carafe.dimensions);
+});
+
+test("single named lookup retains an explicitly stated budget", async () => {
+  const carafe = products.find((p) => p.id === "carafe")!;
+  const searches: any[] = [];
+  const catalog = { searchResult: async (criteria: unknown) => { searches.push(criteria); return { products: [carafe], totalMatches: 1 }; }, details: async () => carafe } as unknown as CatalogService;
+  const mock = scripted([{ name: "searchProducts", input: { operation: "new", mode: "lookup", language: "pl", criteria: { query: "glass carafe", maxPrice: 25 }, continueWith: "getProductDetails" } }]);
+  const result = await runAgent(mock.runtime.model, catalog, { text: "Jakie wymiary ma Glass carafe do 25€?", userMessageId: "named-detail-budget", state: initialAgentState() }, new AbortController().signal, mock.runtime);
+  assert.equal(searches[0].maxPrice, 25);
+  assert.equal(result.operation.kind, "details");
+  assert.match(result.answer, /25 cm/);
+});
+
+test("ambiguous or mismatched lookup results never force a product detail", async () => {
+  const carafe = products.find((p) => p.id === "carafe")!;
+  const mugs = products.find((p) => p.id === "mugs")!;
+  for (const [index, found] of [{ products: [carafe, mugs], totalMatches: 2 }, { products: [mugs], totalMatches: 1 }, { products: [carafe], totalMatches: 2 }].entries()) {
+    const details: string[] = [];
+    const catalog = { searchResult: async () => found, details: async (id: string) => { details.push(id); return carafe; } } as unknown as CatalogService;
+    const mock = scripted([
+      { name: "searchProducts", input: { operation: "new", mode: "lookup", language: "en", criteria: { query: "glass carafe" }, continueWith: "getProductDetails" } },
+      { name: "presentAnswer", input: { text: "Which product do you mean?", language: "en", evidenceIds: [], productIds: [], view: "none" } },
+    ]);
+    await runAgent(mock.runtime.model, catalog, { text: "Tell me about Glass carafe", userMessageId: `ambiguous-named-lookup-${index}`, state: initialAgentState() }, new AbortController().signal, mock.runtime);
+    assert.deepEqual(details, []);
+    assert.equal(mock.requests.length, 2);
+  }
+});
+
+test("full canonical names and explicit PL/EN comparison resolve the requested pair after provider interpretation", async () => {
+  const cases = [
+    ["Zestaw proszę Ceramic mugs z Glass carafe. Co kosztuje mniej?", "pl"],
+    ["Porównanie Ceramic mugs i Glass carafe.", "pl"],
+    ["Compare Ceramic mugs versus Glass carafe. Which is cheaper?", "en"],
+    ["Ceramic mugs versus Glass carafe.", "en"],
+  ] as const;
+  for (const [index, [question, language]] of cases.entries()) {
+    const calls: string[] = [];
+    const catalog = { searchResult: async () => { calls.push("search"); throw new Error("unexpected search"); } } as unknown as CatalogService;
+    const mock = scripted([
+      { name: "searchProducts", input: { operation: "new", mode: "recommend", language, criteria: { query: "mug" }, continueWith: "presentAnswer" } },
+      answer(language === "pl" ? "Glass carafe jest tańsza." : "Glass carafe is the cheaper option.", language),
+    ]);
+    const result = await runAgent(mock.runtime.model, catalog, { text: question, userMessageId: `named-comparison-${index}`, state: initialAgentState() }, new AbortController().signal, mock.runtime);
+    assert.equal(mock.requests.length, 2, question);
+    assert.deepEqual(calls, []);
+    assert.equal(result.operation.kind, "comparison", question);
+    assert.deepEqual(result.comparison?.productIds, ["mugs", "carafe"]);
+    assert.deepEqual(result.comparison?.cheapestIds, ["carafe"]);
+  }
+});
+
+test("shopping for a set or an unnamed extra subject does not force a comparison", async () => {
+  const mugs = products.find((p) => p.id === "mugs")!;
+  const cases = ["Szukam zestawu Ceramic mugs i nieznanego produktu.", "Zestaw Ceramic mugs z Glass carafe i Mystery item."];
+  for (const [index, question] of cases.entries()) {
+    const calls: string[] = [];
+    const catalog = { overview: async () => ({ total: 1 }), searchResult: async () => { calls.push("search"); return { products: [mugs], totalMatches: 1, unseenMatches: 1, matchedIds: [mugs.id] }; } } as unknown as CatalogService;
+    const mock = scripted([
+      { name: "searchProducts", input: { operation: "new", mode: "recommend", language: "pl", criteria: { query: "mug" }, continueWith: "presentAnswer" } },
+      answer("Oto dostępna propozycja.", "pl"),
+    ]);
+    const result = await runAgent(mock.runtime.model, catalog, { text: question, userMessageId: `not-named-comparison-${index}`, state: initialAgentState() }, new AbortController().signal, mock.runtime);
+    assert.deepEqual(calls, ["search"]);
+    assert.equal(result.operation.kind, "search");
+    assert.equal(result.comparison, undefined);
+  }
+});

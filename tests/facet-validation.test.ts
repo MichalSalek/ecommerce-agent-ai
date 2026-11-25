@@ -7,6 +7,21 @@ import {
 import { resolveExplicitFacets } from "../src/application/chat/explicit-facets";
 import { parseSearchIntent } from "../src/application/catalog/search-intent";
 const before = initialAgentState();
+test("a named use such as seating keeps the entire functional group and the previous ceiling", () => {
+  const state = { ...before, criteria: { productKind: "furniture", useEnvironment: "outdoor" as const, maxPrice: 150 } };
+  const result = resolveExplicitFacets("Szukam czegoś do siedzenia.", state,
+    { operation: "refine", language: "pl", criteria: { query: "garden furniture", useEnvironment: "outdoor" } },
+    [{ facet: "kind", value: "furniture" }, { facet: "type", value: "seating" }]);
+  assert.ok(result.change);
+  const next = transitionState(state, result.change);
+  assert.equal(next.criteria.functionalGroup, "seating");
+  assert.equal(next.criteria.maxPrice, 150);
+  assert.equal(next.criteria.useEnvironment, "outdoor");
+  assert.equal(next.criteria.productType, undefined);
+  const negative = resolveExplicitFacets("I do not want seating.", before,
+    { operation: "new", language: "en", criteria: {} }, [{ facet: "type", value: "seating" }]);
+  assert.ok(negative.error);
+});
 test("a grounded furniture kind survives a model's accidental department label", () => {
   for (const value of ["Furniture", "furniture"]) {
     const result = resolveExplicitFacets("Pokaż meble ogrodowe do 150 EUR.", before,

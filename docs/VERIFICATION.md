@@ -1,4 +1,4 @@
-# Reliable shopping outcomes — 2026-11-16
+# Verification
 
 ## Shopping chat investigation, 2026-11-25
 
@@ -10,6 +10,7 @@ A real browser using test-only `qwen/qwen3.8-27b` exposed two further issues. A 
 
 A separate real-provider check saved a distinctive 43 EUR budget and reloaded the tab. A fresh tab in the same browser profile started empty with legacy history present before navigation. Only the legacy chat entry was retired. After New conversation, the first actual provider request contained the system instruction and the new customer question, with no previous budget, product marker or user/assistant exchange. The browser preserved unrelated storage and the cart.
 
+## Reliable shopping outcomes, 2026-11-16
 
 Application revision: `e7f98a3c9e6fe6519dc1fc315b893a5332264d0d`. Public URL: [Aurelle](https://ecommerce-agent.michalsalek.com). Local, CI, public functional acceptance and the ten-minute runtime observation passed.
 
