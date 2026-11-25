@@ -40,6 +40,8 @@ export function searchSummary(
   language: Language,
 ): string {
   const count = value.products.length;
+  if (count === 1 && value.totalMatches === 1)
+    return language === "pl" ? "Jeden produkt spełnia Twoje kryteria." : "One product matches your criteria.";
   if (count)
     return language === "pl"
       ? `Pokazuję ${count} ${polishCount(count, "produkt", "produkty", "produktów")} z ${value.totalMatches} pasujących do kryteriów. ${value.remainingMatches > 0 ? `Możesz wyświetlić jeszcze ${value.remainingMatches} ${polishCount(value.remainingMatches, "dopasowanie", "dopasowania", "dopasowań")}.` : "To wszystkie dopasowania do wyświetlenia."}`

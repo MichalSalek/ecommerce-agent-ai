@@ -190,7 +190,64 @@ const limitations: Record<string, { en: string; pl: string }> = {
   "Requires charging before use": { en: "requires charging before use", pl: "wymaga naładowania przed użyciem" },
   "Requires manual grinding": { en: "requires manual grinding", pl: "wymaga ręcznego mielenia" },
   "Requires a compatible Bluetooth device": { en: "requires a compatible Bluetooth device", pl: "wymaga zgodnego urządzenia Bluetooth" },
+  "Hand wash and dry after use": { en: "should be washed by hand and dried after use", pl: "należy po użyciu umyć ręcznie i osuszyć" },
+  "Breakable if dropped": { en: "can break if dropped", pl: "może się stłuc przy upadku" },
+  "One place setting only": { en: "contains one place setting", pl: "obejmuje jedno nakrycie" },
+  "Keep the paper shade dry": { en: "has a paper shade that must be kept dry", pl: "ma papierowy klosz, który trzeba chronić przed wodą" },
+  "Never leave a burning candle unattended": { en: "must be supervised while burning", pl: "podczas palenia wymaga nadzoru" },
+  "Refill required when ink runs out": { en: "needs a refill when the ink runs out", pl: "wymaga nowego wkładu po wyczerpaniu atramentu" },
+  "Not designed to hold liquids": { en: "is not designed to hold liquids", pl: "nie jest przeznaczony do przechowywania płynów" },
+  "Small capacity for indoor watering": { en: "has a small capacity for watering indoors", pl: "ma małą pojemność i służy do podlewania w pomieszczeniach" },
+  "Allow to dry after use": { en: "should be left to dry after use", pl: "należy po użyciu pozostawić do wyschnięcia" },
+  "Wall fixings depend on wall type": { en: "needs fixings chosen for the wall type", pl: "wymaga mocowań dobranych do rodzaju ściany" },
+  "For indoor use;dry after exposure to water": { en: "is intended for indoor use and should be dried after contact with water", pl: "służy do użytku wewnątrz i wymaga osuszenia po kontakcie z wodą" },
+  "Keep away from children and pets": { en: "must be kept out of reach of children and pets", pl: "należy trzymać poza zasięgiem dzieci i zwierząt" },
+  "Heavy;place on a stable surface": { en: "is heavy and needs a stable surface", pl: "jest ciężki i wymaga stabilnego podłoża" },
+  "Requires a free USB port": { en: "requires a free USB port", pl: "wymaga wolnego portu USB" },
+  "Requires a compatible USB-C device": { en: "requires a compatible USB-C device", pl: "wymaga zgodnego urządzenia z USB-C" },
+  "Requires a compatible phone": { en: "requires a compatible phone", pl: "wymaga zgodnego telefonu" },
+  "Phone not included": { en: "comes without a phone", pl: "jest sprzedawany bez telefonu" },
+  "Contents not included": { en: "comes without the contents", pl: "jest sprzedawany bez zawartości" },
+  "Allow to dry before storing": { en: "should be left to dry before storage", pl: "należy pozostawić do wyschnięcia przed schowaniem" },
+  "Hand wash recommended": { en: "is best washed by hand", pl: "najlepiej myć ręcznie" },
+  "Keep electronics dry": { en: "contains electronics that should be kept dry", pl: "zawiera elektronikę, którą trzeba chronić przed wilgocią" },
+  "Must be wound by hand": { en: "must be wound by hand", pl: "wymaga ręcznego nakręcania" },
+  "Not intended for heavy-duty protection": { en: "is not intended for heavy-duty protection", pl: "nie jest przeznaczony do ochrony przy ciężkich pracach" },
+  "Not intended for thick branches": { en: "is not intended for thick branches", pl: "nie służy do cięcia grubych gałęzi" },
+  "Allow to dry before rolling for storage": { en: "should be dried before rolling for storage", pl: "należy wysuszyć przed zwinięciem i schowaniem" },
+  "Requires wall installation": { en: "requires wall installation", pl: "wymaga montażu na ścianie" },
+  "Needs daylight to charge": { en: "needs daylight to charge", pl: "potrzebuje światła dziennego do ładowania" },
+  "Requires a power connection": { en: "requires a power connection", pl: "wymaga podłączenia do zasilania" },
+  "Not a trivet for hot cookware": { en: "is not a trivet for hot cookware", pl: "nie służy jako podstawka pod gorące naczynia" },
+  "For hand digging in soil": { en: "is intended for digging in soil by hand", pl: "służy do ręcznego kopania w ziemi" },
+  "For small garden beds and pots": { en: "is intended for small garden beds and pots", pl: "służy do pracy na małych grządkach i w donicach" },
+  "Tap connector and nozzle not included": { en: "comes without a tap connector or nozzle", pl: "jest sprzedawany bez przyłącza do kranu i dyszy" },
+  "Bird seed not included": { en: "comes without bird seed", pl: "jest sprzedawany bez karmy dla ptaków" },
+  "Soap not included": { en: "comes without soap", pl: "jest sprzedawany bez mydła" },
+  "Toiletries not included": { en: "comes without toiletries", pl: "jest sprzedawany bez przyborów toaletowych" },
+  "Toothbrushes not included": { en: "comes without toothbrushes", pl: "jest sprzedawany bez szczoteczek do zębów" },
+  "Not intended to hold liquids": { en: "is not intended to hold liquids", pl: "nie służy do przechowywania płynów" },
+  "Store cushions under cover when not in use": { en: "has cushions that should be stored under cover when not in use", pl: "ma poduszki, które po użyciu należy przechowywać w osłoniętym miejscu" },
+  "Keep stored textiles dry": { en: "is intended for textiles that should be kept dry", pl: "służy do przechowywania tekstyliów, które trzeba chronić przed wilgocią" },
+  "Shoes not included": { en: "comes without shoes", pl: "jest sprzedawany bez butów" },
+  "Documents not included": { en: "comes without documents", pl: "jest sprzedawany bez dokumentów" },
+  "Requires a USB power source": { en: "requires a USB power source", pl: "wymaga źródła zasilania USB" },
+  "Mat not included": { en: "comes without a mat", pl: "jest sprzedawany bez maty" },
+  "For assisted stretching": { en: "is intended for assisted stretching", pl: "służy do rozciągania ze wspomaganiem" },
+  "Use on a clear floor": { en: "should be used on a clear floor", pl: "należy stosować na podłodze wolnej od przeszkód" },
+  "Use gentle pressure": { en: "should be used with gentle pressure", pl: "należy stosować z delikatnym naciskiem" },
+  "Inspect for damage before use": { en: "should be checked for damage before use", pl: "należy sprawdzić pod kątem uszkodzeń przed użyciem" },
 };
+
+/** A localized catalog limitation is usable only for the record that actually contains it. */
+export function productLimitationFact(product: Product, source: string, language: Language): ComparisonFactOption | undefined {
+  if (!product.limitations.includes(source) || !Object.hasOwn(limitations, source)) return;
+  const predicate = limitations[source][language];
+  return {
+    statement: language === "pl" ? `Produkt ${product.name} ${predicate}.` : `The product ${product.name} ${predicate}.`,
+    recommendation: language === "pl" ? `Warto pamiętać, że produkt ${product.name} ${predicate}.` : `Keep in mind that the product ${product.name} ${predicate}.`,
+  };
+}
 
 function pluralName(name: string) {
   return /s$/i.test(name) && !/(?:ss|us|is)$/i.test(name);
@@ -227,14 +284,8 @@ export function comparisonFactOptions(product: Product, language: Language): Com
     recommendation: language === "pl" ? `Polecam ${product.name} ze względu na materiał określony w katalogu jako ${material}.` : `I recommend ${product.name} for the ${material} listed in the catalog.`,
   });
   for (const limitation of product.limitations) {
-    const fact = limitations[limitation];
-    if (!fact) continue;
-    const predicate = fact[language];
-    options.push({
-      priority: -2, index: options.length,
-      statement: language === "pl" ? `Produkt ${product.name} ${predicate}.` : `The product ${product.name} ${predicate}.`,
-      recommendation: language === "pl" ? `Warto pamiętać, że produkt ${product.name} ${predicate}.` : `Keep in mind that the product ${product.name} ${predicate}.`,
-    });
+    const fact = productLimitationFact(product, limitation, language);
+    if (fact) options.push({ priority: -2, index: options.length, ...fact });
   }
   return options.map(({ statement, recommendation }) => ({ statement, recommendation }));
 }

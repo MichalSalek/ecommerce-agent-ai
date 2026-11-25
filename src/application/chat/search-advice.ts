@@ -49,6 +49,10 @@ export function groundedSearchAdvice(
     if (matches.every((values) => values.length > 0) &&
         (matches.length === 1 || matches[0].some(left =>
           matches[1].some(right => purpose === "productOverview" ? left.text !== right.text : left.id !== right.id)))) return text;
+    if (purpose === "productOverview") {
+      const verified = [...new Set(matches.flatMap(values => values.slice(0, 1).map(option => option.text)))];
+      if (verified.length) return verified.join(" ");
+    }
     const safe = genericAssistance[language].map(normalize);
     if (purpose === "selection" && sentences.every((sentence) => safe.includes(sentence))) return text;
   }

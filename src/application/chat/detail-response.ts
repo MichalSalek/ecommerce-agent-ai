@@ -1,9 +1,16 @@
+import { productLimitationFact } from "./comparison-facts";
 import { materialLabel } from "@/application/catalog/material-language";
 import type { Product } from "@/domain/catalog/product";
 import type { Language } from "./assistant-text";
 import { productTypes } from "@/domain/catalog/taxonomy";
 
 const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l");
+
+const performanceTopics = [
+  { question: /\b(?:durab\w*|long[ -]lasting|trwal\w*)\b/, source: /\b(?:durab\w*|long[ -]lasting|wear[ -]resistant)\b/, pl: "trwałości", en: "durability" },
+  { question: /\b(?:ventilat\w*|airflow|breathab\w*|wentylac\w*|przewiew\w*)\b/, source: /\b(?:ventilat\w*|airflow|breathab\w*)\b/, pl: "przewiewności", en: "ventilation" },
+  { question: /\b(?:comfort\w*|wygod\w*|komfort\w*)\b/, source: /\bcomfort\w*\b/, pl: "wygody", en: "comfort" },
+];
 
 /** Answer simple recorded fields from the canonical product. Do not infer other attributes. */
 export function detailQuestionResponse(product: Product, request: string, language: Language, allowSplit = true): { text: string; needsModel: boolean } | undefined {
@@ -70,6 +77,13 @@ export function detailQuestionResponse(product: Product, request: string, langua
     return { text: language === "pl"
       ? `Na podstawie opisu produktu ${product.name} nie potrafię potwierdzić jego maksymalnego obciążenia.`
       : `I cannot confirm the maximum load for ${product.name} from its catalog description.`, needsModel: true };
+  const propertyQuestion = text.replaceAll(fold(product.name), "");
+  const unknown = performanceTopics.filter(topic => topic.question.test(propertyQuestion)).map(topic => topic[language]);
+  if (/\b(?:colou?r\w*|white|black|blue|red|green|kolor\w*|bial\w*|czarn\w*|niebiesk\w*|czerwon\w*|zielon\w*)\b/.test(propertyQuestion))
+    unknown.push(language === "pl" ? "koloru" : "colour");
+  if (unknown.length) return { text: language === "pl"
+    ? `Na podstawie opisu produktu ${product.name} nie potrafię potwierdzić ${unknown.join(" ani ")}.`
+    : `I cannot confirm the ${unknown.join(" or ")} of ${product.name} from its catalog description.`, needsModel: true };
   return {
     text: language === "pl"
       ? `Nie potrafię potwierdzić odpowiedzi na pytanie o ${product.name} na podstawie dostępnych danych.`
@@ -85,14 +99,24 @@ export type GroundedDetailAnswer = {
   quote?: string;
 };
 
+/** For an open care question, state the actual storage instruction without inferring a protective effect. */
+export function storageCareAnswer(product: Product, request: string, language: Language, answer: GroundedDetailAnswer): string | undefined {
+  if (answer.status !== "supported" || answer.source !== "limitations" || !answer.quote) return;
+  const text = fold(request);
+  if (!/\b(?:jak|gdzie|how|where)\b/.test(text) || !/\b(?:przechow\w*|schow\w*|stor(?:e|ing|age)|keep)\b/.test(text)) return;
+  if (!/\b(?:stor(?:e|ed|age|ing))\b/i.test(answer.quote)) return;
+  return productLimitationFact(product, answer.quote, language)?.statement;
+}
+
 /** Verify that the quoted source and all numbers occur in the current canonical record. */
-export function groundedDetailAnswer(product: Product, value: GroundedDetailAnswer): string | undefined {
+export function groundedDetailAnswer(product: Product, value: GroundedDetailAnswer, request = ""): string | undefined {
   if (value.status !== "supported" || !value.source || !value.quote) return;
   const field = product[value.source];
   const records = Array.isArray(field) ? field : value.source === "description" ? field.split(/(?<=[.!?])\s+/) : [field];
   if (!records.some((record) => record.trim() === value.quote!.trim())) return;
   const quote = fold(value.quote);
   const answer = fold(value.answer);
+  if (performanceTopics.some(topic => topic.question.test(`${fold(request)} ${answer}`) && !topic.source.test(quote))) return;
   const isNegative = (text: string) => /\b(?:not|no|never|without|neither|cannot|can't|doesn't|do not|lack\w*|nie|bez|brak\w*)\b/.test(text);
   if (isNegative(quote) !== isNegative(answer)) return;
   const thermalClaim = /temperatur|heat|thermal|heatproof|heat.?resistan|oven.?safe|hot|gorac|zaroodporn|ciepl|wrzat/.test(answer);

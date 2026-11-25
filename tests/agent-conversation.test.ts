@@ -542,3 +542,27 @@ test("a standalone capability paraphrase stays with the assistant without swallo
   for (const text of ["W czym możesz mi pomóc? Szukam ceramicznych kubków.", "Jak możesz mi pomóc z wyborem prezentu?", "How can you help me compare these chairs?", "Jaki jest koszt dostawy?"])
     assert.equal(asksForShoppingIntroduction(text), false, text);
 });
+
+test("a construction quote cannot substantiate performance, even when the proposed answer is only yes", async () => {
+  const { detailQuestionResponse, groundedDetailAnswer } = await import("../src/application/chat/detail-response");
+  const { catalogById } = await import("../src/data/products");
+  const chair = catalogById.get("folding-garden-chair")!;
+  const claim = { status: "supported" as const, answer: "Yes.", source: "features" as const, quote: "slatted seat and back" };
+  assert.equal(groundedDetailAnswer(chair, claim, "Does the slatted seat ensure ventilation?"), undefined);
+  assert.match(detailQuestionResponse(chair, "Czy krzesło jest trwałe i przewiewne?", "pl")!.text, /trwałości ani przewiewności/);
+  assert.match(detailQuestionResponse(catalogById.get("mugs")!, "Czy te kubki są białe?", "pl")!.text, /koloru/);
+  assert.equal(groundedDetailAnswer(chair, { ...claim, answer: "Krzesło jest trwałe i wygodne." }), undefined);
+  assert.equal(groundedDetailAnswer(chair, { ...claim, answer: "It has a slatted seat and back." }), "It has a slatted seat and back.");
+});
+
+test("a conditional storage instruction remains usable in Polish without a model-invented benefit", async () => {
+  const { storageCareAnswer } = await import("../src/application/chat/detail-response");
+  const { catalogById } = await import("../src/data/products");
+  const product = catalogById.get("patio-sofa")!;
+  const record = { status: "supported" as const, source: "limitations" as const, quote: "Store cushions under cover when not in use", answer: "Po użyciu poduszki są chronione przed warunkami atmosferycznymi." };
+  const answer = storageCareAnswer(product, "A jak po użyciu przechowywać poduszki z Patio sofa?", "pl", record);
+  assert.match(answer!, /w osłoniętym miejscu/);
+  assert.doesNotMatch(answer!, /chronione|wodoodpor/);
+  assert.equal(storageCareAnswer(product, "Czy poduszki są wodoodporne?", "pl", record), undefined);
+  assert.equal(storageCareAnswer(catalogById.get("mugs")!, "Where should I store it?", "en", record), undefined);
+});

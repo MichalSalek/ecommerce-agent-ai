@@ -90,7 +90,18 @@ test("telling a shopper more about one product cannot invent benefits from its c
   assert.equal(accept(reasons.at(-1)!), reasons.at(-1));
   for (const value of [
     "Folding garden chair ma siedzisko i oparcie z listew, co zapewnia trwałość i dobrą wentylację.",
-    "Folding garden chair ma składaną ramę. Jest wygodny i odporny na działanie wody.",
     "Mogę pomóc Ci wybrać.",
   ]) assert.equal(accept(value), valid);
+  assert.equal(accept(`${reasons.at(-1)} Konstrukcja gwarantuje dobrą wentylację.`), reasons.at(-1));
+  assert.equal(accept(`${reasons[0]} Jest wygodny i odporny na działanie wody.`), reasons[0]);
+});
+
+test("every catalog limitation is available to a shopper asking for a product overview in either language", () => {
+  for (const product of products) for (const language of ["pl", "en"] as const) {
+    const without = new Set(comparisonFactOptions({ ...product, limitations: [] }, language).map(fact => fact.statement));
+    for (const limit of product.limitations) {
+      const facts = comparisonFactOptions({ ...product, limitations: [limit] }, language).map(fact => fact.statement);
+      assert.equal(facts.filter(fact => !without.has(fact)).length, 1, `${product.name} / ${language} / ${limit}`);
+    }
+  }
 });

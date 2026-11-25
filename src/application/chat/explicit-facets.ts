@@ -203,7 +203,7 @@ function positivelyMentions(
 }
 function hardMaterialMention(text: string, terms: string[], quote?: string): boolean {
   if (quote && (!fold(text).includes(fold(quote)) || !mentions(quote, terms))) return false;
-  return positiveClauses(text).some(clause => {
+  return positiveClauses(text).flatMap(clause => clause.split(/,(?!\s*(?:or|lub|albo)\b)/)).some(clause => {
     if (/\b(?:prefer\w*|ideally|optional\w*|or|lub|albo|ewentualnie|wole|najchetniej|najlepiej|mile widzian\w*)\b/.test(clause)) return false;
     // The material in “a cover for my ceramic mug” belongs to the mug.
     const subject = clause.replace(/\b(?:for|do|dla|na)\s+(?!(?:sale|sprzedazy)\b)/g, (match, index: number) =>
@@ -675,7 +675,7 @@ export function resolveExplicitFacets(
         : []),
     ].map((value) => fold(value).trim());
     criteria.requiredFeatures = criteria.requiredFeatures.filter(
-      (feature) => !structural.includes(fold(feature).trim()),
+      (feature) => Boolean(catalogMaterial(feature)) || !structural.includes(fold(feature).trim()),
     );
   }
   if (

@@ -786,6 +786,14 @@ test("a hard material belongs to the requested item and keeps other active requi
   }
   assert.ok(resolveExplicitFacets(shopper, before,
     { operation: "new", language: "pl", criteria: { query: "kubek ceramiczny" } }, [{ ...material, userQuote: "only glazed stoneware" }]).error);
+  const preferredColour = resolveExplicitFacets("Szukam ceramicznych kubków, najlepiej białych.", before,
+    { operation: "new", language: "pl", criteria: { query: "ceramic white mug" } }, [{ facet: "type", value: "mug" }, material]);
+  assert.deepEqual(preferredColour.change?.criteria.requiredFeatures, ["ceramic"]);
+  assert.deepEqual(preferredColour.change?.criteria.productTypes, ["mug"]);
+  assert.ok(resolveExplicitFacets("Ceramic, or metal mugs.", before, change, [material]).error);
+  const glassware = resolveExplicitFacets("Show glass wine glasses.", before, { operation: "new", language: "en", criteria: {} },
+    [{ facet: "type", value: "glass" }, { facet: "material", value: "glass" }]);
+  assert.deepEqual(glassware.change?.criteria.requiredFeatures, ["glass"]);
   const qualified = resolveExplicitFacets("I'm looking for ceramic mugs with blue handles.", before,
     { operation: "new", language: "en", criteria: { query: "ceramic mugs with blue handles" } }, [material]);
   assert.equal(qualified.change?.criteria.query, "ceramic mugs with blue handles");

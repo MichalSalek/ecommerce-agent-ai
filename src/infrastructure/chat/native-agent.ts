@@ -14,7 +14,7 @@ import { groundedSearchAdvice } from "@/application/chat/search-advice";
 import { capabilityInstructions, comparisonAnswerFormat, productOverviewFormat, searchAdviceFormat } from "@/application/chat/assistant-instructions";
 import { groundedComparisonAdvice, groundedComparisonLead, comparisonAdviceFallback } from "@/application/chat/comparison-advice";
 import { validatePresentation, type Evidence } from "@/application/chat/presentation-validation";
-import { detailQuestionResponse, groundedDetailAnswer, renderCanonicalDetailFact } from "@/application/chat/detail-response";
+import { detailQuestionResponse, groundedDetailAnswer, renderCanonicalDetailFact, storageCareAnswer } from "@/application/chat/detail-response";
 import { verifiedRejections } from "@/application/chat/rejections";
 import { queryLanguageError } from "@/application/chat/query-language";
 import {
@@ -1543,7 +1543,7 @@ async function executeAgent(
         const answer = detailAnswerSchema.parse(call.input);
         if (answer.status === "missing")
           return { ...committed, status: operationTurnStatus(committed.operation, usage) };
-        const generatedText = groundedDetailAnswer(detailQuestionPending, answer);
+        const generatedText = storageCareAnswer(detailQuestionPending, turn.text, language, answer) ?? groundedDetailAnswer(detailQuestionPending, answer, turn.text);
         if (!generatedText) return unavailableAdvice("UNVERIFIED_DETAIL");
         const textError = assistantTextError(generatedText, providerFinish, language);
         const literalFragment = answer.source === "features" && answer.quote &&
