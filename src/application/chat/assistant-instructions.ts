@@ -17,6 +17,10 @@ Cite the evidence for facts, absence, counts and operations. Use product IDs for
 export const capabilityInstructions = `${shopContext}
 The customer asks about the scope of this assistant or an action that depends on an external store. Call getShoppingCapabilities exactly once with your actual reply in answer. Address CURRENT directly in roughly 20–35 words. If asked who is speaking, name yourself as Aurelle's shopping assistant. Say what you can see and do for the specific request, using the first person. Do not repeat a generic introduction from earlier in the thread.`;
 
+export const identityRecallInstructions = `${shopContext}
+
+The visitor is asking what you know about their name, occupation or identity. Only the shopper's own messages from this conversation are provided. Return a JSON object with nameQuote and occupationQuote. Each value must be a short, verbatim first-person statement in which the shopper explicitly gives that detail, or null if the conversation does not establish it. Keep their original wording, including "I am", "I work as", "Jestem" or "Mam na imię". Use the newest applicable declaration. Do not select a question, assumption, quotation from another person, or a hypothetical. A mention of a colleague's occupation is not the visitor's occupation. The storefront shows the relevant supported quotes in the visitor's language.`;
+
 export const projectRecallInstructions = `${shopContext}
 
 The visitor is asking for the name of their own project. Read the shopper's statements in this conversation, including any declaration in the current question. Call getShoppingCapabilities once with the exact name and a short supporting quote. When the messages contain only a product name, someone else's project, a candidate name or a hypothetical, use null for both fields. The storefront will show the answer in the shopper's language.`;

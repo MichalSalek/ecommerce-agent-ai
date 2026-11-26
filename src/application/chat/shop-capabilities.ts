@@ -31,7 +31,8 @@ export function capabilityTopic(request: string, freshConversation = false): Cap
   if (shopperProject && recall && !shopping) return "projectName";
   if (freshConversation && /\b(?:budzet\w*|budget)\b/.test(text) &&
       /\b(?:pamietasz|przypomnij|wczesniejsz\w*|poprzedni\w*|podal\w*|remember|recall|earlier|previous|did i (?:give|mention|say))\b/.test(text) && !/\d/.test(text)) return "unprovidedBudget";
-  if (/\b(?:kim jestem|moje imie|moj zawod|who i am|my (?:name|profession|job)|what i do for (?:a living|work))\b/.test(text)) return "identity";
+  const identityClause = text.split(/[.!?\n]+/).map(clause => clause.trim()).filter(Boolean).at(-1) ?? text;
+  if (/\b(?:kim jestem|co (?:juz )?o mnie wiesz|co wiesz o mnie|what do you know about me|moje imie|jak mam na imie|moj zawod|czym sie zajmuje|who (?:i am|am i)|(?:name|occupation) i (?:gave|mentioned)|my (?:name|profession|occupation|job)|what (?:i do|do i do) for (?:a living|work))\b/.test(identityClause) && !shopping) return "identity";
   if (/\b(?:lancedb|vector database|database|jakiej bazie|bazy danych|techniczna stron\w*|silnik wyszuk\w*)\b/.test(text)) return "technology";
   if (/\b(?:kont(?:a|o|ach)|accounts?|order history|histor\w* zamowien)\b/.test(text)) return "accounts";
   if (/\b(?:poprzedni\w* (?:sesj\w*|wizyt\w*|czat\w*)|past visits?|previous (?:sessions?|visits?|chats?))\b/.test(text)) return "sessions";
@@ -44,10 +45,9 @@ export function capabilityTopic(request: string, freshConversation = false): Cap
   if (/\b(?:skad|zrodl\w*|informacje o produktach|kim jestes|kto mi .{0,8}odpowiada|obslug\w*|source\w*|where.*(?:data|information)|who are you)\b/.test(text)) return "sources";
 }
 
-const topicInstructions: Record<Exclude<CapabilityTopic, "projectName">, string> = {
+const topicInstructions: Record<Exclude<CapabilityTopic, "projectName" | "identity">, string> = {
   unprovidedBudget: "This fresh conversation contains no earlier budget. Say that the shopper has not given a budget in this conversation and ask what limit they would like. Do not guess an amount.",
   catalogAccess: "Answer the specific question about what you can see. When asked how you know a price or stock, say that you read it from Aurelle’s catalog, the same record shown on the product page. Only mention search technology if explicitly requested.",
-  identity: "You know only what the visitor told you in the current conversation. Answer the personal question immediately. If they ask whether you know their name or occupation, explicitly say whether they have told you their name or occupation in this conversation. If they gave one, acknowledge exactly that detail. Do not introduce yourself unless asked about yourself.",
   sources: "If answering about your role or source, identify yourself as Aurelle's shopping assistant, credit the same shop catalog as the product pages and address what help was requested.",
   technology: "This is an explicit technical question. Explain the roles of LanceDB search and the canonical store record that supplies a product's price and stock.",
   external: "Address the other seller explicitly: you cannot inspect its inventory or transfer its product. You may offer to look for a comparable item in Aurelle if the shopper wants it.",
@@ -57,7 +57,7 @@ const topicInstructions: Record<Exclude<CapabilityTopic, "projectName">, string>
   sessions: "Address which conversation you can see: only the supplied current thread and device cart. You cannot retrieve past visits, closed conversations or real orders.",
 };
 export function specificCapabilityInstructions(topic?: CapabilityTopic): string {
-  return topic && topic !== "projectName" ? "For a question about your own role or access: " + topicInstructions[topic] + " Answer CURRENT in your own words. A specific product or policy question still requires its own source." : "";
+  return topic && topic !== "projectName" && topic !== "identity" ? "For a question about your own role or access: " + topicInstructions[topic] + " Answer CURRENT in your own words. A specific product or policy question still requires its own source." : "";
 }
 
 /** Validate the assistant's perspective and the limitations of this demo. */
