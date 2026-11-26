@@ -57,6 +57,14 @@ export const detailAnswerSchema = z.object({
   source: z.enum(["description", "dimensions", "material", "features", "limitations", "productType", "useEnvironment"]).optional(),
   quote: z.string().max(500).optional(),
 });
+/** A project-recall turn uses the same capability tool name with explicit shopper evidence. */
+export const projectNameCapabilityTool = tool({
+  description: "Recall only the shopper's own definitely stated project name from shopper messages in this conversation, and give an exact source quote. If unknown, set name to null.",
+  inputSchema: z.object({
+    name: z.string().min(1).max(100).nullable().describe("The exact project name stated by the shopper, or null when uncertain."),
+    sourceQuote: z.string().max(400).nullable().describe("A short verbatim excerpt from a shopper message supporting the name, or null."),
+  }),
+});
 export const nativeTools = {
   answerProductQuestion: tool({
     description: "Answer a product question using the supplied canonical record and an exact supporting excerpt, or report that the record does not establish an answer.",

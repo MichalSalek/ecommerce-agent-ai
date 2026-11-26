@@ -21,9 +21,14 @@ export function asksForShoppingIntroduction(request: string): boolean {
   return /^(?:(?:w czym|jak) (?:mozesz|potrafisz) (?:mi )?pomoc|co (?:tu )?potrafisz|jakie sprawy zakupowe (?:mozesz|potrafisz) dla mnie zalatwic|what can you (?:do(?: for me)?|help me with)|how can you help(?: me)?)$/.test(message);
 }
 
-export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "payments" | "sessions" | "identity" | "catalogAccess" | "unprovidedBudget";
+export type CapabilityTopic = "sources" | "technology" | "external" | "accounts" | "orders" | "payments" | "sessions" | "identity" | "catalogAccess" | "unprovidedBudget" | "projectName";
 export function capabilityTopic(request: string, freshConversation = false): CapabilityTopic | undefined {
   const text = fold(request);
+  const shopperProject = /\b(?:moj(?:ego|emu|e|a)?|mego) projektu\b|\bmoj projekt\b|\bmy project(?:'s)?\b/.test(text);
+  const recall = /\b(?:znasz|pamietasz|przypomnij|jaka|jak|what|know|remember|recall)\b/.test(text) &&
+    /\b(?:nazw\w*|nazywa|name|called|call)\b/.test(text);
+  const shopping = /\b(?:znajdz|pokaz|wyszukaj|wybierz|kup|dodaj|find|show|search|choose|buy|add|products?|produkt\w*)\b/.test(text);
+  if (shopperProject && recall && !shopping) return "projectName";
   if (freshConversation && /\b(?:budzet\w*|budget)\b/.test(text) &&
       /\b(?:pamietasz|przypomnij|wczesniejsz\w*|poprzedni\w*|podal\w*|remember|recall|earlier|previous|did i (?:give|mention|say))\b/.test(text) && !/\d/.test(text)) return "unprovidedBudget";
   if (/\b(?:kim jestem|moje imie|moj zawod|who i am|my (?:name|profession|job)|what i do for (?:a living|work))\b/.test(text)) return "identity";
@@ -39,7 +44,7 @@ export function capabilityTopic(request: string, freshConversation = false): Cap
   if (/\b(?:skad|zrodl\w*|informacje o produktach|kim jestes|kto mi .{0,8}odpowiada|obslug\w*|source\w*|where.*(?:data|information)|who are you)\b/.test(text)) return "sources";
 }
 
-const topicInstructions: Record<CapabilityTopic, string> = {
+const topicInstructions: Record<Exclude<CapabilityTopic, "projectName">, string> = {
   unprovidedBudget: "This fresh conversation contains no earlier budget. Say that the shopper has not given a budget in this conversation and ask what limit they would like. Do not guess an amount.",
   catalogAccess: "Answer the specific question about what you can see. When asked how you know a price or stock, say that you read it from Aurelle’s catalog, the same record shown on the product page. Only mention search technology if explicitly requested.",
   identity: "You know only what the visitor told you in the current conversation. Answer the personal question immediately. If they ask whether you know their name or occupation, explicitly say whether they have told you their name or occupation in this conversation. If they gave one, acknowledge exactly that detail. Do not introduce yourself unless asked about yourself.",
@@ -52,7 +57,7 @@ const topicInstructions: Record<CapabilityTopic, string> = {
   sessions: "Address which conversation you can see: only the supplied current thread and device cart. You cannot retrieve past visits, closed conversations or real orders.",
 };
 export function specificCapabilityInstructions(topic?: CapabilityTopic): string {
-  return topic ? "For a question about your own role or access: " + topicInstructions[topic] + " Answer CURRENT in your own words. A specific product or policy question still requires its own source." : "";
+  return topic && topic !== "projectName" ? "For a question about your own role or access: " + topicInstructions[topic] + " Answer CURRENT in your own words. A specific product or policy question still requires its own source." : "";
 }
 
 /** Validate the assistant's perspective and the limitations of this demo. */
@@ -60,7 +65,7 @@ export function capabilityAnswerError(text: string, language: "pl" | "en", requi
   const folded = fold(text);
   if ((language === "pl" && /\bmozesz mi pomoc\b/.test(folded)) ||
       (language === "en" && /\byou can help me\b/.test(folded)) ||
-      (requireFirstPerson && !(language === "pl" ? /\b(?:moge|pomoge|mam|widze|korzystam|pomagam|opieram|doradzam|sprawdzam|pracuje|dzialam|jestem|odpowiadam|znam|nie przyjmuje|nie skladam|nie sledze|nie realizuje|nie przyjmuje platnosci)\b/ : /\b(?:i am|i have|i see|i can|i will|i work|i use|i rely|i help|i check|i don.t|i cannot|i can.t|i'm|i'll)\b/).test(folded)))
+      (requireFirstPerson && !(language === "pl" ? /\b(?:moge|pomoge|mam|widze|korzystam|pomagam|opieram|doradzam|sprawdzam|pracuje|dzialam|jestem|odpowiadam|znam|wiem|pamietam|nie przyjmuje|nie skladam|nie sledze|nie realizuje|nie przyjmuje platnosci)\b/ : /\b(?:i am|i have|i see|i know|i remember|i recall|i can|i will|i work|i use|i rely|i help|i check|i don.t|i cannot|i can.t|i'm|i'll)\b/).test(folded)))
     return "Speak as the assistant in the first person, addressing the customer.";
   const promisedPayment = /\b(?:platnosc|obciazenie|karta|payment|charge|card)\b.{0,55}\b(?:nastepuje|nastapi|zostanie|bedzie|dopiero|occurs?|happens?|takes place|will be|at checkout|when you (?:check out|place))\b/;
   if (folded.split(/[.!?;,]|\b(?:but|however|ale|jednak|natomiast)\b/).some(clause =>
@@ -108,4 +113,28 @@ export function capabilityFallback(language: "pl" | "en", topic?: CapabilityTopi
   return language === "pl"
     ? "Mogę pomóc znaleźć i porównać produkty oraz sprawdzić zasady dostawy i zwrotów."
     : "I can help you find and compare products and check delivery and returns policies.";
+}
+
+/** A candidate must occur where the shopper actually names the project. */
+export function projectNameEvidence(name: string | null, quote: string | null, messages: string[]): string | undefined {
+  const value = name?.trim();
+  if (!value || value.length > 100 || (quote && !quote.includes(value))) return undefined;
+  for (const message of messages) {
+    // Read the original sentence. Groq sometimes inflects the words around a correctly copied name.
+    for (const sentence of message.match(/[^.!?\n]+[.!?]?/g) ?? []) {
+      const at = sentence.indexOf(value);
+      if (at < 0 || sentence.endsWith("?")) continue;
+      const source = fold(sentence);
+      if (/\b(?:czy|moze|mozliwe|gdyby|gdybym|jesli|nie|albo|lub|badz|czyjes|kolega|kolegi|kolezank\w*|klient\w*|przyjaciel\w*|cudzy|maybe|perhaps|might|could|would|if|not|never|or|friend|friends|colleague|client|customer|their|his|her)\b/.test(source)) continue;
+      const before = fold(sentence.slice(0, at)).replace(/[\s„“"'«:–—-]+$/, "");
+      const introduced = /\b(?:projekt(?:u|em)?|project(?:['’]s)?)(?: (?:nazywa sie|nosi nazwe|ma nazwe|to|jest|is called|is named|name is|called|named|is))?$/.test(before);
+      const after = sentence.slice(at + value.length);
+      if (introduced && !/^[\p{L}\p{N}]|^\s+[\p{Lu}\p{N}]/u.test(after)) return value;
+    }
+  }
+}
+
+export function projectNameReply(name: string | undefined, language: "pl" | "en"): string {
+  if (name) return language === "pl" ? `Pamiętam nazwę „${name}”.` : `I remember the name “${name}”.`;
+  return language === "pl" ? "Nie znam jeszcze nazwy Twojego projektu." : "I don’t know your project’s name from this conversation.";
 }

@@ -17,6 +17,10 @@ Cite the evidence for facts, absence, counts and operations. Use product IDs for
 export const capabilityInstructions = `${shopContext}
 The customer asks about the scope of this assistant or an action that depends on an external store. Call getShoppingCapabilities exactly once with your actual reply in answer. Address CURRENT directly in roughly 20–35 words. If asked who is speaking, name yourself as Aurelle's shopping assistant. Say what you can see and do for the specific request, using the first person. Do not repeat a generic introduction from earlier in the thread.`;
 
+export const projectRecallInstructions = `${shopContext}
+
+The visitor is asking for the name of their own project. Read the shopper's statements in this conversation, including any declaration in the current question. Call getShoppingCapabilities once with the exact name and a short supporting quote. When the messages contain only a product name, someone else's project, a candidate name or a hypothetical, use null for both fields. The storefront will show the answer in the shopper's language.`;
+
 export const searchAdviceFormat = `The customer already sees the matched products, their EUR prices, stock and count. Your role in this step is to help them understand the selection. Output one or two complete sentences from shoppingReasons, copied exactly for one or two different records. Choose product uses that distinguish options for their current need. Never list the cards, repeat the budget, claim a field is missing, or add a feature. Do not use bullets, markdown or a preamble.`;
 
 export const productOverviewFormat = `The customer wants to hear more about this one product. Choose one or two distinct statements from its shoppingReasons and copy them exactly. Prefer the facts that help with their stated use, including a recorded limitation when relevant. Describe recorded construction and avoid inferring how it performs.`;

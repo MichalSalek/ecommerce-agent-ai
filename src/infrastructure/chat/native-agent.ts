@@ -9,9 +9,9 @@ import {
 } from "ai";
 import { products } from "@/data/products";
 import { catalogAdviceContext, conversationContext, compactProduct } from "@/application/chat/conversation-context";
-import { asksForShoppingIntroduction, shoppingCapabilities, capabilityAnswerError, capabilityFallback, capabilityTopic, specificCapabilityInstructions } from "@/application/chat/shop-capabilities";
+import { asksForShoppingIntroduction, shoppingCapabilities, capabilityAnswerError, capabilityFallback, capabilityTopic, specificCapabilityInstructions, projectNameEvidence, projectNameReply } from "@/application/chat/shop-capabilities";
 import { groundedSearchAdvice } from "@/application/chat/search-advice";
-import { capabilityInstructions, comparisonAnswerFormat, productOverviewFormat, searchAdviceFormat } from "@/application/chat/assistant-instructions";
+import { capabilityInstructions, projectRecallInstructions, comparisonAnswerFormat, productOverviewFormat, searchAdviceFormat } from "@/application/chat/assistant-instructions";
 import { groundedComparisonAdvice, groundedComparisonLead, comparisonAdviceFallback } from "@/application/chat/comparison-advice";
 import { validatePresentation, type Evidence } from "@/application/chat/presentation-validation";
 import { detailQuestionResponse, groundedDetailAnswer, renderCanonicalDetailFact, storageCareAnswer } from "@/application/chat/detail-response";
@@ -43,6 +43,7 @@ import { directlyAnsweredByPolicy } from "@/application/chat/policy-question";
 import { hasActiveQuickSearch, resolveQuickSearch } from "@/application/chat/quick-action-search";
 import {
   nativeTools,
+  projectNameCapabilityTool,
   agentInstructions,
   adviceInstructions,
   answerSchema,
@@ -534,6 +535,9 @@ async function executeAgent(
     : undefined;
   const shopperTopic = capabilityTopic(turn.text, !preferenceEvidence && !context.messages.length);
   const topicHint = specificCapabilityInstructions(shopperTopic);
+  const projectHistory = shopperTopic === "projectName"
+    ? conversationContext(turn.history?.filter((message) => message.role === "user")).messages
+    : undefined;
   const selectedProducts = before.lastIds
     .flatMap((id) => products.filter((product) => product.id === id))
     .map((product) => compactProduct(product));
@@ -617,7 +621,10 @@ async function executeAgent(
         omittedLines: Math.max(0, localCart.length - 10),
       }
     : { available: false };
-  const messages: ModelMessage[] = [
+  const messages: ModelMessage[] = projectHistory ? [
+    ...projectHistory,
+    { role: "user", content: turn.text },
+  ] : [
     ...context.messages,
     {
       role: "user",
@@ -1288,7 +1295,7 @@ async function executeAgent(
     }
   }
   const capabilityRequest = !turn.action && !hasCartInstruction(turn.text) && (
-    asksForShoppingIntroduction(turn.text) || externalCartDependency || shopperTopic === "payments" || shopperTopic === "unprovidedBudget" || shopperTopic === "catalogAccess" || shopperTopic === "identity" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
+    asksForShoppingIntroduction(turn.text) || externalCartDependency || shopperTopic === "payments" || shopperTopic === "unprovidedBudget" || shopperTopic === "catalogAccess" || shopperTopic === "identity" || shopperTopic === "projectName" || shopperTopic === "accounts" || shopperTopic === "sessions" || shopperTopic === "technology" ||
     (shopperTopic === "orders" && /naprawdę|naprawde|rzeczywi|real(?:ly)?|tracking|śledz|sledz|gdzie jest|where is|track my/i.test(turn.text))
   );
   for (let step = 0; step < (productComparisonPending ? 5 : 4); step++) {
@@ -1307,7 +1314,7 @@ async function executeAgent(
     const tools: ToolSet | undefined = committed
       ? detailQuestionPending ? { answerProductQuestion: nativeTools.answerProductQuestion } : undefined
       : answerAboutAccess
-        ? { getShoppingCapabilities: nativeTools.getShoppingCapabilities }
+        ? { getShoppingCapabilities: shopperTopic === "projectName" ? projectNameCapabilityTool : nativeTools.getShoppingCapabilities }
         : comparisonLookupRequired
         ? { searchProducts: nativeTools.searchProducts }
         : forceAnswer
@@ -1335,7 +1342,8 @@ async function executeAgent(
       let generated: Awaited<ReturnType<typeof generateText>>;
       try {
         let instructions = answerAboutAccess ? capabilityInstructions : agentInstructions;
-        if (topicHint) instructions += "\n" + topicHint;
+        if (projectHistory) instructions = projectRecallInstructions;
+        else if (topicHint) instructions += "\n" + topicHint;
         let inputMessages = messages;
         if (committed) {
           const stage = detailQuestionPending ? "detail" : committed.comparison ? "comparison" : committed.search?.products.length ? "search" : committed.operation.kind === "details" ? "productOverview" : "advice";
@@ -1366,7 +1374,7 @@ async function executeAgent(
               : "required",
           temperature: 0.1,
           // Groq includes reasoning tokens in this limit; the customer-facing text is still capped at 400 characters.
-          maxOutputTokens: committed ? 384 : 1024,
+          maxOutputTokens: committed || projectHistory ? 384 : 1024,
           maxRetries: 0,
           providerOptions: options.providerOptions,
           abortSignal: signal,
@@ -1391,7 +1399,7 @@ async function executeAgent(
             typeof error.responseBody === "string" &&
             (error.responseBody.includes("tool_use_failed") ||
               /tool choice.*required/i.test(error.responseBody)));
-        if (!invalidCall) throw error;
+        if (!invalidCall || projectHistory) throw error;
         console.warn("[AGENT] correction", JSON.stringify({
           attemptId: options.attemptId, operationId, stage: "interpretation",
           reason: ToolChoiceViolationError.isInstance(error) ? "INVALID_TOOL_CHOICE" : "PROVIDER_TOOL_SCHEMA",
@@ -1547,6 +1555,7 @@ async function executeAgent(
       "[AGENT] tool",
       JSON.stringify({ attemptId: options.attemptId, operationId, name, invalid: "invalid" in call && call.invalid }),
     );
+    if (call.invalid && projectHistory) throw new Error("INVALID_MODEL_OUTPUT");
     let output: unknown;
     try {
       if (
@@ -1701,7 +1710,17 @@ async function executeAgent(
       }
       switch (name) {
         case "getShoppingCapabilities": {
-          const input = call.input as { answer?: string };
+          const input = call.input as { answer?: string; name?: string | null; sourceQuote?: string | null };
+          if (projectHistory) {
+            const record = addEvidence(name, {}, shoppingCapabilities);
+            const shopperStatements = projectHistory.map((message) => String(message.content)).concat(turn.text);
+            const confirmed = projectNameEvidence(input.name ?? null, input.sourceQuote ?? null, shopperStatements);
+            const text = projectNameReply(confirmed, language);
+            signal.throwIfAborted();
+            console.log("[AGENT] usage", JSON.stringify({ attemptId: options.attemptId, operationId, ...usage }));
+            console.info("[AGENT] wording", JSON.stringify({ attemptId: options.attemptId, operationId, stage: "capabilities", source: "conversation" }));
+            return result({ text, language, evidenceIds: [record.id], productIds: [], view: "none" }, text, "complete");
+          }
           if (input.answer !== undefined) {
             const record = addEvidence(name, {}, shoppingCapabilities);
             const generated = input.answer.trim();
