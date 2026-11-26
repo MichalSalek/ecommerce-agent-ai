@@ -684,7 +684,7 @@ test("a direct policy question uses its canonical answer without an unnecessary 
   assert.equal(result.operation.kind, "policy");
   assert.equal(result.status.status, "complete");
   assert.equal(result.advice.status, "not-requested");
-  assert.equal(result.answer, "Przykładowa dostawa kosztuje 4 EUR i trwa od 2 do 3 dni roboczych.");
+  assert.equal(result.answer, "W tym sklepie dostawa kosztuje 4 EUR i trwa od 2 do 3 dni roboczych.");
   assert.equal(mock.calls(), 1);
 });
 

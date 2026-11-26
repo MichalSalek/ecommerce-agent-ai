@@ -142,7 +142,7 @@ export const nativeTools = {
     }),
   }),
   getPolicy: tool({
-    description: "Read delivery, returns or payment policy.",
+    description: "Read the shop's delivery, returns or payment policy. Use delivery-and-returns when the shopper asks about both, and return-shipping when they ask what sending an item back costs or who pays.",
     inputSchema: z.object({ topic: z.string().max(200) }),
   }),
   proposeCart: tool({

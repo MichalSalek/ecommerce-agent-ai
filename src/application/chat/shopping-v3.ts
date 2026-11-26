@@ -324,6 +324,7 @@ export const shoppingActionSchema = z.discriminatedUnion("type", [
       "outdoor",
       "budget",
       "gift",
+      "gift-home-fragrance",
     ]),
     requestedCount: z.number().int().min(1).max(1000).optional(),
   }),
@@ -338,7 +339,7 @@ export const shoppingActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("availability") }),
   z.object({
     type: z.literal("policy"),
-    topic: z.enum(["delivery", "returns", "payments"]),
+    topic: z.enum(["delivery", "returns", "delivery-and-returns", "payments"]),
   }),
   z.object({
     type: z.literal("cart"),
@@ -364,18 +365,18 @@ export const shoppingStarters: {
   },
   {
     label: "Garden furniture",
-    text: "Show me garden furniture under EUR 150",
+    text: "Show me garden furniture up to €150",
     action: { type: "search", preset: "garden" },
   },
   {
-    label: "Finds under €25",
-    text: "What can I buy under EUR 25?",
+    label: "Finds up to €25",
+    text: "What can I buy for €25 or less?",
     action: { type: "search", preset: "budget" },
   },
   {
     label: "Delivery & returns",
-    text: "How much is delivery?",
-    action: { type: "policy", topic: "delivery" },
+    text: "How much is delivery and how long do I have to return an item?",
+    action: { type: "policy", topic: "delivery-and-returns" },
   },
 ];
 export const shoppingExamples: {
@@ -396,7 +397,7 @@ export const shoppingExamples: {
   },
   {
     label: "Correction",
-    text: "A plant pot is not furniture. Show me outdoor furniture",
+    text: "Show me outdoor furniture, not planters",
     action: { type: "search", preset: "outdoor" },
   },
   {
@@ -417,10 +418,14 @@ export const shoppingExamples: {
   },
   {
     label: "Gift",
-    text: "Find a gift under EUR 25",
-    action: { type: "search", preset: "gift" },
+    text: "Find a candle or diffuser under €25",
+    action: { type: "search", preset: "gift-home-fragrance" },
   },
-  { ...shoppingStarters[3], label: "Delivery" },
+  {
+    label: "Delivery",
+    text: "How much is delivery?",
+    action: { type: "policy", topic: "delivery" },
+  },
 ];
 export const chatMetadataSchema = z.object({
   shoppingAction: shoppingActionSchema.optional(),

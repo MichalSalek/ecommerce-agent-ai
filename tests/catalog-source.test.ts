@@ -54,7 +54,7 @@ test("delivery and return facts have the same values in both policy languages", 
   const original = { ...storePolicy };
   try {
     Object.assign(storePolicy, { deliveryPriceEUR: 8, earliestBusinessDay: 3, latestBusinessDay: 6, returnDays: 21 });
-    assert.match(getStorePolicy("delivery"), /EUR 8.*3-6/);
+    assert.match(getStorePolicy("delivery"), /EUR 8.*3[-–]6/);
     assert.match(getStorePolicy("dostawa", "pl"), /8 EUR.*3 do 6/);
     assert.match(getStorePolicy("returns"), /21 days/);
     assert.match(getStorePolicy("zwroty", "pl"), /21 dni/);

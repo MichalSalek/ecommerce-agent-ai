@@ -38,8 +38,9 @@ import {
 import { type CatalogService } from "@/application/catalog/catalog-service";
 import { criteriaError, meetsFeature } from "@/domain/catalog/requirements";
 import type { Product, ProductSearch } from "@/domain/catalog/product";
-import { getStorePolicy } from "@/domain/catalog/policies";
+import { getStorePolicy, resolvePolicyTopic } from "@/domain/catalog/policies";
 import { directlyAnsweredByPolicy } from "@/application/chat/policy-question";
+import { hasActiveQuickSearch, resolveQuickSearch } from "@/application/chat/quick-action-search";
 import {
   nativeTools,
   agentInstructions,
@@ -54,6 +55,7 @@ import {
   prepareCartProposal,
   hasCartInstruction,
   hasExternalCartDependency,
+  cartSelectionIds,
 } from "@/application/chat/cart-authorization";
 import {
   transitionState,
@@ -1183,6 +1185,19 @@ async function executeAgent(
         content: `Explain the already completed result only. Do not execute catalog or cart operations. Evidence: ${JSON.stringify(evidence)}.`,
       });
     } else if (action.type === "cart") {
+      if (action.selection === "cheapest" && !action.productId) {
+        const candidates = cartSelectionIds(before);
+        if (candidates.length !== 2)
+          return question(
+            language === "pl" ? "Które dwa produkty chcesz najpierw porównać?" : "Which two products would you like to compare first?",
+          );
+        const rows = candidates.flatMap((id) => products.filter((product) => product.id === id));
+        if (rows.length === 2 && Math.round(rows[0].price * 100) === Math.round(rows[1].price * 100))
+          return question(
+            language === "pl" ? "Oba produkty kosztują tyle samo. Który mam dodać do koszyka?" : "Both products cost the same. Which one should I add to your cart?",
+            candidates, "selection", action.quantity,
+          );
+      }
       if (before.pendingCartIntent && !pendingIntent)
         return question(
           language === "pl"
@@ -1237,63 +1252,20 @@ async function executeAgent(
         input: { topic: action.topic },
       };
     else {
-      if (
-        (action.type === "more" || action.type === "availability") &&
-        !before.scope &&
-        !Object.keys(before.criteria).length &&
-        !before.resultIds.length
-      )
-        return question(
-          language === "pl"
-            ? "Najpierw wybierz kategorię lub powiedz, jakiego produktu szukasz."
-            : "First choose a category or tell me which products you need.",
-        );
-      let criteria: Transition["criteria"] = {},
-        operation: Transition["operation"] = "new";
-      let scope = "collection";
-      if (action.type === "search") {
-        if (action.preset === "coffee") {
-          criteria = { functionalGroup: "coffee" };
-          scope = "coffee";
-        }
-        if (action.preset === "seating") {
-          criteria = { functionalGroup: "seating" };
-          scope = "seating";
-          operation = "refine";
-        }
-        if (action.preset === "garden" || action.preset === "outdoor") {
-          criteria = {
-            productKind: "furniture",
-            useEnvironment: "outdoor",
-            ...(action.preset === "garden" ? { maxPrice: 150 } : {}),
-          };
-          scope = "outdoor furniture";
-          operation = action.preset === "outdoor" ? "change" : "new";
-        }
-        if (action.preset === "budget" || action.preset === "gift")
-          criteria = {
-            maxPrice: 25,
-            ...(action.preset === "gift" ? { query: "gift" } : {}),
-          };
-      } else if (action.type === "category") {
-        criteria = { category: action.name, categoryExplicit: true };
-        scope = action.name;
-      } else {
-        operation = action.type === "more" ? "more" : "refine";
-        scope = before.scope;
-        criteria = action.type === "availability" ? { inStockOnly: true } : {};
+      if (action.type === "more" || action.type === "availability") {
+        if (!hasActiveQuickSearch(before))
+          return question(
+            language === "pl"
+              ? "Jakich produktów mam szukać? Podaj rodzaj lub kategorię."
+              : "What kind of products should I look for? Tell me a type or category.",
+          );
       }
       forcedCall = {
         toolName: "searchProducts",
         toolCallId: "ui-read",
         input: {
-          operation,
-          language,
-          scope,
-          criteria,
+          ...resolveQuickSearch(action, before, language),
           mode: "recommend",
-          requestedCount:
-            action.type === "search" ? action.requestedCount : undefined,
           continueWith: "presentAnswer",
         },
       };
@@ -2131,8 +2103,13 @@ async function executeAgent(
           break;
         }
         case "getPolicy": {
-          const topic = (call.input as { topic: string }).topic;
-          directPolicyAnswer = !turn.action && directlyAnsweredByPolicy(turn.text, topic);
+          let topic = (call.input as { topic: string }).topic;
+          const requestedPolicy = !turn.action ? resolvePolicyTopic(turn.text) : undefined;
+          directPolicyAnswer = !!requestedPolicy && directlyAnsweredByPolicy(turn.text, requestedPolicy);
+          if (requestedPolicy && (directPolicyAnswer || requestedPolicy === "delivery-and-returns" || requestedPolicy.includes("return-shipping"))) {
+            topic = requestedPolicy;
+            call.input = { topic };
+          }
           terminalOnly = !!turn.action || directPolicyAnswer;
           output = { policy: getStorePolicy(topic, language) };
           break;

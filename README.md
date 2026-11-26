@@ -8,19 +8,19 @@ The catalog contains 86 demo products across 10 categories, including 38 new pro
 
 ## Try the assistant
 
-Open the chat and type `w czym możesz mi pomóc` or `What can you help me with?` to meet the assistant. The chat page also offers ten clickable examples. They carry declared actions through the same catalog services and validated state transitions as the native tools. Refinement, alternatives and adding a cheaper item use preceding results; a missing selection prompts for input.
+Open the chat and type `w czym możesz mi pomóc` or `What can you help me with?` to meet the assistant. Four shortcuts in the welcome message start a conversation. Ten examples under **Explore with the assistant** sit below **Browse products** in the left column. On a phone, expand the same list above the conversation. Each example uses the catalog services and validated state transitions available to the agent. Refinements keep the current search criteria. A request to add the cheaper option uses the displayed selection and asks for clarification if the choice is ambiguous.
 
 | Capability | Example prompt |
 | --- | --- |
-| Outdoor furniture with a budget | `Show me garden furniture under EUR 150` |
+| Outdoor furniture with a budget | `Show me garden furniture up to €150` |
 | Refine a search | `I need something to sit on` |
 | Ask for alternatives | `Show me different options` |
-| Correct a classification | `A plant pot is not furniture. Show me outdoor furniture` |
+| Correct a classification | `Show me outdoor furniture, not planters` |
 | Compare catalog products | `Compare mugs and carafe` |
 | Add a selected quantity | `Add two of the cheaper option to my cart` |
 | Search by purpose | `I need something for my morning coffee` |
 | Filter for availability | `Show only in-stock products` |
-| Find a gift within a budget | `Find a gift under EUR 25` |
+| Find a candle or diffuser within a budget | `Find a candle or diffuser under €25` |
 | Ask about a policy | `How much is delivery?` |
 
 Try these multi-turn paths in a fresh conversation:

@@ -1,13 +1,19 @@
-import { resolvePolicyTopic } from "@/domain/catalog/policies";
+import { normalizePolicyText, resolvePolicyTopic, storePolicy } from "@/domain/catalog/policies";
 
-/** These simple questions are answered in full by the published rate or return window. */
+/** Skip continuation only when every part of the question is covered by the requested policy facts. */
 export function directlyAnsweredByPolicy(request: string, topic: string): boolean {
   const kind = resolvePolicyTopic(topic);
-  if ((kind !== "returns" && kind !== "delivery") || resolvePolicyTopic(request) !== kind) return false;
-  const words = request.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replaceAll("ł", "l").match(/[a-z0-9]+/g) ?? [];
-  const question = /^(?:a|i|ile|jak|jaki|jaka|jest|mam|mamy|moge|na|za|od|do|czy|sie|was|u|dni|dniach|dzien|roboczych|czasu|what|how|much|many|long|does|do|it|is|are|the|and|to|your|of|can|i|have|days?|business|time|window|policy)$/;
-  const subject = kind === "delivery"
-    ? /^(?:dostaw[a-z]*|wysyl[a-z]*|koszt[a-z]*|cen[a-z]*|trwa[a-z]*|czek[a-z]*|dlugo|deliver[a-z]*|shipping|costs?|price|takes?)$/
-    : /^(?:zwrot[a-z]*|zwroc[a-z]*|termin[a-z]*|dokonanie|return[a-z]*|period|item|product|produkt)$/;
-  return words.length > 0 && words.every(word => question.test(word) || subject.test(word));
+  if (kind === "overview" || kind === "payments" || kind === "demo" || resolvePolicyTopic(request) !== kind) return false;
+  const words = normalizePolicyText(request).match(/[a-z0-9]+/g) ?? [];
+  const includesDelivery = kind === "delivery" || kind.startsWith("delivery-and-");
+  const includesReturns = kind === "returns" || kind.includes("and-returns");
+  const includesPostage = kind.includes("return-shipping");
+  const common = /^(?:a|an|the|i|if|it|is|are|do|does|can|what|how|much|many|long|to|for|of|your|and|who|policy|kto|co|ile|jak|jaki|jaka|jest|mam|mamy|moge|na|za|od|do|w|czy|sie|was|u|przy|oraz)$/;
+  const delivery = /^(?:dostaw[a-z]*|wysyl[a-z]*|koszt[a-z]*|cen[a-z]*|trwa[a-z]*|czek[a-z]*|dlugo|deliver[a-z]*|shipping|costs?|price|takes?|days?|dni|dniach|dzien|roboczych|business)$/;
+  const returns = /^(?:zwrot[a-z]*|zwroc[a-z]*|termin[a-z]*|dokonanie|return[a-z]*|period|item|products?|produkt[a-z]*|have|time|window|within|ciagu|days?|dni|dniach|dzien|czasu|delivery|dostawy|fourteen|czternascie|czternastu)$/;
+  const postage = /^(?:pays?|paid|paying|costs?|price|fees?|shipping|delivery|postage|returns?|returning|refund|item|product|plac[a-z]*|plat[a-z]*|koszt[a-z]*|cen[a-z]*|oplat[a-z]*|wysyl[a-z]*|odesl[a-z]*|odsyl[a-z]*|zwrot[a-z]*|zwroc[a-z]*|produkt[a-z]*|towar[a-z]*|ponosi)$/;
+  return words.length > 0 && words.every((word) => common.test(word) ||
+    (includesDelivery && delivery.test(word)) ||
+    (includesReturns && (returns.test(word) || word === String(storePolicy.returnDays))) ||
+    (includesPostage && postage.test(word)));
 }

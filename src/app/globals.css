@@ -689,15 +689,18 @@ nav .assistant-link {
 
 /* Conversation workspace: a quiet reading surface with a distinct, high-contrast identity. */
 .assistant-workspace {
+  --chat-height: max(360px, calc(100dvh - var(--chat-top, 180px) - 16px));
   display: grid;
-  grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
-  gap: 44px;
+  grid-template-columns: clamp(258px, 23vw, 320px) minmax(0, 1fr);
+  gap: clamp(24px, 3vw, 44px);
   margin: 0 auto 10px;
   max-width: 1320px;
   align-items: start;
 }
 .assistant-intro {
-  padding-top: 24px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 .eyebrow {
   font-size: 12px;
@@ -706,12 +709,13 @@ nav .assistant-link {
   font-weight: 700;
 }
 .assistant-intro h1 {
-  font-size: clamp(32px, 3.3vw, 48px);
-  margin: 22px 0;
+  font-size: clamp(32px, 2.9vw, 38px);
+  margin: 0 0 8px;
   line-height: 1.08;
 }
 .assistant-intro > p {
-  font-size: 16px;
+  margin: 0;
+  font-size: 15px;
   color: var(--muted);
   line-height: 1.7;
 }
@@ -743,12 +747,14 @@ nav .assistant-link {
 .chat-panel {
   display: flex;
   flex-direction: column;
-  position: relative;
+  position: sticky;
+  min-width: 0;
+  top: 12px;
   border: 1px solid var(--line);
   border-radius: 16px;
   overflow: hidden;
   background: var(--surface);
-  height: calc(100dvh - var(--chat-top, 180px) - 16px);
+  height: var(--chat-height);
   min-height: 0;
 }
 .chat-toolbar {
@@ -871,8 +877,10 @@ nav .assistant-link {
 }
 .chat-starters {
   display: grid;
-  gap: 10px;
-  margin: 24px 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 32rem;
+  gap: 8px;
+  margin: 20px 0;
 }
 .chat-starters button {
   display: flex;
@@ -1124,11 +1132,11 @@ nav .assistant-link {
 }
 @media (max-width: 1100px) {
   .assistant-workspace {
-    grid-template-columns: 220px minmax(0, 1fr);
-    gap: 26px;
+    grid-template-columns: minmax(232px, 26%) minmax(0, 1fr);
+    gap: 24px;
   }
   .assistant-intro h1 {
-    font-size: 38px;
+    font-size: 32px;
   }
   .chat-toolbar {
     padding: 18px;
@@ -1417,46 +1425,159 @@ nav a {
   }
 }
 .intro-catalog {
-  display: inline-block;
-  padding: 10px 0;
-  font-size: 14px;
-}
-.demo-capabilities {
-  grid-column: 1 / -1;
-  margin-top: 24px;
-  font-size: 14px;
-}
-.capability-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 8px;
-}
-.capability-grid button {
-  background: var(--surface);
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
   color: var(--ink);
-  border-color: var(--line);
+  font-size: 14px;
+}
+.shopping-examples {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 14px;
+}
+.examples-heading {
+  margin: 0;
+  padding-bottom: 10px;
+  font-size: 23px;
+}
+.examples-toggle, .examples-scroll {
+  display: none;
+}
+.examples-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.examples-list li {
+  border-bottom: 1px solid var(--line);
+}
+.examples-list button {
+  width: 100%;
+  min-height: 44px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 9px 8px 3px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.4;
   text-align: left;
 }
-.capability-grid button:hover {
-  background: var(--tint);
-}
-
-.capability-grid button:disabled {
-  background: var(--tint);
+.examples-list button::after, .examples-toggle::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border: solid currentColor;
+  border-width: 1.5px 1.5px 0 0;
   color: var(--muted);
+  transform: rotate(45deg);
+}
+.examples-list button:hover:enabled, .examples-list button:focus-visible {
+  background: var(--tint);
+  color: var(--accent-hover);
+}
+.examples-list button:focus-visible, .examples-options a:focus-visible {
+  outline-offset: -3px;
+}
+.examples-list button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.examples-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.examples-note a {
+  white-space: nowrap;
 }
 @media (max-width: 800px) {
-  .intro-catalog {
+  .intro-catalog, .examples-heading > span {
+    display: none;
+  }
+  .chat-panel {
+    position: relative;
+    top: auto;
+  }
+  .shopping-examples {
+    position: relative;
+    margin: 0 0 8px;
+  }
+  .examples-heading {
+    padding: 0;
+  }
+  .examples-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    justify-content: space-between;
+    padding: 8px 15px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+    font: 18px/1.2 Georgia, serif;
+    text-align: left;
+  }
+  .examples-toggle:hover {
+    background: var(--tint);
+  }
+  .examples-toggle::after {
+    transform: rotate(135deg);
+  }
+  .examples-toggle[aria-expanded="true"]::after {
+    transform: rotate(-45deg);
+  }
+  .examples-options {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    z-index: 3;
+    width: 100%;
+    max-height: max(88px, calc(var(--chat-height) - var(--composer-height, 164px)));
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .shopping-examples[data-expanded="true"] .examples-options {
+    display: flex;
+    flex-direction: column;
+  }
+  .examples-list {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    border-top: 0;
+  }
+  .examples-list li:last-child {
+    border-bottom: 0;
+  }
+  .examples-scroll {
+    display: flex;
+    flex: none;
+    min-height: 44px;
+    border: 0;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--accent-hover);
+    font-weight: 700;
+  }
+  .examples-scroll:hover {
+    background: var(--tint);
+  }
+  .examples-note {
     display: none;
   }
 }
 
-/* Shopping actions and product information use the existing chat and detail palette. */
-.demo-capabilities h2 {
-  font-size: 20px;
-  margin: 0 0 12px;
-}
 .chat-followups {
   display: flex;
   flex-wrap: wrap;

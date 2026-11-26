@@ -10,7 +10,8 @@ import { ComparisonResults } from "@/components/chat/ComparisonResults";
 import { useCart, type ActionResult } from "@/components/CartProvider";
 import { products } from "@/data/products";
 import { WELCOME_ID } from "@/application/chat/history";
-import { shoppingStarters, shoppingExamples } from "@/application/chat/shopping-v3";
+import { shoppingStarters } from "@/application/chat/shopping-v3";
+import { ShoppingExamples } from "@/components/chat/ShoppingExamples";
 import { assistantTextError, resolveLanguage, type Language } from "@/application/chat/assistant-text";
 import type {
   TurnStatus,
@@ -130,13 +131,18 @@ export default function ChatView() {
   useEffect(() => {
     const el = panel.current;
     if (!el) return;
-    function measure() {
-      if (!el) return;
-      const top = el.getBoundingClientRect().top + window.scrollY;
-      el.style.setProperty("--chat-top", `${top}px`);
-    }
+    const workspace = el.closest<HTMLElement>(".assistant-workspace");
+    if (!workspace) return;
+    const composer = el.querySelector<HTMLElement>(".chat-composer");
+    const measure = () => {
+      const anchor = getComputedStyle(workspace).display === "grid" ? workspace : el;
+      const top = anchor.getBoundingClientRect().top + window.scrollY;
+      workspace.style.setProperty("--chat-top", `${top}px`);
+      if (composer) workspace.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
+    };
     measure();
     const observer = new ResizeObserver(measure);
+    if (composer) observer.observe(composer);
     document
       .querySelectorAll(".demo-bar, header")
       .forEach((el) => observer.observe(el));
@@ -153,27 +159,33 @@ export default function ChatView() {
       setDraft(`Tell me about product ${id}`);
   }, [ready, setDraft]);
   useEffect(() => {
-    if (!ready) return;
-    if (!initializedScroll.current && thread.current) {
-      thread.current.scrollTop = threadPosition.current.follow
-        ? thread.current.scrollHeight
+    const el = thread.current;
+    if (!ready || !el) return;
+    if (!started) {
+      el.scrollTop = 0;
+      setShowLatest(false);
+      return;
+    }
+    if (!initializedScroll.current) {
+      el.scrollTop = threadPosition.current.follow
+        ? el.scrollHeight
         : threadPosition.current.top;
       initializedScroll.current = true;
     }
-    if (nearBottom.current && thread.current) {
-      thread.current.scrollTop = thread.current.scrollHeight;
+    if (nearBottom.current) {
+      el.scrollTop = el.scrollHeight;
       setShowLatest(false);
     } else setShowLatest(true);
-  }, [messages, busy, ready]);
+  }, [messages, busy, ready, started, threadPosition]);
   useEffect(() => {
     const el = thread.current;
-    if (!el || !ready) return;
+    if (!el || !ready || !started) return;
     const observer = new ResizeObserver(() => {
       if (threadPosition.current.follow) el.scrollTop = el.scrollHeight;
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [ready, threadPosition]);
+  }, [ready, started, threadPosition]);
   useEffect(() => {
     const el = field.current;
     if (!el) return;
@@ -206,7 +218,8 @@ export default function ChatView() {
       text: text.trim(),
       ...(shoppingAction ? { metadata: { shoppingAction } } : {}),
     });
-    field.current?.focus();
+    if (shoppingAction) thread.current?.focus({ preventScroll: true });
+    else field.current?.focus({ preventScroll: true });
   }
   async function reset() {
     retryAllowed.current = false;
@@ -426,15 +439,18 @@ export default function ChatView() {
   return (
     <div className="assistant-workspace">
       <aside className="assistant-intro">
-        <span className="eyebrow">AURELLE</span>
         <h1>Shopping assistant</h1>
         <p>
           All {products.length} products, prices, stock and policies are mock
           data.
         </p>
         <Link className="intro-catalog" href="/#collection">
-          Browse products ↗
+          Browse products <span aria-hidden="true">↗</span>
         </Link>
+        <ShoppingExamples
+          disabled={!ready || busy || conversationClosed}
+          onSelect={send}
+        />
       </aside>
       <section
         className="chat-panel"
@@ -468,6 +484,7 @@ export default function ChatView() {
           className="chat-thread"
           ref={thread}
           role="log"
+          tabIndex={-1}
           aria-label="Conversation messages"
           aria-live="polite"
           aria-busy={busy}
@@ -905,32 +922,6 @@ export default function ChatView() {
             <span>{draft.length}/2000</span>
           </div>
         </form>
-      </section>
-      <section className="demo-capabilities" aria-label="Shopping examples">
-        <h2>Explore with the assistant</h2>
-        <div className="capability-grid">
-          {shoppingExamples.map(({ label, text, action }) => (
-            <button
-              key={label}
-              disabled={!ready || busy || conversationClosed}
-              onClick={() => {
-                send(text, action);
-                thread.current?.scrollIntoView({
-                  behavior: "smooth",
-                  block: "center",
-                });
-              }}
-            >
-              {text}
-            </button>
-          ))}
-        </div>
-        <p className="muted">
-          This tab keeps your chat. Your cart stays on this device.{" "}
-          <Link href="https://github.com/MichalSalek/ecommerce-agent-ai">
-            How it works ↗
-          </Link>
-        </p>
       </section>
     </div>
   );

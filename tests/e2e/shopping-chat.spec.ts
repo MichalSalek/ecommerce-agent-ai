@@ -169,6 +169,63 @@ test("chat fills the remaining viewport and serves product photos directly", asy
   }
 });
 
+test("all ten examples are reachable beside the conversation and by keyboard on a short phone", async ({ page }) => {
+  const calls = await fixture(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/chat");
+  const examples = page.getByRole("complementary").getByRole("region", { name: "Shopping examples" });
+  const rows = examples.getByRole("listitem");
+  const last = rows.last().getByRole("button", { name: "How much is delivery?" });
+  await expect(rows).toHaveCount(10);
+  const sidebar = await examples.boundingBox();
+  const chat = await page.getByRole("region", { name: "Shopping conversation" }).boundingBox();
+  const catalog = await page.getByRole("link", { name: "Browse products" }).boundingBox();
+  expect(sidebar!.x + sidebar!.width).toBeLessThan(chat!.x);
+  expect(sidebar!.y).toBeGreaterThanOrEqual(catalog!.y + catalog!.height);
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const field = page.getByRole("textbox");
+  await expect(field).toBeInViewport({ ratio: 1 });
+
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  const toggle = examples.getByRole("button", { name: "Explore with the assistant" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => page.getByRole("log").evaluate((thread) => thread.scrollTop)).toBe(0);
+  await field.fill("I am still writing this question");
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Tab");
+  await expect(rows.first().getByRole("button")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(toggle).toBeFocused();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await field.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  await toggle.click();
+  const more = examples.getByRole("button", { name: "More examples" });
+  await more.click();
+  await expect(last).toBeInViewport({ ratio: 1 });
+  await expect(examples.getByRole("button", { name: "Back to first examples" })).toBeVisible();
+  await last.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".chat-message.user")).toHaveText(/How much is delivery\?/);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(field).toHaveValue("I am still writing this question");
+  await expect(page.getByRole("log")).toBeFocused();
+  await expect(field).toBeInViewport({ ratio: 1 });
+  expect(calls()).toBe(1);
+
+  await page.setViewportSize({ width: 740, height: 390 });
+  await field.scrollIntoViewIfNeeded();
+  await expect(field).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole("button", { name: "Send message" })).toBeInViewport({ ratio: 1 });
+});
+
 test("incoming replies do not pull a reader away from older messages", async ({
   page,
 }) => {
